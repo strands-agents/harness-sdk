@@ -22,7 +22,7 @@
   max-width: none;
 }
 
-/* The catalog is a grid, not prose, so give it more room than the 50rem prose
+/* The catalog is a grid, not prose, so give it more room than the 55rem prose
    column and let it widen on large screens: cards stay wide enough to show full
    titles and descriptions. Scoped to this page with :has() (catalog.css only
    loads on /integrations). */
@@ -434,6 +434,11 @@ body:has(.cat-page) {
 .cat-seg-btn[aria-checked='true'] {
   background: color-mix(in srgb, var(--sl-color-accent) 14%, transparent);
   color: var(--cat-accent-text);
+}
+.cat-seg-btn[aria-pressed='false']:hover,
+.cat-seg-btn[aria-checked='false']:hover {
+  background: var(--docs-hover-bg);
+  color: var(--sl-color-white);
 }
 
 /* Vertical divider between filter groups in the facet row (language / SDK |

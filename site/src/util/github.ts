@@ -3,19 +3,46 @@ const FALLBACK = '6,100+'
 const TIMEOUT_MS = 5000
 const MAX_PAGES = 5
 
-// Fetched once per build and shared across every page render, so the header
-// shows the same count everywhere and a large build doesn't exhaust GitHub's
-// unauthenticated rate limit by issuing one request per page.
+// Fetched once per build so the homepage CTA shows one stable count without
+// issuing repeated unauthenticated GitHub requests during the build.
 let cached: Promise<string> | undefined
+const repositoryStarCounts = new Map<string, Promise<string>>()
 
 export function getStarCount(): Promise<string> {
   return (cached ??= computeStarCount())
+}
+
+export function getRepositoryStarCount(repository: string, fallback: string): Promise<string> {
+  const existing = repositoryStarCounts.get(repository)
+  if (existing) return existing
+
+  const count = fetchRepositoryStarCount(repository, fallback)
+  repositoryStarCounts.set(repository, count)
+  return count
 }
 
 async function computeStarCount(): Promise<string> {
   const total = await sumOrgStars()
   if (total <= 0) return FALLBACK
   return (Math.floor(total / 100) * 100).toLocaleString() + '+'
+}
+
+async function fetchRepositoryStarCount(repository: string, fallback: string): Promise<string> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS)
+  try {
+    const response = await fetch(`https://api.github.com/repos/${repository}`, {
+      signal: controller.signal,
+    })
+    if (!response.ok) return fallback
+
+    const result = (await response.json()) as { stargazers_count?: unknown }
+    return typeof result.stargazers_count === 'number' ? result.stargazers_count.toLocaleString() : fallback
+  } catch {
+    return fallback
+  } finally {
+    clearTimeout(timeout)
+  }
 }
 
 // Sum stargazers across every non-fork public repo in the org, so the count

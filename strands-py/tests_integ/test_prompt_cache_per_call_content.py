@@ -11,9 +11,8 @@ The failure is invisible in totals: a thrashing request and a reading request re
 Not decorated with ``retry_on_flaky``: a retry would read the cache entry the failed attempt just
 wrote and pass, hiding the regression it exists to catch.
 
-Runs against Bedrock and, when ``ANTHROPIC_API_KEY`` is set, Anthropic — both report the uncached
-remainder in ``inputTokens`` and the cached portion in the separate cache counters, so the same
-assertions hold for each.
+Runs against Bedrock and, when their API keys are set, Anthropic and the OpenAI Responses API — each
+reports the cached portion in the separate cache counters, so the same assertions hold for each.
 """
 
 import os
@@ -31,6 +30,7 @@ from strands.vended_plugins.context_injector import ContextInjector
 # One place to bump on the next model rotation.
 BEDROCK_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 ANTHROPIC_MODEL_ID = "claude-opus-4-8"
+OPENAI_MODEL_ID = "gpt-6-luna"
 MAX_TOKENS = 512
 
 # Enough tokens ahead of the cache point to clear every provider's minimum cacheable prefix.
@@ -54,6 +54,16 @@ def _anthropic_model() -> AnthropicModel:
     )
 
 
+def _openai_responses_model() -> Model:
+    from strands.models.openai_responses import OpenAIResponsesModel
+
+    return OpenAIResponsesModel(
+        model_id=OPENAI_MODEL_ID,
+        cache_config=CacheConfig(strategy="auto"),
+        params={"max_output_tokens": MAX_TOKENS},
+    )
+
+
 @pytest.fixture(
     params=[
         pytest.param(_bedrock_model, id="bedrock"),
@@ -63,6 +73,14 @@ def _anthropic_model() -> AnthropicModel:
             marks=pytest.mark.skipif(
                 "ANTHROPIC_API_KEY" not in os.environ,
                 reason="ANTHROPIC_API_KEY environment variable missing",
+            ),
+        ),
+        pytest.param(
+            _openai_responses_model,
+            id="openai-responses",
+            marks=pytest.mark.skipif(
+                "OPENAI_API_KEY" not in os.environ,
+                reason="OPENAI_API_KEY environment variable missing",
             ),
         ),
     ]

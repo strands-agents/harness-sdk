@@ -1,8 +1,9 @@
-import { DEFAULT_CHAT_SETTINGS, type ChatSnapshot } from '../../src/tui/chat/types.js'
+import { DEFAULT_CHAT_SETTINGS, type ChatSnapshot } from '../../src/ui/chat/types.js'
 
 export function snapshot(overrides: Partial<ChatSnapshot> = {}): ChatSnapshot {
   return {
     completedTurns: [],
+    pendingSteering: [],
     queuedPrompts: [],
     notices: [],
     tasks: [],

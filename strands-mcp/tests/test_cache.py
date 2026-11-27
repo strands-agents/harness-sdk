@@ -154,3 +154,54 @@ class TestBackgroundPrefetch:
                         cache.load_links_only()
 
                         mock_thread.assert_called_once()
+
+
+LLMS_TXT = """# Strands Agents
+
+- [Quickstart](https://strandsagents.com/docs/user-guide/sdk/quickstart/python/index.md): Get an agent running.
+- [quickstart](https://strandsagents.com/docs/user-guide/evals-sdk/quickstart/index.md): Run your first evaluation.
+- [sessions](https://strandsagents.com/docs/user-guide/harness/configure/sessions/index.md): Persist a conversation.
+- [Changelog](https://strandsagents.com/changelog/index.md): All releases
+"""
+
+
+class TestLoadLinksIndexing:
+    """Tests for what load_links_only and ensure_page make searchable."""
+
+    @pytest.fixture(autouse=True)
+    def loaded(self):
+        with patch("strands_mcp_server.utils.cache.doc_fetcher.fetch_text", return_value=LLMS_TXT):
+            with patch("strands_mcp_server.utils.cache.doc_config") as mock_config:
+                mock_config.llm_texts_url = ["https://strandsagents.com/llms.txt"]
+                cache.load_links_only()
+
+    def test_url_path_words_are_searchable(self):
+        results = cache._INDEX.search("evals quickstart")
+
+        assert results[0][1] == indexer.Doc(
+            uri="https://strandsagents.com/docs/user-guide/evals-sdk/quickstart/index.md",
+            display_title="quickstart",
+            content="",
+            index_title="quickstart docs user guide evals sdk quickstart Run your first evaluation.",
+        )
+
+    def test_llms_txt_description_is_searchable(self):
+        results = cache._INDEX.search("persist conversation")
+
+        assert [doc.uri for _, doc in results] == [
+            "https://strandsagents.com/docs/user-guide/harness/configure/sessions/index.md"
+        ]
+
+    def test_aggregate_page_body_is_not_indexed(self):
+        url = "https://strandsagents.com/changelog/index.md"
+        with patch(
+            "strands_mcp_server.utils.cache.doc_fetcher.fetch_and_clean",
+            return_value=Page(url, "x", "quickstart " * 100),
+        ):
+            page = cache.ensure_page(url)
+
+        assert page == Page(url, "Changelog", "quickstart " * 100)
+        assert [doc.uri for _, doc in cache._INDEX.search("quickstart")] == [
+            "https://strandsagents.com/docs/user-guide/sdk/quickstart/python/index.md",
+            "https://strandsagents.com/docs/user-guide/evals-sdk/quickstart/index.md",
+        ]

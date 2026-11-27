@@ -81,5 +81,8 @@ bin/
 site/docs/superpowers/
 .agent
 
-# Copied from shared/model-info.json by strands-ts prepare/prebuild
+# Copied from shared/model-info.json by each package's build (prepare/prebuild in TS, hatch_build.py in Python)
 strands-ts/src/models/model-info.json
+strands-py/src/strands/models/model_info.json
+harness-py/src/strands_harness/model_info.json
+harness-ts/src/model-info.json

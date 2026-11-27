@@ -4,7 +4,13 @@ import { z } from 'zod'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { Agent } from '../../agent/agent.js'
 import type { InvocationContext } from '../../agent/invocation-context.js'
-import { AfterToolCallEvent, BeforeModelCallEvent, BeforeToolCallEvent, InitializedEvent } from '../../hooks/events.js'
+import {
+  AfterInvocationEvent,
+  AfterToolCallEvent,
+  BeforeModelCallEvent,
+  BeforeToolCallEvent,
+  InitializedEvent,
+} from '../../hooks/events.js'
 import { Interrupt } from '../../interrupt.js'
 import { ExecuteToolStage, InvokeModelStage } from '../../middleware/index.js'
 import { tool } from '../../tools/tool-factory.js'
@@ -17,11 +23,9 @@ import type { BackgroundTask } from '../types.js'
 
 const BACKGROUND_TASKS_STATE_KEY = 'strands.backgroundTasks'
 
-function deliveries(agent: Agent): ToolUseBlock[] {
+function deliveries(agent: Agent, toolName = 'strands_manage_background_task'): ToolUseBlock[] {
   const blocks = agent.messages.flatMap((message) => message.content)
-  return blocks.filter(
-    (block): block is ToolUseBlock => block.type === 'toolUseBlock' && block.name === 'strands_manage_background_task'
-  )
+  return blocks.filter((block): block is ToolUseBlock => block.type === 'toolUseBlock' && block.name === toolName)
 }
 
 function persistedTasks(agent: Agent): BackgroundTask[] | undefined {
@@ -29,7 +33,30 @@ function persistedTasks(agent: Agent): BackgroundTask[] | undefined {
 }
 
 describe('BackgroundTasks', () => {
+  it('registers the custom management tool name and runs its calls in the foreground', async () => {
+    const toolName = 'manage_background_task'
+    const model = new MockMessageModel()
+      .addTurn({ type: 'toolUseBlock', name: toolName, toolUseId: 'management-use', input: { mode: 'list' } })
+      .addTurn({ type: 'textBlock', text: 'Listed.' })
+    const agent = new Agent({
+      model,
+      backgroundTasks: { manageToolName: toolName, always: ['*'] },
+      printer: false,
+    })
+
+    await agent.invoke('List tasks.')
+
+    expect(agent.tools.map((tool) => tool.name)).toEqual([toolName])
+    expect(agent.messages.flatMap((message) => message.content)).toContainEqual({
+      type: 'toolResultBlock',
+      toolUseId: 'management-use',
+      status: 'success',
+      content: [{ type: 'jsonBlock', json: { tasks: [] } }],
+    })
+  })
+
   it('dispatches selected calls through the normal tool pipeline and delivers their results', async () => {
+    const toolName = 'task_admin'
     const work = tool({
       name: 'work',
       description: 'Perform work.',
@@ -48,7 +75,7 @@ describe('BackgroundTasks', () => {
     const agent = new Agent({
       model,
       tools: [work],
-      backgroundTasks: { agentic: [work] },
+      backgroundTasks: { manageToolName: toolName, agentic: [work] },
       printer: false,
     })
     let toolSpecs: readonly ToolSpec[] | undefined
@@ -75,10 +102,10 @@ describe('BackgroundTasks', () => {
     expect(toolSpecs?.find((spec) => spec.name === 'work')?.inputSchema?.properties).toHaveProperty(
       '_background_execution'
     )
-    const [delivery] = deliveries(agent)
+    const [delivery] = deliveries(agent, toolName)
     expect(delivery).toEqual({
       type: 'toolUseBlock',
-      name: 'strands_manage_background_task',
+      name: toolName,
       toolUseId: expect.any(String),
       input: { mode: 'get', taskId: delivery!.toolUseId },
     })
@@ -238,6 +265,23 @@ describe('BackgroundTasks', () => {
     }
   })
 
+  it('lets a user tool named load_tools run in the background', async () => {
+    const loadTools = tool({
+      name: 'load_tools',
+      description: 'Load data.',
+      inputSchema: z.object({}),
+      callback: () => 'done',
+    })
+    const agent = new Agent({
+      model: new MockMessageModel(),
+      tools: [loadTools],
+      backgroundTasks: { always: [loadTools] },
+      printer: false,
+    })
+
+    await expect(agent.initialize()).resolves.toBeUndefined()
+  })
+
   it('rejects conflicting tool policies', () => {
     const work = tool({
       name: 'work',
@@ -382,6 +426,313 @@ describe('BackgroundTasks', () => {
       content: inspected.content,
     })
     expect(persistedTasks(restored)).toBeUndefined()
+  })
+
+  it('stops waiting for running tasks when the invocation is cancelled', async () => {
+    let release!: () => void
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const work = tool({
+      name: 'work',
+      description: 'Perform deferred work.',
+      inputSchema: z.object({}),
+      callback: async () => {
+        await released
+        return 'done'
+      },
+    })
+    const abort = tool({
+      name: 'abort',
+      description: 'Cancel the invocation.',
+      inputSchema: z.object({}),
+      callback: (_input, context) => {
+        context!.agent.cancel()
+        return 'aborting'
+      },
+    })
+    const model = new MockMessageModel()
+      .addTurn([
+        { type: 'toolUseBlock', name: 'work', toolUseId: 'work-use', input: { _background_execution: true } },
+        { type: 'toolUseBlock', name: 'abort', toolUseId: 'abort-use', input: {} },
+      ])
+      .addTurn({ type: 'textBlock', text: 'unreachable' })
+    const agent = new Agent({ model, tools: [work, abort], backgroundTasks: {}, printer: false })
+
+    const result = await agent.invoke('Run work.')
+
+    expect(result.stopReason).toBe('cancelled')
+    expect(persistedTasks(agent)![0]!.status).toBe('working')
+    release()
+    await expect.poll(() => persistedTasks(agent)![0]!.status).toBe('completed')
+  })
+
+  describe('cancelBackgroundTasks', () => {
+    function idleAgent(): Agent {
+      const work = tool({
+        name: 'work',
+        description: 'Wait until cancelled.',
+        inputSchema: z.object({}),
+        callback: () => new Promise<string>(() => {}),
+      })
+      const model = new MockMessageModel()
+        .addTurn(
+          [0, 1].map((index) => ({
+            type: 'toolUseBlock' as const,
+            name: 'work',
+            toolUseId: `work-${index}`,
+            input: { _background_execution: true },
+          }))
+        )
+        .addTurn({ type: 'textBlock', text: 'Tasks admitted.' })
+      return new Agent({
+        model,
+        tools: [work],
+        backgroundTasks: { waitForCompletion: false, maxConcurrency: 1 },
+        printer: false,
+      })
+    }
+
+    it('cancels queued and working tasks of an idle agent only when requested', async () => {
+      const agent = idleAgent()
+      await agent.invoke('Run work.')
+      await expect.poll(() => persistedTasks(agent)?.map((task) => task.status)).toEqual(['working', 'queued'])
+
+      agent.cancel()
+      expect(persistedTasks(agent)?.map((task) => task.status)).toEqual(['working', 'queued'])
+
+      agent.cancel({ cancelBackgroundTasks: true })
+      await expect.poll(() => persistedTasks(agent)?.map((task) => task.status)).toEqual(['cancelled', 'cancelled'])
+    })
+
+    it('cancels background tasks from a tool on the agent loop', async () => {
+      const work = tool({
+        name: 'work',
+        description: 'Wait until cancelled.',
+        inputSchema: z.object({}),
+        callback: () => new Promise<string>(() => {}),
+      })
+      const stopAll = tool({
+        name: 'stop_all',
+        description: 'Stop the agent and its background work.',
+        inputSchema: z.object({}),
+        callback: (_input, context) => {
+          context!.agent.cancel({ cancelBackgroundTasks: true })
+          return 'stopped'
+        },
+      })
+      const model = new MockMessageModel()
+        .addTurn([
+          { type: 'toolUseBlock', name: 'work', toolUseId: 'work-use', input: { _background_execution: true } },
+          { type: 'toolUseBlock', name: 'stop_all', toolUseId: 'stop-use', input: {} },
+        ])
+        .addTurn({ type: 'textBlock', text: 'unreachable' })
+      const agent = new Agent({ model, tools: [work, stopAll], backgroundTasks: {}, printer: false })
+
+      const result = await agent.invoke('Run work, then stop.')
+
+      expect(result.stopReason).toBe('cancelled')
+      await expect.poll(() => persistedTasks(agent)?.[0]?.status).toBe('cancelled')
+    })
+
+    function approvalAgent(approvals = 1): Agent {
+      const approval = tool({
+        name: 'approval',
+        description: 'Wait for approval.',
+        inputSchema: z.object({}),
+        callback: () => 'approved',
+      })
+      const model = new MockMessageModel()
+        .addTurn(
+          Array.from({ length: approvals }, (_, index) => ({
+            type: 'toolUseBlock' as const,
+            name: 'approval',
+            toolUseId: `approval-use-${index}`,
+            input: { _background_execution: true },
+          }))
+        )
+        .addTurn({ type: 'textBlock', text: 'Task admitted.' })
+        .addTurn({ type: 'textBlock', text: 'Continued.' })
+        .addTurn({ type: 'textBlock', text: 'Done.' })
+      const agent = new Agent({ model, tools: [approval], backgroundTasks: {}, printer: false })
+      agent.addMiddleware(ExecuteToolStage, async function* (context, next) {
+        context.interrupt<string>({ name: `approve-${context.toolUse.toolUseId}`, reason: 'Approve work?' })
+        return yield* next(context)
+      })
+      return agent
+    }
+
+    it('cancels an input-required task so the next invoke does not re-raise its interrupt', async () => {
+      const agent = approvalAgent()
+      const interrupted = await agent.invoke('Run approval.')
+      expect(interrupted.stopReason).toBe('interrupt')
+
+      agent.cancel({ cancelBackgroundTasks: true })
+      expect(persistedTasks(agent)?.map((task) => task.status)).toEqual(['cancelled'])
+      const resumed = await agent.invoke('Continue.')
+
+      expect(resumed.stopReason).toBe('endTurn')
+      expect(agent._interruptState.activated).toBe(false)
+      const [delivery] = deliveries(agent)
+      const delivered = agent.messages
+        .flatMap((message) => message.content)
+        .find((block) => block.type === 'toolResultBlock' && block.toolUseId === delivery!.toolUseId)
+      expect(delivered).toMatchObject({ content: [{ type: 'jsonBlock', json: { status: 'cancelled' } }] })
+    })
+
+    it('finishes as cancelled whenever cancel lands while interrupt responses are applied', async () => {
+      const stopReasons = new Set<string>()
+      // Each round lands the cancel one microtask later, to cover every await on the resume path.
+      for (let ticks = 1; ticks <= 40; ticks++) {
+        const agent = approvalAgent()
+        const interrupted = await agent.invoke('Run approval.')
+        const resuming = agent.invoke([
+          new InterruptResponseContent({ interruptId: interrupted.interrupts![0]!.id, response: 'yes' }),
+        ])
+        for (let tick = 0; tick < ticks; tick++) await Promise.resolve()
+        agent.cancel({ cancelBackgroundTasks: true })
+        stopReasons.add((await resuming).stopReason)
+      }
+
+      expect([...stopReasons]).toEqual(['cancelled'])
+    })
+
+    it('delivers each result once when cancel lands after a task interrupt is raised', async () => {
+      const agent = approvalAgent(2)
+      const interrupted = await agent.invoke('Run approvals.')
+      let armed = true
+      // Registered after the plugin, so it runs before the plugin's AfterInvocationEvent callback.
+      agent.addHook(AfterInvocationEvent, () => {
+        if (armed) agent.cancel({ cancelBackgroundTasks: true })
+        armed = false
+      })
+
+      // Answering one of the two approvals makes the plugin raise the other one again.
+      await agent.invoke([
+        new InterruptResponseContent({ interruptId: interrupted.interrupts![0]!.id, response: 'yes' }),
+      ])
+      const continued = await agent.invoke('Continue.')
+
+      expect(continued.stopReason).toBe('endTurn')
+      expect(agent._interruptState.activated).toBe(false)
+      expect(deliveries(agent)).toHaveLength(2)
+    })
+
+    it('cancels background tasks immediately while afterCurrentTools lets the tool batch finish', async () => {
+      const work = tool({
+        name: 'work',
+        description: 'Wait until cancelled.',
+        inputSchema: z.object({}),
+        callback: () => new Promise<string>(() => {}),
+      })
+      const statusesAtStop: (string | undefined)[] = []
+      const stopAll = tool({
+        name: 'stop_all',
+        description: 'Stop after this batch, and stop background work now.',
+        inputSchema: z.object({}),
+        callback: async (_input, context) => {
+          context!.agent.cancel({ afterCurrentTools: true, cancelBackgroundTasks: true })
+          await Promise.resolve()
+          statusesAtStop.push(...(persistedTasks(agent)?.map((task) => task.status) ?? []))
+          return 'stopped'
+        },
+      })
+      const after = tool({
+        name: 'after',
+        description: 'Run after stop_all in the same batch.',
+        inputSchema: z.object({}),
+        callback: () => 'ran',
+      })
+      const model = new MockMessageModel()
+        .addTurn([
+          { type: 'toolUseBlock', name: 'work', toolUseId: 'work-use', input: { _background_execution: true } },
+          { type: 'toolUseBlock', name: 'stop_all', toolUseId: 'stop-use', input: {} },
+          { type: 'toolUseBlock', name: 'after', toolUseId: 'after-use', input: {} },
+        ])
+        .addTurn({ type: 'textBlock', text: 'unreachable' })
+      const agent = new Agent({
+        model,
+        tools: [work, stopAll, after],
+        backgroundTasks: {},
+        toolExecutor: 'sequential',
+        printer: false,
+      })
+
+      const result = await agent.invoke('Run work, then stop.')
+
+      expect(result.stopReason).toBe('cancelled')
+      expect(statusesAtStop).toEqual(['cancelled'])
+      const toolResults = agent.messages
+        .flatMap((message) => message.content)
+        .filter((block) => block.type === 'toolResultBlock')
+        .map((block) => block.toolUseId)
+      expect(toolResults).toEqual(expect.arrayContaining(['stop-use', 'after-use']))
+    })
+
+    it.each([false, true])(
+      'returns without another model call when cancel lands while it waits for background completion (afterCurrentTools: %s)',
+      async (afterCurrentTools) => {
+        const work = tool({
+          name: 'work',
+          description: 'Wait until cancelled.',
+          inputSchema: z.object({}),
+          callback: () => new Promise<string>(() => {}),
+        })
+        const model = new MockMessageModel()
+          .addTurn({
+            type: 'toolUseBlock',
+            name: 'work',
+            toolUseId: 'work-use',
+            input: { _background_execution: true },
+          })
+          .addTurn({ type: 'textBlock', text: 'Task admitted.' })
+          .addTurn({ type: 'textBlock', text: 'Result received.' })
+        const agent = new Agent({ model, tools: [work], backgroundTasks: {}, printer: false })
+
+        const pending = agent.invoke('Run work.')
+        await expect.poll(() => agent.messages.at(-1)?.content[0]).toMatchObject({ text: 'Task admitted.' })
+        agent.cancel({ afterCurrentTools, cancelBackgroundTasks: true })
+        const result = await pending
+
+        expect(result.stopReason).toBe('endTurn')
+        expect(result.lastMessage.content).toMatchObject([{ text: 'Task admitted.' }])
+        expect(deliveries(agent)).toHaveLength(0)
+        expect(model.callCount).toBe(2)
+
+        const continued = await agent.invoke('Continue.')
+
+        expect(continued.stopReason).toBe('endTurn')
+        expect(deliveries(agent)).toHaveLength(1)
+        expect(persistedTasks(agent)).toBeUndefined()
+      }
+    )
+
+    it('ignores cancelBackgroundTasks before the agent has initialized', () => {
+      const agent = new Agent({ model: new MockMessageModel(), tools: [], backgroundTasks: {}, printer: false })
+
+      expect(() => agent.cancel({ cancelBackgroundTasks: true })).not.toThrow()
+    })
+
+    it('only cancels the invocation when background tasks are disabled', async () => {
+      const stop = tool({
+        name: 'stop',
+        description: 'Stop the agent.',
+        inputSchema: z.object({}),
+        callback: (_input, context) => {
+          context!.agent.cancel({ cancelBackgroundTasks: true })
+          return 'stopped'
+        },
+      })
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'stop', toolUseId: 'stop-use', input: {} })
+        .addTurn({ type: 'textBlock', text: 'unreachable' })
+      const agent = new Agent({ model, tools: [stop], printer: false })
+
+      const result = await agent.invoke('Stop.')
+
+      expect(result.stopReason).toBe('cancelled')
+      expect(() => agent.cancel({ cancelBackgroundTasks: true })).not.toThrow()
+    })
   })
 
   it('fails interrupted work restored from appState', async () => {

@@ -1,0 +1,41 @@
+---
+import DeciderHero from '../components/decider/DeciderHero.astro'
+import DeciderOverview from '../components/decider/DeciderOverview.astro'
+import NextSteps from '../components/NextSteps.astro'
+import ProductContent from '../components/ProductContent.astro'
+import {
+  DECIDER_LANDING_DESCRIPTION,
+  DECIDER_LANDING_TITLE,
+  DECIDER_LINKS,
+} from '../config/decider-landing'
+import { products } from '../config/navbar'
+import ProductLandingLayout from '../layouts/ProductLandingLayout.astro'
+import { productSchema } from '../util/structured-data'
+
+const deciderProduct = products.find((product) => product.slug === '/decider')
+if (!deciderProduct) throw new Error('Missing Decider product navigation entry')
+
+const siteUrl = Astro.site?.origin || 'https://strandsagents.com'
+---
+
+<ProductLandingLayout
+  title={DECIDER_LANDING_TITLE}
+  description={DECIDER_LANDING_DESCRIPTION}
+  canonicalPath="/decider/"
+  markdownPath="/decider/index.md"
+  ogImageAlt="Strands Decider: a model built to decide"
+  structuredData={[productSchema(deciderProduct, siteUrl)]}
+  footerTopShape={false}
+>
+  <DeciderHero />
+  <DeciderOverview />
+  <ProductContent project="decider" />
+  <NextSteps
+    title="Start with Decider"
+    ctas={[
+      { label: 'Run the quickstart', href: DECIDER_LINKS.quickstart },
+      { label: 'Compare models', href: DECIDER_LINKS.models },
+      { label: 'Use it with Strands', href: DECIDER_LINKS.sdk },
+    ]}
+  />
+</ProductLandingLayout>

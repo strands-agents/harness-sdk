@@ -9,7 +9,7 @@ import writerai
 import strands
 from strands.models.model import CacheConfig
 from strands.models.writer import WriterModel
-from strands.types.exceptions import ContextWindowOverflowException
+from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
 
 
 @pytest.fixture
@@ -677,6 +677,18 @@ async def test_stream_non_overflow_bad_request_propagates(writer_client, model, 
     messages = [{"role": "user", "content": [{"text": "test"}]}]
     with pytest.raises(writerai.BadRequestError, match="invalid 'model' parameter"):
         await alist(model.stream(messages))
+
+
+@pytest.mark.asyncio
+async def test_stream_rate_limit_as_throttle(writer_client, model, alist):
+    error = writerai.RateLimitError("Rate limit exceeded", response=unittest.mock.Mock(), body=None)
+    writer_client.chat.chat = unittest.mock.AsyncMock(side_effect=error)
+
+    messages = [{"role": "user", "content": [{"text": "test"}]}]
+    with pytest.raises(ModelThrottledException, match="Rate limit exceeded") as exc_info:
+        await alist(model.stream(messages))
+
+    assert exc_info.value.__cause__ == error
 
 
 @pytest.mark.asyncio

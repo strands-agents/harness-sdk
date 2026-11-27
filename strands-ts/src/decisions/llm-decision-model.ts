@@ -7,13 +7,20 @@
 
 import { z } from 'zod'
 
-import { normalizeError } from '../errors.js'
 import { BedrockModel } from '../models/bedrock.js'
 import { Model } from '../models/model.js'
+import { ModelProxy } from '../models/model-proxy.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME, StructuredOutputTool } from '../tools/structured-output-tool.js'
 import { Message, TextBlock, type ContentBlock, type ToolUseBlock } from '../types/messages.js'
 import { DecisionModel, uncertaintyAllowed } from './decision-model.js'
-import { Uncertain, type AnswerOf, type DecisionInput, type DecisionResult, type Question } from './types.js'
+import {
+  Uncertain,
+  type AnswerOf,
+  type DecisionCallOptions,
+  type DecisionInput,
+  type DecisionResult,
+  type Question,
+} from './types.js'
 
 /** Reserved option value used to signal uncertainty on the wire. */
 const UNCERTAIN_LITERAL = 'uncertain'
@@ -27,7 +34,9 @@ const DEFAULT_SYSTEM_PROMPT =
 export interface LLMDecisionModelOptions {
   /**
    * Underlying vended model; must honor forced `toolChoice` so the structured-output
-   * tool is the only possible response. Defaults to a zero-config {@link BedrockModel}.
+   * tool is the only possible response. Defaults to a {@link BedrockModel} with strict tool
+   * use enabled so answers conform to the schema. When passing your own model, enable your
+   * provider's strict mode (e.g. `strictTools: true` on {@link BedrockModel}).
    */
   readonly model?: Model
   /**
@@ -47,7 +56,7 @@ export interface LLMDecisionModelOptions {
  *
  * @example
  * ```typescript
- * const decision = new LLMDecisionModel({ model: new BedrockModel() })
+ * const decision = new LLMDecisionModel({ model: new BedrockModel({ strictTools: true }) })
  * const result = await decision.ask('The fruit is an apple', {
  *   color: {
  *     question: 'What color is the fruit?',
@@ -77,7 +86,7 @@ export class LLMDecisionModel extends DecisionModel {
    */
   constructor(options: LLMDecisionModelOptions = {}) {
     super()
-    const model = options.model ?? new BedrockModel()
+    const model = options.model ?? new BedrockModel({ strictTools: true })
     if (!(model instanceof Model)) throw new TypeError('options.model must be a Model')
     this._model = model
     this._systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT
@@ -85,18 +94,22 @@ export class LLMDecisionModel extends DecisionModel {
 
   protected async _ask<const Q extends Record<string, Question>>(
     state: DecisionInput,
-    questions: Q
+    questions: Q,
+    options: DecisionCallOptions
   ): Promise<DecisionResult<Q>> {
-    const schema = buildAnswerSchema(questions)
-    const tool = new StructuredOutputTool(schema)
+    const answerSchemas = buildAnswerSchemas(questions)
+    const tool = new StructuredOutputTool(
+      z.object(answerSchemas).describe('Answer for each question in the input decision set.')
+    )
     const messages = buildMessages(state)
     const systemPrompt = buildSystemPrompt(this._systemPrompt)
 
     const startedAt = globalThis.performance.now()
-    const stream = this._model.streamAggregated(messages, {
+    const stream = new ModelProxy(this._model).streamAggregated(messages, {
       systemPrompt,
       toolSpecs: [tool.toolSpec],
       toolChoice: { tool: { name: tool.name } },
+      ...(options.cancelSignal !== undefined && { cancelSignal: options.cancelSignal }),
     })
 
     let iteration = await stream.next()
@@ -114,16 +127,7 @@ export class LLMDecisionModel extends DecisionModel {
       throw new Error('decision model returned no structured answers')
     }
 
-    let parsed: Record<string, { answer: string; reason?: string }>
-    try {
-      parsed = schema.parse(toolUse.input) as Record<string, { answer: string; reason?: string }>
-    } catch (error) {
-      throw new Error(`decision model returned an invalid answer set: ${normalizeError(error).message}`, {
-        cause: error,
-      })
-    }
-
-    const answers = convertAnswers(parsed, questions)
+    const answers = parseAnswers(toolUse.input, answerSchemas, questions)
     const latencyMs = metadata?.metrics?.latencyMs ?? Math.round(globalThis.performance.now() - startedAt)
     const usage = metadata?.usage
 
@@ -141,20 +145,25 @@ export class LLMDecisionModel extends DecisionModel {
   }
 }
 
-function buildAnswerSchema<const Q extends Record<string, Question>>(
-  questions: Q
-): z.ZodObject<Record<string, z.ZodObject<{ answer: z.ZodEnum; reason: z.ZodOptional<z.ZodString> }>>> {
-  const shape: Record<string, z.ZodObject<{ answer: z.ZodEnum; reason: z.ZodOptional<z.ZodString> }>> = {}
-  for (const [id, question] of Object.entries(questions)) {
-    const literals = answerLiterals(question, uncertaintyAllowed(question))
-    shape[id] = z
-      .object({
-        answer: z.enum(literals as [string, ...string[]]),
-        reason: z.string().optional().describe(`Explanation when answer is '${UNCERTAIN_LITERAL}'; omit otherwise.`),
-      })
-      .describe(question.question)
-  }
-  return z.object(shape).describe('Answer for each question in the input decision set.')
+// Object.fromEntries keeps an id such as `__proto__` as an own key.
+function buildAnswerSchemas(questions: Record<string, Question>): Record<string, z.ZodObject> {
+  return Object.fromEntries(
+    Object.entries(questions).map(([id, question]) => {
+      const allowUncertain = uncertaintyAllowed(question)
+      const answer = z.enum(answerLiterals(question, allowUncertain) as [string, ...string[]])
+      // A reason is only ever surfaced on Uncertain, so questions that cannot be uncertain do not offer one.
+      const entry = allowUncertain
+        ? z.object({
+            answer,
+            reason: z
+              .string()
+              .optional()
+              .describe(`Explanation when answer is '${UNCERTAIN_LITERAL}'; omit otherwise.`),
+          })
+        : z.object({ answer })
+      return [id, entry.describe(question.question)]
+    })
+  )
 }
 
 function answerLiterals(question: Question, allowUncertain: boolean): readonly string[] {
@@ -162,18 +171,30 @@ function answerLiterals(question: Question, allowUncertain: boolean): readonly s
   return allowUncertain ? [...base, UNCERTAIN_LITERAL] : [...base]
 }
 
-function convertAnswers<const Q extends Record<string, Question>>(
-  raw: Record<string, { answer: string; reason?: string }>,
+// Each answer is validated on its own: a whole-object zod parse drops an own `__proto__` key and
+// accepts a missing one through the inherited prototype.
+function parseAnswers<const Q extends Record<string, Question>>(
+  input: unknown,
+  answerSchemas: Record<string, z.ZodObject>,
   questions: Q
 ): { [K in keyof Q]: AnswerOf<Q[K]> } {
-  const answers = {} as { [K in keyof Q]: AnswerOf<Q[K]> }
-  for (const id of Object.keys(questions) as (keyof Q)[]) {
-    const question = questions[id]!
-    const entry = raw[id as string]
-    if (entry === undefined) throw new Error(`decision model omitted answer for question id=<${String(id)}>`)
-    answers[id] = convertSingleAnswer(question, entry) as AnswerOf<Q[typeof id]>
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    throw new Error('decision model returned an invalid answer set: expected an object')
   }
-  return answers
+  const raw = input as Record<string, unknown>
+  return Object.fromEntries(
+    Object.keys(questions).map((id) => {
+      if (!Object.hasOwn(raw, id)) throw new Error(`decision model omitted answer for question id=<${id}>`)
+      const parsed = answerSchemas[id]!.safeParse(raw[id])
+      if (!parsed.success) {
+        throw new Error(
+          `decision model returned an invalid answer set: question id=<${id}> | ${parsed.error.message}`,
+          { cause: parsed.error }
+        )
+      }
+      return [id, convertSingleAnswer(questions[id]!, parsed.data as { answer: string; reason?: string })]
+    })
+  ) as { [K in keyof Q]: AnswerOf<Q[K]> }
 }
 
 function convertSingleAnswer(

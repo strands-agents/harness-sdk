@@ -15,6 +15,8 @@ SMOKE_MODELS = [
         (providers.anthropic, "claude-opus-5-5", 1_000_000),
         (providers.anthropic, "claude-sonnet-5-5", 1_000_000),
         (providers.anthropic, "claude-haiku-5-5", 1_000_000),
+        (providers.gemini, "gemini-4-neon", 1_048_576),
+        (providers.gemini, "gemini-4-hydrogen", 1_048_576),
         (providers.gemini, "gemini-4-argon", 1_048_576),
         (providers.gemini, "gemini-3.8-flash", 1_048_576),
         (providers.bedrock, "us.xai.grok-4.7", 524_288),
@@ -34,13 +36,7 @@ SMOKE_MODELS = [
     if provider is not None
 ]
 
-TOOL_USE_MARKS = {
-    "mistral-large-4-0": pytest.mark.xfail(
-        strict=True,
-        raises=TypeError,
-        reason="Large 4 returns list content (ThinkChunk/TextChunk) that MistralModel passes through as text: #5032",
-    ),
-}
+TOOL_USE_MARKS: dict[str, pytest.MarkDecorator] = {}
 
 
 @strands.tool

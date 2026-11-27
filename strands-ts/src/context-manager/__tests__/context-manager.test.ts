@@ -3,21 +3,31 @@ import { ContextManager } from '../context-manager.js'
 import { createMockAgent, invokeTrackedHook } from '../../__fixtures__/agent-helpers.js'
 import { AfterModelCallEvent, BeforeModelCallEvent } from '../../hooks/events.js'
 import { ContextWindowOverflowError } from '../../errors.js'
-import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
+import { Message, TextBlock, ToolResultBlock, ToolUseBlock, OffloadedBlock } from '../../types/messages.js'
 import type { Agent } from '../../agent/agent.js'
 import { InMemoryStorage } from '../../storage/in-memory-storage.js'
+import { Offload } from '../strategies/offload/index.js'
+import { ToolRegistry } from '../../registry/tool-registry.js'
+import { ToolStreamEvent } from '../../tools/tool.js'
+import type { CountTokensOptions } from '../../models/model.js'
+import type { Tool, ToolStreamGenerator } from '../../tools/tool.js'
+import type { ContextState } from '../types.js'
 
 function makeMockAgent(overrides?: {
   id?: string
   messages?: Message[]
-  countTokens?: (msgs: Message[]) => Promise<number>
+  systemPrompt?: string
+  toolRegistry?: ToolRegistry
+  countTokens?: (msgs: Message[], options?: CountTokensOptions) => Promise<number>
   estimateUtilization?: (tokens: number) => number
 }) {
   const messages = overrides?.messages ?? []
   const agent = createMockAgent({
     messages,
+    ...(overrides?.toolRegistry && { toolRegistry: overrides.toolRegistry }),
     extra: {
       id: overrides?.id ?? 'test-agent',
+      ...(overrides?.systemPrompt !== undefined && { systemPrompt: overrides.systemPrompt }),
       model: {
         getConfig: () => ({}),
         countTokens: overrides?.countTokens ?? (async () => 0),
@@ -26,6 +36,18 @@ function makeMockAgent(overrides?: {
     } as Partial<Agent>,
   })
   return agent
+}
+
+function makeStubTool(name: string): Tool {
+  return {
+    name,
+    description: `stub ${name}`,
+    toolSpec: { name, description: `stub ${name}`, inputSchema: { type: 'object', properties: {} } },
+    stream: async function* (): ToolStreamGenerator {
+      yield new ToolStreamEvent({ data: `stub ${name}` })
+      return new ToolResultBlock({ toolUseId: '', status: 'success', content: [] })
+    },
+  }
 }
 
 function makeOverflowEvent(agent: ReturnType<typeof makeMockAgent>) {
@@ -60,6 +82,74 @@ describe('ContextManager', () => {
       })
       expect(cm).toBeDefined()
     })
+
+    it.each([
+      ['the preset and Offload.defer', ['deferredToolLoading' as const, Offload.defer(['!shell'])]],
+      ['two Offload.defer strategies', [Offload.defer('toolSpecs'), Offload.defer(['shell'])]],
+    ])('rejects %s, which would share one tools list', (_name, strategies) => {
+      expect(() => new ContextManager({ strategies })).toThrow(
+        "contextManager takes one Offload.defer strategy, and the 'deferredToolLoading' preset is one; " +
+          'to change what the preset defers or when, use Offload.defer(target).when(conditions) in its place'
+      )
+    })
+  })
+
+  describe('deprecated stash surface', () => {
+    it('honors the stash config key when archive is omitted', async () => {
+      const storage = new InMemoryStorage()
+      const cm = new ContextManager({ stash: { storage: storage.namespace('team') } })
+      await cm.initAgent(makeMockAgent())
+      await cm.archive!.store('tool-1', 0, new TextEncoder().encode('{}'))
+
+      expect(await storage.list('')).toStrictEqual(['team/tool-1_0'])
+    })
+
+    it('honors stash: false', async () => {
+      const cm = new ContextManager({ stash: false })
+      await cm.initAgent(makeMockAgent())
+
+      expect(cm.archive).toBeUndefined()
+    })
+
+    it('prefers archive when both keys are set', async () => {
+      const cm = new ContextManager({ archive: false, stash: true })
+      await cm.initAgent(makeMockAgent())
+
+      expect(cm.archive).toBeUndefined()
+    })
+
+    it('resolves the stash getters to the archive', async () => {
+      const cm = new ContextManager()
+      await cm.initAgent(makeMockAgent())
+
+      // The published CLI reads these through optional chaining, so a missing getter loses the
+      // archive on fork without throwing.
+      expect(cm.stash).toBe(cm.archive)
+      expect(cm.stashIsDurable).toBe(cm.archiveIsDurable)
+    })
+
+    it('sets stash alongside archive on the state a strategy receives', async () => {
+      let received: ContextState | undefined
+      const cm = new ContextManager({
+        strategies: [
+          {
+            name: 'test',
+            apply: async (context) => {
+              received = context
+              return false
+            },
+          },
+        ],
+      })
+      const agent = makeMockAgent()
+      await cm.initAgent(agent)
+
+      await invokeTrackedHook(agent, makeBeforeEvent(agent, 100))
+
+      // A strategy reading `context.stash?.…` goes silently no-op without this, the same way the
+      // published CLI's fork did.
+      expect(received?.stash).toBe(cm.archive)
+    })
   })
 
   describe('from', () => {
@@ -93,12 +183,12 @@ describe('ContextManager', () => {
     })
   })
 
-  describe('stash root', () => {
-    it('uses an explicitly configured scoped stash storage as the exact root', async () => {
+  describe('archive root', () => {
+    it('uses an explicitly configured scoped archive storage as the exact root', async () => {
       const storage = new InMemoryStorage()
-      const cm = new ContextManager({ stash: { storage: storage.namespace('team') } })
+      const cm = new ContextManager({ archive: { storage: storage.namespace('team') } })
       await cm.initAgent(makeMockAgent())
-      await cm.stash!.store('tool-1', 0, new TextEncoder().encode('{}'))
+      await cm.archive!.store('tool-1', 0, new TextEncoder().encode('{}'))
 
       expect(await storage.list('')).toStrictEqual(['team/tool-1_0'])
     })
@@ -110,9 +200,65 @@ describe('ContextManager', () => {
       })
       const cm = new ContextManager()
       await cm.initAgent(agent)
-      await cm.stash!.store('tool-1', 0, new TextEncoder().encode('{}'))
+      await cm.archive!.store('tool-1', 0, new TextEncoder().encode('{}'))
 
       expect(await storage.list('')).toStrictEqual(['tenant/context/test-ses/scopes/agent/test-agent/tool-1_0'])
+    })
+  })
+
+  describe('seeded messages', () => {
+    it('does not overwrite an archived original with a seeded preview', async () => {
+      const storage = new InMemoryStorage()
+      const view = storage.namespace('team')
+      await view.write('tu-1_0', new TextEncoder().encode(JSON.stringify({ text: 'original full result' })))
+      const preview = new Message({
+        role: 'user',
+        content: [
+          new ToolResultBlock({
+            toolUseId: 'tu-1',
+            status: 'success',
+            content: [
+              new OffloadedBlock({
+                text: '[Truncated: 1 block, ~7,500 tokens] preview [ref: tu-1]',
+                method: 'truncate',
+                ref: 'tu-1',
+              }),
+            ],
+          }),
+        ],
+      })
+      const cm = new ContextManager({ archive: { storage: view } })
+
+      await cm.initAgent(makeMockAgent({ messages: [preview] }))
+
+      expect(await cm.archive!.retrieve('tu-1_0')).toStrictEqual({ data: { text: 'original full result' } })
+    })
+  })
+
+  describe('seeded messages from a session without placeholder metadata', () => {
+    it('does not overwrite an archived original with a text-only preview', async () => {
+      const storage = new InMemoryStorage()
+      const view = storage.namespace('team')
+      await view.write('tu-1_0', new TextEncoder().encode(JSON.stringify({ text: 'original full result' })))
+      await view.write('msg-1_0', new TextEncoder().encode(JSON.stringify({ text: 'original user text' })))
+      const restored = new Message({
+        role: 'user',
+        content: [
+          new TextBlock('[Truncated: ~2,000 tokens] original [ref: msg-1_0]'),
+          new ToolResultBlock({
+            toolUseId: 'tu-1',
+            status: 'success',
+            content: [new TextBlock('[Truncated: 1 block, ~7,500 tokens] preview [ref: tu-1_0]')],
+          }),
+        ],
+        trackingId: 'msg-1',
+      })
+      const cm = new ContextManager({ archive: { storage: view } })
+
+      await cm.initAgent(makeMockAgent({ messages: [restored] }))
+
+      expect(await cm.archive!.retrieve('tu-1_0')).toStrictEqual({ data: { text: 'original full result' } })
+      expect(await cm.archive!.retrieve('msg-1_0')).toStrictEqual({ data: { text: 'original user text' } })
     })
   })
 
@@ -473,6 +619,93 @@ describe('ContextManager', () => {
       await invokeTrackedHook(agent, event)
 
       expect(receivedUtilization).toBe(0.5)
+    })
+  })
+
+  describe('token counting', () => {
+    it('counts the system prompt and tool specs alongside the messages', async () => {
+      const toolRegistry = new ToolRegistry()
+      toolRegistry.add(makeStubTool('lookup'))
+      const countOptions: (CountTokensOptions | undefined)[] = []
+
+      let applied = false
+      const strategy = {
+        name: 'acts-once',
+        apply: async () => {
+          if (applied) return false
+          applied = true
+          return true
+        },
+      }
+      const cm = new ContextManager({ strategies: [strategy], archive: false })
+      const agent = makeMockAgent({
+        messages: [new Message({ role: 'user', content: [new TextBlock('hello')] })],
+        systemPrompt: 'be helpful',
+        toolRegistry,
+        countTokens: async (_messages, options) => {
+          countOptions.push(options)
+          return 100
+        },
+      })
+      await cm.initAgent(agent)
+
+      // No projectedInputTokens, so the initial gate counts too — both counts must see the same inputs.
+      await invokeTrackedHook(agent, makeBeforeEvent(agent))
+
+      expect(countOptions).toStrictEqual([
+        { systemPrompt: 'be helpful', toolSpecs: [toolRegistry.list()[0]!.toolSpec] },
+        { systemPrompt: 'be helpful', toolSpecs: [toolRegistry.list()[0]!.toolSpec] },
+      ])
+    })
+
+    it('omits the system prompt when the agent has none', async () => {
+      const countOptions: (CountTokensOptions | undefined)[] = []
+      const cm = new ContextManager({ strategies: [{ name: 'noop', apply: async () => false }], archive: false })
+      const agent = makeMockAgent({
+        messages: [new Message({ role: 'user', content: [new TextBlock('hello')] })],
+        countTokens: async (_messages, options) => {
+          countOptions.push(options)
+          return 100
+        },
+      })
+      await cm.initAgent(agent)
+
+      await invokeTrackedHook(agent, makeBeforeEvent(agent))
+
+      expect(countOptions).toStrictEqual([{ toolSpecs: [] }])
+    })
+
+    // The gate measures the messages it would drop, not the whole request the other gates are measured on.
+    it('leaves messages that fit the window in the emergency truncate gate', async () => {
+      const toolRegistry = new ToolRegistry()
+      toolRegistry.add(makeStubTool('lookup'))
+      let counts = 0
+      const messages = [
+        new Message({ role: 'user', content: [new TextBlock('a')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('b')] }),
+        new Message({ role: 'user', content: [new TextBlock('c')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('d')] }),
+      ]
+
+      // Only the emergency truncate appended by the constructor can act.
+      const cm = new ContextManager({ strategies: [{ name: 'noop', apply: async () => false }], archive: false })
+      const agent = makeMockAgent({
+        messages,
+        systemPrompt: 'be helpful',
+        toolRegistry,
+        estimateUtilization: (tokens: number) => tokens / 10_000,
+        // The request is over the window, the messages are a tenth of it: dropping them cannot be what helps.
+        countTokens: async () => {
+          counts += 1
+          return 1_000
+        },
+      })
+      await cm.initAgent(agent)
+
+      await invokeTrackedHook(agent, makeBeforeEvent(agent, 20_000))
+
+      expect(agent.messages).toHaveLength(4)
+      expect(counts).toBe(1)
     })
   })
 })

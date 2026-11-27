@@ -13,6 +13,7 @@ import {
   type CachePointBlock as BedrockCachePointBlock,
   type CacheTTL as BedrockSdkCacheTTL,
   type ContentBlock as BedrockContentBlock,
+  type ToolResultContentBlock,
   type ContentBlockDeltaEvent as BedrockContentBlockDeltaEvent,
   type ContentBlockStartEvent as BedrockContentBlockStartEvent,
   ConverseCommand,
@@ -59,7 +60,11 @@ import {
   type StreamOptions,
   resolveCacheSection,
   resolveConfigMetadata,
+  resolveMaxTokens,
+  type ResolvedCacheSection,
 } from '../models/model.js'
+import { SERVER_SIDE_SUMMARY_OFF, ModelInfo } from './model-info.js'
+import { bedrockCacheModelInfo, bedrockLimitsCachePoints, bedrockTakesGptCachePoints } from './bedrock-cache.js'
 import { THINKING_BINDING_BETA, isThinkingBindingError, thinkingWithDropBlock } from './thinking-binding.js'
 import type { ContentBlock, Message, ReasoningBlock, StopReason, ToolUseBlock } from '../types/messages.js'
 import type { AudioSource, ImageSource, VideoSource, DocumentSource } from '../types/media.js'
@@ -81,7 +86,7 @@ import {
 import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME } from '../tools/structured-output-tool.js'
 import type { z } from 'zod'
-import { MODEL_DEFAULTS, defaultModelWarningMessage } from './defaults.js'
+import { MODEL_DEFAULTS, defaultMaxTokensWarningMessage, defaultModelWarningMessage } from './defaults.js'
 
 const DEFAULT_BEDROCK_REGION_SUPPORTS_FIP = false
 
@@ -93,11 +98,11 @@ const DEFAULT_BEDROCK_REGION_SUPPORTS_FIP = false
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000
 
 /**
- * Models that require the status field in tool results.
- * According to AWS Bedrock API documentation, the status field is only supported by Anthropic Claude models.
+ * Models Bedrock documents as supporting the status field in tool results. Deliberately an allow-list:
+ * undocumented models may accept it (Llama 4) or reject it with a ValidationException (Writer).
  * @see https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolResultBlock.html
  */
-const MODELS_INCLUDE_STATUS = ['anthropic.claude']
+const MODELS_INCLUDE_STATUS = ['amazon.nova', 'anthropic.claude']
 
 /**
  * Models that reject any reasoning text block replayed in history
@@ -115,6 +120,7 @@ const MODELS_REJECT_REASONING_TEXT = [
   'nvidia.nemotron-super',
   'openai.gpt-5',
   'openai.gpt-6',
+  'openai.gpt-daybreak',
   'qwen.qwen3-235b',
   'qwen.qwen3-coder',
   'writer.palmyra',
@@ -130,6 +136,8 @@ const BEDROCK_CONTEXT_WINDOW_OVERFLOW_MESSAGES = [
   'input length and `max_tokens` exceed context limit',
   'too many total text bytes',
   'prompt is too long',
+  "This model's maximum context length is",
+  'Input Tokens Exceeded',
 ]
 
 /**
@@ -137,6 +145,15 @@ const BEDROCK_CONTEXT_WINDOW_OVERFLOW_MESSAGES = [
  * Prevents repeated failing API calls that will never succeed for the lifetime of the process.
  */
 const SKIP_COUNT_TOKENS_MODELS = new Set<string>()
+
+/**
+ * The regions Converse refused cache points in, by OpenAI GPT model ID. Requests to a model in one of its regions go
+ * without cache points for the lifetime of the process.
+ */
+const CACHE_POINTS_REFUSED = new Map<string, Set<string>>()
+
+/** The `AccessDeniedException` message Converse refuses every cache point for a model with. */
+const CACHE_POINTS_REFUSED_MESSAGE = 'did not allow prompt caching'
 
 /**
  * Mapping of Bedrock stop reasons to SDK stop reasons.
@@ -264,6 +281,8 @@ export interface BedrockModelConfig extends BaseModelConfig {
   /**
    * Maximum number of tokens to generate in the response.
    *
+   * @defaultValue the model's `maxOutputTokens` from the model info when known; otherwise `maxTokens` is not
+   * sent and Bedrock's per-model default applies.
    * @see https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InferenceConfiguration.html
    */
   maxTokens?: number
@@ -354,7 +373,9 @@ export interface BedrockModelConfig extends BaseModelConfig {
    * features outside its strict subset (recursive or external `$ref`, `minimum`/`maximum`/
    * `multipleOf`, `minLength`/`maxLength`, `additionalProperties` other than `false`) with a 400
    * at request time, and compiles each new schema on first use, which can take minutes.
-   * Incompatible with citations for Anthropic models.
+   * Incompatible with citations for Anthropic models. Turns deferred tool loading off, so `Offload.defer` and the
+   * `deferredToolLoading` preset send every full spec: strict mode needs each tool's full input schema. A `modelInfo`
+   * override of `deferredToolLoading` still wins.
    *
    * @see https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
    * @see https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolSpecification.html
@@ -398,6 +419,81 @@ export interface BedrockModelOptions extends BedrockModelConfig {
 }
 
 /**
+ * Steps a cache point index back over the adjacent run of non-PDF documents directly ahead of it. Claude on Bedrock
+ * only rejects a cache point *directly* preceded by a non-PDF document; moving further would evict durable content -
+ * usually the document itself, the expensive part - from the cached prefix for no reason.
+ *
+ * @param content - Content blocks of the message
+ * @param idx - Index of the cache point
+ * @returns The index the cache point may legally sit at
+ */
+function stepBackOverDocuments(content: BedrockContentBlock[], idx: number): number {
+  let targetIdx = idx
+  while (targetIdx > 0) {
+    const previous = content[targetIdx - 1]
+    if (!previous || !('document' in previous) || previous.document?.format === 'pdf') {
+      return targetIdx
+    }
+    targetIdx--
+  }
+  return targetIdx
+}
+
+/**
+ * Steps a cache point index back to directly after the nearest text block ahead of it, for a model that takes a
+ * cache point only directly after text.
+ *
+ * @param content - Content blocks of the message
+ * @param idx - Index of the cache point
+ * @returns The index the cache point may legally sit at, or 0 when no text block precedes it
+ */
+function stepBackToText(content: BedrockContentBlock[], idx: number): number {
+  for (let targetIdx = idx; targetIdx > 0; targetIdx--) {
+    const previous = content[targetIdx - 1]
+    if (previous && 'text' in previous) return targetIdx
+  }
+  return 0
+}
+
+/** Converse rejects a request with more cache points than this. */
+const MAX_CACHE_POINTS = 4
+
+/** With one point on the system prompt, that is the four Converse accepts. */
+const NOVA_CONVERSATION_CACHE_POINTS = 3
+
+/**
+ * Where the Nova conversation cache points go, newest first: directly after the last text block of each of the last
+ * `count` user messages that have one, ahead of the final message's per-call blocks. Nova takes a cache point only
+ * directly after text and reads an entry only at a position an earlier call marked too, so the points on earlier
+ * turns are what let a new turn read. More than one of them helps on a cross-region inference profile, where a call
+ * only finds entries written in the region that serves it. In a tool loop, whose user messages hold tool results,
+ * the points stay where they are.
+ *
+ * @param messages - Formatted messages
+ * @param lastUserIdx - Index of the last user message
+ * @param dynamicTrailingBlocks - Per-call blocks at the end of the last user message, kept out of the prefix
+ * @param count - The most positions to return
+ * @returns The message and block index to insert each point at, empty when no user message has text
+ */
+function novaCachePointPositions(
+  messages: BedrockMessage[],
+  lastUserIdx: number,
+  dynamicTrailingBlocks: number,
+  count: number
+): { msgIdx: number; blockIdx: number }[] {
+  const positions: { msgIdx: number; blockIdx: number }[] = []
+  for (let msgIdx = lastUserIdx; msgIdx >= 0 && positions.length < count; msgIdx--) {
+    const message = messages[msgIdx]
+    if (message?.role !== 'user') continue
+    const content = message.content ?? []
+    const end = msgIdx === lastUserIdx ? Math.max(0, content.length - dynamicTrailingBlocks) : content.length
+    const blockIdx = stepBackToText(content, end)
+    if (blockIdx > 0) positions.push({ msgIdx, blockIdx })
+  }
+  return positions
+}
+
+/**
  * AWS Bedrock model provider implementation.
  *
  * Implements the Model interface for AWS Bedrock using the Converse Stream API.
@@ -431,6 +527,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   private _config: BedrockModelConfig
   private _client: BedrockRuntimeClient
   private _dropStaleThinkingModelId: string | undefined
+  /** The client's region, resolved before each request once Converse has refused cache points for this model ID. */
+  private _region: string | undefined
 
   /**
    * Clears the cache of model IDs for which CountTokens is skipped.
@@ -487,6 +585,16 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       warnOnce(logger, defaultModelWarningMessage(MODEL_DEFAULTS.bedrock.modelId))
     }
 
+    // Warn only when the value comes from the shared model info, not when the user pinned it through `modelInfo`.
+    const maxTokens = this.getConfig().maxTokens
+    if (
+      modelConfig.maxTokens === undefined &&
+      modelConfig.modelInfo?.limits?.maxOutputTokens === undefined &&
+      maxTokens !== undefined
+    ) {
+      warnOnce(logger, defaultMaxTokensWarningMessage(maxTokens))
+    }
+
     // Build user agent string (extend if provided, otherwise use SDK identifier)
     const customUserAgent = clientConfig?.customUserAgent
       ? `${clientConfig.customUserAgent} strands-agents-ts-sdk`
@@ -510,13 +618,41 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
+   * Turns `serverSideSummary` off, reports how Converse caches the model where that differs from the shared model
+   * info, and turns deferred tool loading off under `strictTools`; a `modelInfo` override still wins over all three.
+   * Strict mode needs each tool's full input schema, so it can't take a deferred tool as a stub.
+   */
+  override get modelInfo(): ModelInfo {
+    // Claude-signed reasoning is taken back on a Claude model ID, and on one that names no vendor (an application
+    // inference profile ARN); reasoning produced through the latter is not tagged, so it is not kept from other vendors.
+    const namesNoVendor = !(this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId).split('/').pop()!.includes('.')
+    const reasoning = this._namesAnthropic() || namesNoVendor ? { reasoningProvider: 'anthropic' } : {}
+    const info = super.modelInfo
+    return ModelInfo.merge(
+      info,
+      SERVER_SIDE_SUMMARY_OFF,
+      this._takesGptCachePoints(info) ? undefined : bedrockCacheModelInfo(this.modelId ?? ''),
+      { capabilities: reasoning },
+      this._config.strictTools === true ? { capabilities: { deferredToolLoading: 'unsupported' } } : undefined,
+      this._config.modelInfo
+    )
+  }
+
+  /**
    * Returns the cache strategy for this model based on its model ID.
    * Returns the appropriate cache strategy name, or null if automatic caching is not supported.
    *
    * @returns Cache strategy name or null
    */
   private _getCacheStrategy(): 'anthropic' | null {
-    return this.modelInfo.capabilities?.promptCaching === 'cachePoints' ? 'anthropic' : null
+    const promptCaching = this.modelInfo.capabilities?.promptCaching
+    if (promptCaching === undefined) {
+      // Unlisted ids (a Claude release newer than the data, a prompt-router or custom-model ARN)
+      // keep the historical name test so caching does not turn off until the data catches up.
+      const modelId = (this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId).toLowerCase()
+      return modelId.includes('claude') || modelId.includes('anthropic') ? 'anthropic' : null
+    }
+    return promptCaching === 'cachePoints' ? 'anthropic' : null
   }
 
   /**
@@ -537,6 +673,10 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
     if (strategy === 'auto') {
       const detectedStrategy = this._getCacheStrategy()
+      // A model the provider caches implicitly needs no cache points, so it gets no warning.
+      if (!detectedStrategy && this.modelInfo.capabilities?.promptCaching === 'auto') {
+        return false
+      }
       if (!detectedStrategy) {
         warnOnce(
           logger,
@@ -548,6 +688,103 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     }
 
     return strategy === 'anthropic'
+  }
+
+  /**
+   * Whether Converse limits where this model takes cache points (no tools cache point, no TTL, only directly after
+   * text).
+   *
+   * @returns True for a Nova or OpenAI GPT model that takes cache points
+   */
+  private _limitsCachePoints(): boolean {
+    return (
+      bedrockLimitsCachePoints(this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId) ||
+      this._takesGptCachePoints(super.modelInfo)
+    )
+  }
+
+  /**
+   * Whether this is an OpenAI GPT model that takes cache points, unless Converse has refused them for it in the
+   * client's region.
+   *
+   * The region is resolved before each request once the model ID has a refusal, so a read before this instance's first
+   * such request does not see a refusal in its region.
+   *
+   * @param info - The model info before the Converse caching override
+   * @returns True when cache points are placed for an OpenAI GPT model
+   */
+  private _takesGptCachePoints(info: ModelInfo): boolean {
+    return bedrockTakesGptCachePoints(this.modelId ?? '', info) && !this._cachePointsRefused()
+  }
+
+  /**
+   * Whether Converse has refused cache points for this model ID in the client's last resolved region.
+   *
+   * @returns True once a refusal is recorded for the model ID and region
+   */
+  private _cachePointsRefused(): boolean {
+    const regions = CACHE_POINTS_REFUSED.get(this.modelId ?? '')
+    return this._region !== undefined && regions?.has(this._region) === true
+  }
+
+  /**
+   * Resolves a cache section against `cacheConfig.ttl`, dropping the TTL with a one-time warning when the model
+   * rejects one.
+   *
+   * @param section - The section's own setting
+   * @returns The resolved section
+   */
+  private _cacheSection(section: boolean | CacheTTL | undefined): ResolvedCacheSection {
+    const resolved = resolveCacheSection(section, this._config.cacheConfig?.ttl)
+    if (!resolved.ttl || !this._limitsCachePoints()) {
+      return resolved
+    }
+    warnOnce(
+      logger,
+      `model_id=<${this._config.modelId}> | ttl is not supported by this model, using the default cache duration`
+    )
+    return { enabled: resolved.enabled }
+  }
+
+  /**
+   * Resolves the tools cache section, disabled when caching is off or the model rejects a tools cache point.
+   *
+   * @returns The resolved section
+   */
+  private _toolsCacheSection(): ResolvedCacheSection {
+    if (!this._shouldEnableCaching()) {
+      return { enabled: false }
+    }
+    const toolsTTL = this._config.cacheConfig?.toolsTTL
+    if (this._limitsCachePoints()) {
+      if (toolsTTL !== undefined && toolsTTL !== false) {
+        warnOnce(
+          logger,
+          `model_id=<${this._config.modelId}>, toolsTTL=<${toolsTTL}> | this model accepts no tool-level cache point, tool definitions are cached only as part of the system prompt prefix`
+        )
+      }
+      return { enabled: false }
+    }
+    return this._cacheSection(toolsTTL)
+  }
+
+  /**
+   * Removes caller-placed TTLs from system cache points when the model rejects any TTL, warning once.
+   *
+   * @param system - The formatted system blocks (modified in place)
+   */
+  private _dropUnsupportedSystemTTLs(system: SystemContentBlock[]): void {
+    if (!this._limitsCachePoints()) {
+      return
+    }
+    for (const block of system) {
+      if (!('cachePoint' in block) || !block.cachePoint?.ttl) continue
+      delete block.cachePoint.ttl
+      warnOnce(
+        logger,
+        `model_id=<${this._config.modelId}> | ttl is not supported by this model, using the default cache duration`
+      )
+    }
   }
 
   /**
@@ -580,8 +817,9 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     if (!system || !this._shouldEnableCaching()) {
       return
     }
+    this._dropUnsupportedSystemTTLs(system)
     const cacheConfig = this._config.cacheConfig
-    const systemSection = resolveCacheSection(cacheConfig?.systemPromptTTL, cacheConfig?.ttl)
+    const systemSection = this._cacheSection(cacheConfig?.systemPromptTTL)
     let ttl = systemSection.ttl
 
     if (ttl && typeof cacheConfig?.systemPromptTTL !== 'string') {
@@ -632,7 +870,10 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * ```
    */
   getConfig(): BedrockModelConfig {
-    return resolveConfigMetadata(this._config, this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId)
+    const modelId = this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId
+    const config = resolveConfigMetadata(this._config, modelId)
+    const maxTokens = resolveMaxTokens(this._config, modelId)
+    return maxTokens === undefined || config.maxTokens !== undefined ? config : { ...config, maxTokens }
   }
 
   /**
@@ -804,10 +1045,6 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * Formats and sends the request, with the strongest structured output mechanism the model accepts when the call
    * must produce a schema.
    *
-   * Mechanisms the model rejects are remembered for the process, so later requests start at the one that works.
-   * Rejections happen during request validation, before the model generates anything. AnthropicModel follows the
-   * same order but resends through stream(), since its rejection arrives inside the stream.
-   *
    * @param messages - Conversation messages
    * @param options - Stream options
    * @param send - Sends a request to the Converse or ConverseStream API
@@ -818,12 +1055,39 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     options: StreamOptions | undefined,
     send: (input: ConverseStreamCommandInput) => Promise<T>
   ): Promise<T> {
+    // Resolved before formatting so placement sees a refusal in this region; other model IDs format without waiting.
+    if (CACHE_POINTS_REFUSED.has(this.modelId ?? '')) {
+      this._region = await this._client.config.region()
+    }
     const schema = options?.structuredOutputSchema
     const modelId = this._config.modelId
     if (!schema || !modelId) {
       return this._send(this._formatRequest(messages, options), send)
     }
+    return this._sendStructuredOutputRequest(messages, options, schema, modelId, send)
+  }
 
+  /**
+   * Formats and sends the request with the strongest structured output mechanism the model accepts.
+   *
+   * Mechanisms the model rejects are remembered for the process, so later requests start at the one that works.
+   * Rejections happen during request validation, before the model generates anything. AnthropicModel follows the
+   * same order but resends through stream(), since its rejection arrives inside the stream.
+   *
+   * @param messages - Conversation messages
+   * @param options - Stream options
+   * @param schema - The schema the response must produce
+   * @param modelId - The configured model ID
+   * @param send - Sends a request to the Converse or ConverseStream API
+   * @returns The API response
+   */
+  private async _sendStructuredOutputRequest<T>(
+    messages: Message[],
+    options: StreamOptions,
+    schema: z.ZodSchema,
+    modelId: string,
+    send: (input: ConverseStreamCommandInput) => Promise<T>
+  ): Promise<T> {
     const mechanisms = structuredOutputMechanisms('bedrock', modelId, options.toolChoice, schema, this.modelInfo)
     for (const mechanism of mechanisms.slice(0, -1)) {
       try {
@@ -878,20 +1142,82 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     request: ConverseStreamCommandInput,
     send: (input: ConverseStreamCommandInput) => Promise<T>
   ): Promise<T> {
+    const sent = (this._dropStaleThinkingModelId === request.modelId && requestWithDropBlock(request)) || request
     try {
-      return await send(request)
+      return await this._sendWithCachePointFallback(sent, send)
     } catch (error) {
       const isBindingError =
         error instanceof Error && error.name === 'ValidationException' && isThinkingBindingError(error)
-      const retryFields = isBindingError ? fieldsWithDropBlock(request.additionalModelRequestFields) : undefined
-      if (!retryFields) throw error
+      const retryRequest = isBindingError ? requestWithDropBlock(sent) : undefined
+      if (!retryRequest) throw error
 
       logger.warn(
         `model_id=<${request.modelId}> | history edit invalidated replayed thinking blocks, retrying with drop_block`
       )
+      const response = await this._sendWithCachePointFallback(retryRequest, send)
+      // Latched only once the retry is accepted, so a rejected retry does not alter later requests.
       this._dropStaleThinkingModelId = request.modelId
-      return send({ ...request, additionalModelRequestFields: retryFields })
+      return response
     }
+  }
+
+  /**
+   * Sends the request, resending it once without cache points when Converse refuses every cache point for an OpenAI
+   * GPT model this provider places them for.
+   *
+   * Converse takes cache points for some OpenAI GPT models and refuses them for others with an
+   * `AccessDeniedException`. Once the resend is accepted, every later request to this model ID in the client's region
+   * goes without cache points for the process, caller-placed ones included. Any other error, including a
+   * `ValidationException` for one misplaced cache point, and any error for another model, is rethrown.
+   *
+   * @param request - Formatted Bedrock request
+   * @param send - Sends a request to the Converse or ConverseStream API
+   * @returns The API response
+   */
+  private async _sendWithCachePointFallback<T>(
+    request: ConverseStreamCommandInput,
+    send: (input: ConverseStreamCommandInput) => Promise<T>
+  ): Promise<T> {
+    if (!this._fallsBackFromCachePoints()) {
+      return send(request)
+    }
+    if (this._cachePointsRefused()) {
+      return send(requestWithoutCachePoints(request) ?? request)
+    }
+    try {
+      return await send(request)
+    } catch (error) {
+      const retryRequest = isCachePointsRefusal(error) ? requestWithoutCachePoints(request) : undefined
+      if (!retryRequest) throw error
+
+      const response = await send(retryRequest)
+      await this._recordCachePointsRefusal()
+      return response
+    }
+  }
+
+  /**
+   * Whether a refusal of every cache point is resent without them: only for an OpenAI GPT model this provider places
+   * cache points for, whether or not Converse has refused them yet.
+   *
+   * @returns True when the cache point fallback applies
+   */
+  private _fallsBackFromCachePoints(): boolean {
+    return bedrockTakesGptCachePoints(this.modelId ?? '', super.modelInfo)
+  }
+
+  /**
+   * Records that Converse refused cache points for this model ID in the client's region, warning once per pair.
+   */
+  private async _recordCachePointsRefusal(): Promise<void> {
+    const modelId = this.modelId ?? ''
+    const region = await this._client.config.region()
+    this._region = region
+    CACHE_POINTS_REFUSED.set(modelId, (CACHE_POINTS_REFUSED.get(modelId) ?? new Set()).add(region))
+    warnOnce(
+      logger,
+      `model_id=<${modelId}>, region=<${region}> | converse rejected cache points for this model, sending none`
+    )
   }
 
   /**
@@ -902,10 +1228,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * @returns Formatted Bedrock request
    */
   private _formatRequest(messages: Message[], options?: StreamOptions): ConverseStreamCommandInput {
-    const request: ConverseStreamCommandInput = {
-      modelId: this._config.modelId,
-      messages: this._formatMessages(messages, options?.dynamicTrailingBlocks ?? 0),
-    }
+    const request: ConverseStreamCommandInput = { modelId: this._config.modelId }
 
     // Add system prompt
     if (options?.systemPrompt !== undefined) {
@@ -919,6 +1242,9 @@ export class BedrockModel extends Model<BedrockModelConfig> {
     if (this._shouldCacheSystem(request.system)) {
       request.system!.push({ cachePoint: { type: 'default' } })
     }
+
+    const systemCachePoints = (request.system ?? []).filter((block) => 'cachePoint' in block).length
+    request.messages = this._formatMessages(messages, options?.dynamicTrailingBlocks ?? 0, systemCachePoints)
 
     // Add tool configuration
     // Bedrock requires toolConfig when messages contain tool use/result blocks.
@@ -951,10 +1277,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
           }) as Tool
       )
 
-      const cacheConfig = this._config.cacheConfig
-      const toolsCache = this._shouldEnableCaching()
-        ? resolveCacheSection(cacheConfig?.toolsTTL, cacheConfig?.ttl)
-        : { enabled: false }
+      const toolsCache = this._toolsCacheSection()
       if (toolsCache.enabled) {
         const cachePoint: BedrockCachePointBlock = { type: 'default' }
         if (toolsCache.ttl) {
@@ -980,7 +1303,8 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
     // Add inference configuration
     const inferenceConfig: InferenceConfiguration = {}
-    if (this._config.maxTokens !== undefined) inferenceConfig.maxTokens = this._config.maxTokens
+    const maxTokens = this.getConfig().maxTokens
+    if (maxTokens !== undefined) inferenceConfig.maxTokens = maxTokens
     if (this._config.temperature !== undefined) inferenceConfig.temperature = this._config.temperature
     if (this._config.topP !== undefined) inferenceConfig.topP = this._config.topP
     if (this._config.stopSequences !== undefined) inferenceConfig.stopSequences = this._config.stopSequences
@@ -1037,7 +1361,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
 
     const toolChoice = options?.toolChoice
     if (!toolChoice || 'auto' in toolChoice) {
-      return this._dropStaleThinkingModelId === this._config.modelId ? (fieldsWithDropBlock(fields) ?? fields) : fields
+      return fields
     }
 
     const { thinking: _, ...rest } = fields
@@ -1048,9 +1372,11 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * Formats messages for Bedrock API.
    *
    * @param messages - SDK messages
+   * @param dynamicTrailingBlocks - Per-call blocks at the end of the last user message
+   * @param systemCachePoints - How many cache points the system prompt carries
    * @returns Bedrock-formatted messages
    */
-  private _formatMessages(messages: Message[], dynamicTrailingBlocks = 0): BedrockMessage[] {
+  private _formatMessages(messages: Message[], dynamicTrailingBlocks = 0, systemCachePoints = 0): BedrockMessage[] {
     // Pre-compute the index of the last user message containing text/image content
     // This ensures guardContent wrapping is maintained across tool execution cycles
     const lastUserTextIdx = this._config.guardrailConfig?.guardLatestUserMessage
@@ -1086,15 +1412,27 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       )
     }
 
-    const cacheConfig = this._config.cacheConfig
     const messagesCache = this._shouldEnableCaching()
-      ? resolveCacheSection(cacheConfig?.messagesTTL, cacheConfig?.ttl)
+      ? this._cacheSection(this._config.cacheConfig?.messagesTTL)
       : { enabled: false }
     if (messagesCache.enabled) {
-      this._injectCachePoint(formattedMessages, messagesCache.ttl, dynamicTrailingBlocks)
+      this._injectCachePoint(formattedMessages, messagesCache.ttl, dynamicTrailingBlocks, systemCachePoints)
     }
 
     return formattedMessages
+  }
+
+  /** Whether the model ID names an Anthropic model. */
+  private _namesAnthropic(): boolean {
+    const modelId = (this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId).toLowerCase()
+    return modelId.includes('anthropic') || modelId.includes('claude')
+  }
+
+  /** Tags a Claude model's signed or redacted reasoning; a model ID that names no vendor stays untagged. */
+  private _tagReasoning(delta: ReasoningContentDelta): ReasoningContentDelta {
+    if (!this._namesAnthropic() || (!delta.signature && !delta.redactedContent)) return delta
+    const modelId = this._config.modelId ?? MODEL_DEFAULTS.bedrock.modelId
+    return { ...delta, providerData: { provider: 'anthropic', modelId, data: {} } }
   }
 
   /**
@@ -1134,9 +1472,10 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * @param msgIdx - Index of the message, for logging
    * @param ttl - TTL for the honored cache point. Falsy leaves the Bedrock default.
    * @returns True when the point was kept, possibly relocated. False when nothing cacheable precedes
-   *   it, so the point was removed: Bedrock rejects a cache point with no content ahead of it ("There
-   *   is nothing available to cache"). The caller then retries automatic placement, which lands a point
-   *   only if the remaining content allows one - for a leading document it declines too.
+   *   it, or, on a model that takes a cache point only after text, no text precedes it, so the point was
+   *   removed: Bedrock rejects a cache point with no content ahead of it ("There is nothing available
+   *   to cache"). The caller then retries automatic placement, except after a leading document,
+   *   where the blocks after the point are per-call content and no position ahead of them is legal.
    */
   private _honorPlacedCachePoint(
     content: BedrockContentBlock[],
@@ -1170,22 +1509,20 @@ export class BedrockModel extends Model<BedrockModelConfig> {
       placed.cachePoint.ttl = ttl as BedrockSdkCacheTTL
     }
 
-    // Bedrock only rejects a cache point *directly* preceded by a non-PDF document, so step back over
-    // the adjacent run of them. Moving further would evict durable content - usually the document
-    // itself, the expensive part - from the cached prefix for no reason.
-    let targetIdx = placedIdx
-    while (targetIdx > 0) {
-      const previous = content[targetIdx - 1]
-      if (!previous || !('document' in previous) || previous.document?.format === 'pdf') {
-        break
-      }
-      targetIdx--
-    }
+    const novaRules = this._limitsCachePoints()
+    const targetIdx = novaRules ? stepBackToText(content, placedIdx) : stepBackOverDocuments(content, placedIdx)
 
     if (targetIdx !== placedIdx) {
       content.splice(placedIdx, 1)
+      if (targetIdx === 0 && novaRules) {
+        warnOnce(
+          logger,
+          `model_id=<${this._config.modelId}> | dropped a caller-placed cache point with no text ahead of it, this model takes one only directly after text, placing it automatically instead`
+        )
+        return false
+      }
       if (targetIdx === 0) {
-        // Nothing precedes the documents, so there is no prefix to cache.
+        // Nothing precedes the documents, so the point has nowhere legal to go ahead of the caller's boundary.
         logger.warn(`msg_idx=<${msgIdx}> | dropped cache point ahead of a leading document`)
         return false
       }
@@ -1199,7 +1536,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
   }
 
   /**
-   * Ensure the last user message carries exactly one cache point.
+   * Place the conversation cache points: one in the last user message, several across recent ones on Nova.
    *
    * A cache point already present in the last user message is honored where it sits rather than
    * replaced: a caller places one to mark where its reusable prefix ends, ahead of content that is
@@ -1207,12 +1544,21 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    * the cached prefix, so every request would write a new entry and none would ever read one.
    *
    * Cache points in earlier messages are still removed, so they cannot accumulate one per turn
-   * against the provider's cache-point budget.
+   * against the provider's cache-point budget. Nova is the exception: it gets a point on each of its last
+   * few user messages with text (see `novaCachePointPositions`).
    *
    * @param messages - List of messages to inject cache point into (modified in place)
    * @param ttl - TTL for the injected cache point. Falsy leaves the Bedrock default.
+   * @param dynamicTrailingBlocks - Per-call blocks at the end of the last user message
+   * @param systemCachePoints - How many cache points the system prompt carries. Nova gets fewer conversation
+   * points when the full set would take the request past the cache points Converse accepts.
    */
-  private _injectCachePoint(messages: BedrockMessage[], ttl?: CacheTTL, dynamicTrailingBlocks = 0): void {
+  private _injectCachePoint(
+    messages: BedrockMessage[],
+    ttl?: CacheTTL,
+    dynamicTrailingBlocks = 0,
+    systemCachePoints = 0
+  ): void {
     if (messages.length === 0) {
       return
     }
@@ -1258,6 +1604,9 @@ export class BedrockModel extends Model<BedrockModelConfig> {
           }
         }
 
+        // Blocks after the caller's boundary are per-call content, so a fallback point never lands among them.
+        let trailingBlocks = dynamicTrailingBlocks
+        const novaPoints = Math.min(NOVA_CONVERSATION_CACHE_POINTS, MAX_CACHE_POINTS - systemCachePoints)
         if (placedIdxs.length > 0) {
           // One boundary per message, so this message contributes a single cache point to the budget.
           // Extras are not worthless - a second point ahead of the per-call tail doubles the cached
@@ -1272,16 +1621,39 @@ export class BedrockModel extends Model<BedrockModelConfig> {
               `msg_idx=<${lastUserIdx}>, block_idx=<${extraIdx}> | stripped existing cache point (auto mode manages cache points)`
             )
           }
-          if (this._honorPlacedCachePoint(content, placedIdxs[0] as number, lastUserIdx, ttl)) {
+          const placedIdx = placedIdxs[0] as number
+          if (this._limitsCachePoints() && novaPoints <= 0) {
+            content.splice(placedIdx, 1)
+            logger.warn(
+              `msg_idx=<${lastUserIdx}>, block_idx=<${placedIdx}> | no cache point left after the system prompt | dropped caller-placed cache point`
+            )
             return
           }
+          if (this._honorPlacedCachePoint(content, placedIdx, lastUserIdx, ttl)) {
+            if (this._limitsCachePoints()) {
+              // The caller's point is the newest one, so the rest go on the user messages before it.
+              this._injectNovaCachePoints(messages, lastUserIdx - 1, 0, novaPoints - 1)
+            }
+            return
+          }
+          trailingBlocks = Math.max(trailingBlocks, content.length - placedIdx)
           if (content.length === 0) {
             // Removing the point emptied the message, so there is nothing left to cache and
             // re-adding one would rebuild the request Bedrock just refused.
             logger.debug(`msg_idx=<${lastUserIdx}> | no content left to cache`)
             return
           }
+          if (placedIdx > 0 && !this._limitsCachePoints()) {
+            // Only leading documents preceded the point, and the blocks after it are per-call content.
+            logger.debug(`msg_idx=<${lastUserIdx}> | no position ahead of the caller's boundary`)
+            return
+          }
           // The point could not legally stay, so fall through to automatic placement below.
+        }
+
+        if (this._limitsCachePoints()) {
+          this._injectNovaCachePoints(messages, lastUserIdx, trailingBlocks, novaPoints)
+          return
         }
 
         const cachePoint: BedrockCachePointBlock = { type: 'default' }
@@ -1299,36 +1671,60 @@ export class BedrockModel extends Model<BedrockModelConfig> {
             return
           }
           content.splice(boundaryIdx, 0, { cachePoint })
-          // A false here means a leading document left no prefix to cache; automatic placement declines
-          // for the same reason, so there is nothing to fall back to.
+          // A false here means a leading document left no legal position ahead of the per-call blocks.
           this._honorPlacedCachePoint(content, boundaryIdx, lastUserIdx, ttl)
           return
         }
 
-        // Locate the first non-PDF document block
-        let firstNonPdfDocIdx: number | null = null
-        for (let i = 0; i < content.length; i++) {
-          const block = content[i]
-          if (block && 'document' in block && block.document?.format !== 'pdf') {
-            firstNonPdfDocIdx = i
-            break
-          }
-        }
-
-        // Insert the cache point before the first non-PDF document so it is not directly
-        // preceded by that block, which Bedrock rejects with a ValidationException
-        if (firstNonPdfDocIdx === null) {
-          content.push({ cachePoint })
-        } else if (firstNonPdfDocIdx > 0) {
-          content.splice(firstNonPdfDocIdx, 0, { cachePoint })
-        } else {
-          // A leading non-PDF document leaves no prefix to cache and Bedrock rejects it
-          logger.debug(`msg_idx=<${lastUserIdx}> | skipped cache point for leading non-PDF document`)
+        const insertIdx = this._autoCachePointIdx(content, lastUserIdx)
+        if (insertIdx === undefined) {
           return
         }
+        content.splice(insertIdx, 0, { cachePoint })
 
         logger.debug(`msg_idx=<${lastUserIdx}> | added cache point to last user message`)
       }
+    }
+  }
+
+  /**
+   * Where automatic placement puts the conversation cache point in the last user message: at the end, stepped back
+   * over any trailing non-PDF documents, since Bedrock rejects a cache point directly after one.
+   *
+   * @param content - Content blocks of the last user message
+   * @param msgIdx - Index of the message, for logging
+   * @returns The insertion index, or undefined when the message holds only non-PDF documents
+   */
+  private _autoCachePointIdx(content: BedrockContentBlock[], msgIdx: number): number | undefined {
+    const insertIdx = stepBackOverDocuments(content, content.length)
+    if (insertIdx === 0) {
+      logger.debug(`msg_idx=<${msgIdx}> | skipped cache point, message holds only non-PDF documents`)
+      return undefined
+    }
+    return insertIdx
+  }
+
+  /**
+   * Places the Nova conversation cache points, which take no TTL, at `novaCachePointPositions`.
+   *
+   * @param messages - Formatted messages (modified in place)
+   * @param lastUserIdx - Index of the last user message
+   * @param dynamicTrailingBlocks - Per-call blocks at the end of the last user message
+   * @param count - The most points to place
+   */
+  private _injectNovaCachePoints(
+    messages: BedrockMessage[],
+    lastUserIdx: number,
+    dynamicTrailingBlocks: number,
+    count: number
+  ): void {
+    const positions = novaCachePointPositions(messages, lastUserIdx, dynamicTrailingBlocks, count)
+    if (positions.length === 0) {
+      logger.debug('no user text to follow or no cache point left, skipped conversation cache point')
+    }
+    for (const { msgIdx, blockIdx } of positions) {
+      messages[msgIdx]?.content?.splice(blockIdx, 0, { cachePoint: { type: 'default' } })
+      logger.debug(`msg_idx=<${msgIdx}>, block_idx=<${blockIdx}> | added cache point after text`)
     }
   }
 
@@ -1468,36 +1864,48 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         }
 
       case 'toolResultBlock': {
-        const content = block.content.map((content) => {
+        const content = block.content.flatMap((content): ToolResultContentBlock[] => {
           switch (content.type) {
+            case 'unknownBlock':
+              return []
+            // ModelProxy sends references as text unless a modelInfo override reports native deferral, which Converse
+            // lacks. Converse then gets every full spec, so the tool only needs naming.
+            case 'toolReferenceBlock':
+              return [{ text: `Loaded ${content.name}.` }]
             case 'textBlock':
-              return { text: content.text }
+              return [{ text: content.text }]
             case 'jsonBlock':
-              return { json: content.json }
+              return [{ json: content.json }]
             case 'imageBlock':
-              return {
-                image: {
-                  format: content.format as ImageFormat,
-                  source: this._formatMediaSource(content.source),
+              return [
+                {
+                  image: {
+                    format: content.format as ImageFormat,
+                    source: this._formatMediaSource(content.source),
+                  },
                 },
-              }
+              ]
             case 'videoBlock':
-              return {
-                video: {
-                  format: content.format === '3gp' ? 'three_gp' : (content.format as VideoFormat),
-                  source: this._formatMediaSource(content.source),
+              return [
+                {
+                  video: {
+                    format: content.format === '3gp' ? 'three_gp' : (content.format as VideoFormat),
+                    source: this._formatMediaSource(content.source),
+                  },
                 },
-              }
+              ]
             case 'documentBlock':
-              return {
-                document: {
-                  name: content.name,
-                  format: content.format as DocumentFormat,
-                  source: this._formatDocumentSource(content.source),
-                  ...(content.citations && { citations: content.citations }),
-                  ...(content.context && { context: content.context }),
+              return [
+                {
+                  document: {
+                    name: content.name,
+                    format: content.format as DocumentFormat,
+                    source: this._formatDocumentSource(content.source),
+                    ...(content.citations && { citations: content.citations }),
+                    ...(content.context && { context: content.context }),
+                  },
                 },
-              }
+              ]
           }
         })
 
@@ -1606,6 +2014,16 @@ export class BedrockModel extends Model<BedrockModelConfig> {
           throw new Error('guardContent must have either text or image')
         }
       }
+
+      case 'injectedBlock':
+        // ModelProxy turns the ones Bedrock should see into text, so only a direct call or a modelInfo override that
+        // turns temporaryMessages on gets here.
+        warnOnce(logger, 'block_type=<injectedBlock> | bedrock does not send injected blocks | skipping it')
+        return undefined
+      case 'summaryBlock':
+        throw new Error(`content_type=<${block.type}> | unsupported type`)
+      case 'unknownBlock':
+        return undefined
     }
   }
 
@@ -1774,7 +2192,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         }
 
         if (Object.keys(delta).length > 1) {
-          events.push({ type: 'modelContentBlockDeltaEvent', delta })
+          events.push({ type: 'modelContentBlockDeltaEvent', delta: this._tagReasoning(delta) })
         }
 
         events.push({ type: 'modelContentBlockStopEvent' })
@@ -1925,7 +2343,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
             if (reasoning.redactedContent) reasoningDelta.redactedContent = reasoning.redactedContent
 
             if (Object.keys(reasoningDelta).length > 1) {
-              events.push({ type: 'modelContentBlockDeltaEvent', delta: reasoningDelta })
+              events.push({ type: 'modelContentBlockDeltaEvent', delta: this._tagReasoning(reasoningDelta) })
             }
           },
           citation: (citation: BedrockCitationsDelta): void => {
@@ -2267,18 +2685,69 @@ function recordRejectedMechanism(
 }
 
 /**
- * Return additional request fields that drop stale thinking blocks, or undefined if they cannot change.
+ * Return the request with stale thinking blocks dropped, or undefined if it cannot change.
  *
- * @param fields - The additional model request fields
- * @returns The fields with drop_block and its beta, or undefined
+ * @param request - The Bedrock request
+ * @returns The request with drop_block and its beta, or undefined
  */
-function fieldsWithDropBlock(fields: JSONValue | undefined): Record<string, JSONValue> | undefined {
+function requestWithDropBlock(request: ConverseStreamCommandInput): ConverseStreamCommandInput | undefined {
+  const fields = request.additionalModelRequestFields ?? {}
   if (typeof fields !== 'object' || fields === null || Array.isArray(fields)) return undefined
-  const thinking = thinkingWithDropBlock(fields.thinking)
+  const toolChoice = request.toolConfig?.toolChoice
+  const thinking = thinkingWithDropBlock(fields.thinking, !!toolChoice && ('any' in toolChoice || 'tool' in toolChoice))
   if (!thinking) return undefined
   const betas = Array.isArray(fields.anthropic_beta) ? fields.anthropic_beta : []
   const anthropicBeta = betas.includes(THINKING_BINDING_BETA) ? betas : [...betas, THINKING_BINDING_BETA]
-  return { ...fields, anthropic_beta: anthropicBeta, thinking }
+  return { ...request, additionalModelRequestFields: { ...fields, anthropic_beta: anthropicBeta, thinking } }
+}
+
+/**
+ * Whether Converse refused the request because the model takes no cache points at all.
+ *
+ * @param error - The error the request failed with
+ * @returns True for a refusal of every cache point
+ */
+function isCachePointsRefusal(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.name === 'AccessDeniedException' &&
+    error.message.includes(CACHE_POINTS_REFUSED_MESSAGE)
+  )
+}
+
+/**
+ * Return the request with every cache point removed from the system prompt, messages and tool definitions, or
+ * undefined if it carries none.
+ *
+ * @param request - The Bedrock request
+ * @returns The request without cache points, or undefined
+ */
+function requestWithoutCachePoints(request: ConverseStreamCommandInput): ConverseStreamCommandInput | undefined {
+  const { system, messages, toolConfig } = request
+  const blocks = [
+    ...(system ?? []),
+    ...(toolConfig?.tools ?? []),
+    ...(messages ?? []).flatMap((message) => message.content ?? []),
+  ]
+  if (!blocks.some(isCachePoint)) return undefined
+  const stripped = { ...request }
+  if (system) {
+    stripped.system = system.filter((block) => !isCachePoint(block))
+  }
+  if (messages) {
+    stripped.messages = messages.map((message) => ({
+      ...message,
+      content: message.content?.filter((block) => !isCachePoint(block)),
+    }))
+  }
+  if (toolConfig?.tools) {
+    stripped.toolConfig = { ...toolConfig, tools: toolConfig.tools.filter((tool) => !isCachePoint(tool)) }
+  }
+  return stripped
+}
+
+function isCachePoint(block: object): boolean {
+  return 'cachePoint' in block
 }
 
 /**

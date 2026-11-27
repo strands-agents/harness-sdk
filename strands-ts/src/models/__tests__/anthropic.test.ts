@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import Anthropic from '@anthropic-ai/sdk'
+import { VERSION as SDK_VERSION } from '@anthropic-ai/sdk/version'
 import { isNode } from '../../__fixtures__/environment.js'
 import { AnthropicModel } from '../anthropic.js'
+import { acceptsMimeType, lookupModelInfo } from '../model-info.js'
+import { ModelProxy } from '../model-proxy.js'
 import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../../errors.js'
 import { collectGenerator, collectIterator } from '../../__fixtures__/model-test-helpers.js'
 import {
@@ -9,18 +12,24 @@ import {
   TextBlock,
   CachePointBlock,
   GuardContentBlock,
+  ToolReferenceBlock,
   ToolResultBlock,
   JsonBlock,
   ReasoningBlock,
+  InjectedBlock,
+  SummaryBlock,
+  OffloadedBlock,
+  UnknownBlock,
 } from '../../types/messages.js'
 import { ImageBlock, DocumentBlock, VideoBlock } from '../../types/media.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { logger } from '../../logging/logger.js'
+import { createEmptyUsage } from '../streaming.js'
 import { CitationsBlock } from '../../types/citations.js'
 import { z } from 'zod'
 import { clearStructuredOutputSupport, toNativeOutputSchema } from '../native-output.js'
 import { zodSchemaToJsonSchema } from '../../tools/zod-utils.js'
-import type { StreamOptions } from '../model.js'
+import { Model, type StreamOptions } from '../model.js'
 
 /**
  * Helper to create a mock Anthropic client with streaming support
@@ -35,7 +44,8 @@ function createMockClient(streamGenerator: () => AsyncGenerator<unknown>): Anthr
 }
 
 // Mock the Anthropic SDK
-vi.mock('@anthropic-ai/sdk', () => {
+vi.mock('@anthropic-ai/sdk', async (importOriginal) => {
+  const { default: actual } = await importOriginal<typeof import('@anthropic-ai/sdk')>()
   const mockConstructor = vi.fn(function () {
     return {
       messages: {
@@ -44,8 +54,16 @@ vi.mock('@anthropic-ai/sdk', () => {
       },
     }
   })
+  // The real error classes, so `instanceof Anthropic.APIError` works against the mock.
+  const { APIError, APIConnectionError, APIConnectionTimeoutError, BadRequestError, InternalServerError } = actual
   return {
-    default: mockConstructor,
+    default: Object.assign(mockConstructor, {
+      APIError,
+      APIConnectionError,
+      APIConnectionTimeoutError,
+      BadRequestError,
+      InternalServerError,
+    }),
   }
 })
 
@@ -128,6 +146,14 @@ describe('AnthropicModel', () => {
       )
     })
 
+    it('does not warn when maxTokens is pinned through modelInfo', () => {
+      new AnthropicModel({ apiKey: 'sk-ant-test', modelInfo: { limits: { maxOutputTokens: 2_000 } } })
+      expect(warnOnce).not.toHaveBeenCalledWith(
+        expect.objectContaining({ warn: expect.any(Function) }),
+        expect.stringContaining('using default maxTokens')
+      )
+    })
+
     it('warns when modelId is not explicitly set', () => {
       new AnthropicModel({ apiKey: 'sk-ant-test' })
       expect(warnOnce).toHaveBeenCalledWith(
@@ -187,8 +213,90 @@ describe('AnthropicModel', () => {
   describe('info', () => {
     it('reads cache points from the shared model info', () => {
       const model = new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-sonnet-4-6' })
-
       expect(model.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
+    })
+
+    it.each([
+      ['claude-haiku-4-5-20251001', 'native'],
+      ['claude-opus-5-5', 'native'],
+      ['claude-opus-4-1', 'stubs'],
+      ['claude-3-5-haiku-20241022', 'stubs'],
+    ])('reports deferred tools from the shared model info for %s: %s', (modelId, expected) => {
+      const model = new AnthropicModel({ apiKey: 'sk-ant-test', modelId })
+      expect(model.modelInfo.capabilities?.deferredToolLoading).toBe(expected)
+    })
+
+    it.each([
+      ['claude-opus-5-5', true],
+      ['claude-opus-5-5-20260401', true],
+      ['claude-haiku-5-5', false], // the API takes them, the model rarely uses their text (#6227)
+      ['claude-sonnet-5', false],
+      ['claude-sonnet-4-6', false],
+    ])('reports temporary messages from the shared model info for %s: %s', (modelId, expected) => {
+      const model = new AnthropicModel({ apiKey: 'sk-ant-test', modelId })
+      expect(model.modelInfo.capabilities?.temporaryMessages).toBe(expected)
+    })
+
+    const sendable = [
+      'image/png',
+      'image/jpeg',
+      'image/gif',
+      'image/webp',
+      'application/pdf',
+      'text/csv',
+      'text/html',
+      'text/markdown',
+      'text/plain',
+    ]
+
+    it('keeps only the listed types it sends', () => {
+      const docx = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      expect(acceptsMimeType(lookupModelInfo('claude-sonnet-4-6'), docx)).toBe(true)
+      const info = new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-sonnet-4-6' }).modelInfo
+
+      expect(info.capabilities?.acceptedMimeTypes).toEqual([...sendable, 'application/json', 'application/xml'])
+      expect(acceptsMimeType(info, docx)).toBe(false)
+      expect(Object.isFrozen(info.capabilities?.acceptedMimeTypes)).toBe(true)
+    })
+
+    it.each(['claude-sonnet-4-20250514', 'claude-mythos-preview'])(
+      'narrows wildcards for %s to the types it sends',
+      (modelId) => {
+        const shared = lookupModelInfo(modelId)
+        expect(acceptsMimeType(shared, 'application/msword') || acceptsMimeType(shared, 'video/mp4')).toBe(true)
+        const info = new AnthropicModel({ apiKey: 'sk-ant-test', modelId }).modelInfo
+
+        for (const type of info.capabilities?.acceptedMimeTypes ?? [])
+          expect([...sendable, 'application/json', 'application/xml']).toContain(type)
+        expect(acceptsMimeType(info, 'application/msword')).toBe(false)
+        expect(acceptsMimeType(info, 'video/mp4')).toBe(false)
+      }
+    )
+
+    it('reports the types it sends when the shared data has no list', () => {
+      expect(lookupModelInfo('claude-3-opus-20240229').capabilities?.acceptedMimeTypes).toBeUndefined()
+      const info = new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-3-opus-20240229' }).modelInfo
+
+      expect(info.capabilities?.acceptedMimeTypes).toEqual([...sendable, 'application/json', 'application/xml'])
+      expect(acceptsMimeType(info, 'video/mp4')).toBe(false)
+    })
+
+    it('lets the modelInfo config set the accepted types', () => {
+      const model = new AnthropicModel({
+        apiKey: 'sk-ant-test',
+        modelId: 'claude-sonnet-4-6',
+        modelInfo: { capabilities: { acceptedMimeTypes: ['application/msword'] } },
+      })
+      expect(model.modelInfo.capabilities?.acceptedMimeTypes).toEqual(['application/msword'])
+    })
+
+    it('lets the modelInfo config turn temporary messages off', () => {
+      const model = new AnthropicModel({
+        apiKey: 'sk-ant-test',
+        modelId: 'claude-opus-5-5',
+        modelInfo: { capabilities: { temporaryMessages: false } },
+      })
+      expect(model.modelInfo.capabilities?.temporaryMessages).toBe(false)
     })
 
     it('re-resolves the default maxTokens when modelId changes', () => {
@@ -350,10 +458,14 @@ describe('AnthropicModel', () => {
       expect(events).toContainEqual({ type: 'modelMessageStopEvent', stopReason: 'toolUse' })
     })
 
-    it('maps anthropic stop reason "refusal" to "refusal"', async () => {
+    it.each([
+      ['refusal', 'refusal'],
+      ['max_tokens', 'maxTokens'],
+      ['stop_sequence', 'stopSequence'],
+    ])('maps anthropic stop reason "%s" to "%s"', async (anthropicReason, expectedReason) => {
       const mockClient = createMockClient(async function* () {
         yield { type: 'message_start', message: { role: 'assistant', usage: { input_tokens: 1 } } }
-        yield { type: 'message_delta', delta: { stop_reason: 'refusal' }, usage: { output_tokens: 1 } }
+        yield { type: 'message_delta', delta: { stop_reason: anthropicReason }, usage: { output_tokens: 1 } }
         yield { type: 'message_stop' }
       })
 
@@ -362,7 +474,7 @@ describe('AnthropicModel', () => {
 
       const events = await collectIterator(provider.stream(messages))
 
-      expect(events).toContainEqual({ type: 'modelMessageStopEvent', stopReason: 'refusal' })
+      expect(events).toContainEqual({ type: 'modelMessageStopEvent', stopReason: expectedReason })
     })
 
     it('handles thinking/reasoning events', async () => {
@@ -394,7 +506,11 @@ describe('AnthropicModel', () => {
       })
       expect(events).toContainEqual({
         type: 'modelContentBlockDeltaEvent',
-        delta: { type: 'reasoningContentDelta', signature: 'sig_123' },
+        delta: {
+          type: 'reasoningContentDelta',
+          signature: 'sig_123',
+          providerData: { provider: 'anthropic', modelId: expect.any(String), data: {} },
+        },
       })
     })
 
@@ -418,7 +534,11 @@ describe('AnthropicModel', () => {
 
       expect(events).toContainEqual({
         type: 'modelContentBlockDeltaEvent',
-        delta: { type: 'reasoningContentDelta', redactedContent: new Uint8Array([117, 171, 90]) },
+        delta: {
+          type: 'reasoningContentDelta',
+          redactedContent: new Uint8Array([117, 171, 90]),
+          providerData: { provider: 'anthropic', modelId: expect.any(String), data: {} },
+        },
       })
     })
 
@@ -554,6 +674,86 @@ describe('AnthropicModel', () => {
       await expect(collectIterator(provider.stream(messages))).rejects.toThrow(ModelThrottledError)
       await expect(collectIterator(provider.stream(messages))).rejects.toThrow('Rate limit exceeded')
     })
+
+    it.each(['throttlingException', 'serviceUnavailableException'])(
+      'maps a mid-stream Bedrock %s to ModelThrottledError',
+      async (type) => {
+        const mockClient = createMockClient(async function* () {
+          yield { type: 'ping' }
+          throw Object.assign(new Error('Too many tokens'), { type })
+        })
+        const provider = new AnthropicModel({ client: mockClient })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow(ModelThrottledError)
+      }
+    )
+  })
+
+  describe('Bedrock InvokeModel API version', () => {
+    // Stands in for @anthropic-ai/bedrock-sdk's client, which the provider recognizes by class name.
+    class AnthropicBedrock {}
+    const bedrockClient = (): Anthropic =>
+      Object.assign(
+        Object.create(AnthropicBedrock.prototype),
+        createMockClient(async function* () {})
+      ) as Anthropic
+    const sentBody = async (provider: AnthropicModel, client: Anthropic): Promise<Record<string, unknown>> => {
+      await collectIterator(provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })]))
+      return vi.mocked(client.messages.stream).mock.calls[0]![0] as unknown as Record<string, unknown>
+    }
+
+    it('pins bedrock-2023-05-31 on an AnthropicBedrock client, keeping the sampling params', async () => {
+      const client = bedrockClient()
+      const body = await sentBody(new AnthropicModel({ client, temperature: 0.2 }), client)
+      expect(body).toMatchObject({ anthropic_version: 'bedrock-2023-05-31', temperature: 0.2 })
+    })
+
+    it('keeps an anthropic_version set in params', async () => {
+      const client = bedrockClient()
+      const body = await sentBody(
+        new AnthropicModel({ client, params: { anthropic_version: 'bedrock-2099-01-01' } }),
+        client
+      )
+      expect(body.anthropic_version).toBe('bedrock-2099-01-01')
+    })
+
+    it('pins the version on a subclass, and on a renamed class with a bedrock-runtime base URL', async () => {
+      class Subclass extends AnthropicBedrock {}
+      const subclass = Object.assign(
+        Object.create(Subclass.prototype),
+        createMockClient(async function* () {})
+      )
+      expect((await sentBody(new AnthropicModel({ client: subclass }), subclass)).anthropic_version).toBe(
+        'bedrock-2023-05-31'
+      )
+      const renamed = Object.assign(
+        createMockClient(async function* () {}),
+        {
+          baseURL: 'https://bedrock-runtime.us-west-2.amazonaws.com',
+        }
+      )
+      expect((await sentBody(new AnthropicModel({ client: renamed }), renamed)).anthropic_version).toBe(
+        'bedrock-2023-05-31'
+      )
+    })
+
+    it('sends no anthropic_version on the Mantle client', async () => {
+      class AnthropicBedrockMantle {}
+      const mantle = Object.assign(
+        Object.create(AnthropicBedrockMantle.prototype),
+        createMockClient(async function* () {}),
+        {
+          baseURL: 'https://bedrock-mantle.us-west-2.api.aws/anthropic',
+        }
+      )
+      expect(await sentBody(new AnthropicModel({ client: mantle }), mantle)).not.toHaveProperty('anthropic_version')
+    })
+
+    it('sends no anthropic_version on another client', async () => {
+      const client = createMockClient(async function* () {})
+      expect(await sentBody(new AnthropicModel({ client }), client)).not.toHaveProperty('anthropic_version')
+    })
   })
 
   describe('stale thinking recovery', () => {
@@ -562,6 +762,12 @@ describe('AnthropicModel', () => {
     const bindingError = Object.assign(new Error(bindingMessage), { status: 400 })
     const dropBlockThinking = { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } }
     const messages = [new Message({ role: 'user', content: [new TextBlock('Hi')] })]
+    const forced = {
+      toolSpecs: [
+        { name: 'calc', description: 'Calculator', inputSchema: { type: 'object' as const, properties: {} } },
+      ],
+      toolChoice: { any: {} },
+    }
 
     const createRejectingOnceClient = (error: Error = bindingError, retryError?: Error) => {
       let calls = 0
@@ -671,13 +877,48 @@ describe('AnthropicModel', () => {
         name: 'a caller-set block_binding',
         params: { thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'error' } } },
       },
-      { name: 'no thinking config', params: undefined },
-    ])('re-throws the binding error with $name', async ({ params }) => {
+      { name: 'a forced tool and no thinking config', params: undefined, options: forced },
+    ])('re-throws the binding error with $name', async ({ params, options }) => {
       const { stream, client } = createRejectingOnceClient()
       const provider = new AnthropicModel({ client, modelId: 'm1', ...(params && { params }) })
 
-      await expect(collectIterator(provider.stream(messages))).rejects.toThrow('bound to a different conversation')
+      await expect(collectIterator(provider.stream(messages, options))).rejects.toThrow(
+        'bound to a different conversation'
+      )
       expect(stream).toHaveBeenCalledOnce()
+    })
+
+    it('retries with adaptive thinking when no thinking config is set', async () => {
+      const { stream, client } = createRejectingOnceClient()
+      const provider = new AnthropicModel({ client, modelId: 'm1' })
+
+      await collectIterator(provider.stream(messages))
+      await collectIterator(provider.stream(messages))
+      await collectIterator(provider.stream(messages, forced))
+
+      const expectedOptions = { headers: { 'anthropic-beta': 'thinking-binding-controls-2026-08-01' } }
+      expect(stream.mock.calls.map((call: unknown[]) => [(call[0] as any).thinking, call[1]])).toStrictEqual([
+        [undefined, undefined],
+        [dropBlockThinking, expectedOptions],
+        [dropBlockThinking, expectedOptions],
+        [undefined, expectedOptions],
+      ])
+    })
+
+    it('does not keep drop_block on after a rejected retry', async () => {
+      const temperatureError = Object.assign(new Error('400 `temperature` may only be set to 1'), { status: 400 })
+      const { stream, client } = createRejectingOnceClient(bindingError, temperatureError)
+      const provider = new AnthropicModel({ client, modelId: 'm1', params: { temperature: 0.2 } })
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow('temperature')
+      stream.mockImplementation(() =>
+        (async function* () {
+          yield { type: 'message_start', message: { role: 'assistant', usage: {} } }
+        })()
+      )
+      await collectIterator(provider.stream(messages))
+
+      expect((stream.mock.calls.at(-1) as unknown[])[0]).not.toHaveProperty('thinking')
     })
 
     it('re-throws the binding message on a non-400 error', async () => {
@@ -786,7 +1027,9 @@ describe('AnthropicModel', () => {
         effort: 'high',
         format: { type: 'json_schema', schema: toNativeOutputSchema(zodSchemaToJsonSchema(schema)) },
       })
-      expect(request?.tools?.map((tool) => tool.name)).toStrictEqual(['strands_structured_output'])
+      expect(request?.tools?.map((tool) => ('name' in tool ? tool.name : undefined))).toStrictEqual([
+        'strands_structured_output',
+      ])
     })
 
     it('uses auto tool choice for a schema native output cannot represent', async () => {
@@ -900,6 +1143,25 @@ describe('AnthropicModel', () => {
       expect('trackingId' in captured.request.messages[0]).toBe(false)
     })
 
+    it('sends an offloaded block as the text the model receives, at top level and inside a tool result', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ modelId: 'claude-3-opus', maxTokens: 1000, client: mockClient })
+      const placeholder = new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [placeholder, new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [placeholder] })],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(captured.request.messages[0].content).toEqual([
+        { type: 'text', text: '[Dropped] [ref: tu-1]' },
+        { type: 'tool_result', tool_use_id: 'tu-1', is_error: false, content: '[Dropped] [ref: tu-1]' },
+      ])
+    })
+
     it('formats tools correctly', async () => {
       const { captured, mockClient } = setupCapture()
       const provider = new AnthropicModel({ client: mockClient })
@@ -939,6 +1201,21 @@ describe('AnthropicModel', () => {
         { type: 'thinking', thinking: '', signature: 'sig-abc' },
         { type: 'text', text: 'answer' },
       ])
+    })
+
+    it('skips unknown blocks', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient })
+      const messages = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('Hello'), new UnknownBlock({ futureBlock: { value: 1 } })],
+        }),
+      ]
+
+      await collectIterator(provider.stream(messages))
+
+      expect(captured.request.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }])
     })
 
     describe('Prompt Caching (Lookahead logic)', () => {
@@ -1337,6 +1614,174 @@ describe('AnthropicModel', () => {
         expect(warnSpy).toHaveBeenCalled()
         warnSpy.mockRestore()
       })
+
+      describe('tool references', () => {
+        const shell = { name: 'shell', description: 'Run a command', inputSchema: { type: 'object' as const } }
+        const read = { name: 'read', description: 'Read a file', inputSchema: { type: 'object' as const } }
+        const shellText = `shell parameters: ${JSON.stringify(shell.inputSchema)}`
+        const sentToolResult = async (
+          content: ToolResultBlock['content'],
+          deferredTools: string[] = ['shell']
+        ): Promise<unknown> => {
+          const { captured, mockClient } = setupCapture()
+          const provider = new AnthropicModel({ client: mockClient })
+          const messages = [
+            new Message({
+              role: 'user',
+              content: [new ToolResultBlock({ toolUseId: 't1', status: 'success', content })],
+            }),
+          ]
+          await collectIterator(
+            provider.stream(messages, { toolSpecs: [shell, read], deferredTools: new Set(deferredTools) })
+          )
+          return captured.request.messages[0].content[0]
+        }
+        const toolResult = (content: unknown): unknown => ({
+          type: 'tool_result',
+          tool_use_id: 't1',
+          content,
+          is_error: false,
+        })
+
+        it('sends references to tools the request defers as tool_reference blocks', async () => {
+          expect(await sentToolResult([new ToolReferenceBlock({ name: 'shell' })])).toEqual(
+            toolResult([{ type: 'tool_reference', tool_name: 'shell' }])
+          )
+        })
+
+        it('sends a reference as text when the request does not defer the tool, as in a server-side summary', async () => {
+          expect(await sentToolResult([new ToolReferenceBlock({ name: 'shell' })], [])).toEqual(toolResult(shellText))
+        })
+
+        it.each([
+          ['other content', new TextBlock('note'), { type: 'text', text: 'note' }],
+          [
+            'a reference to a tool the request does not defer',
+            new ToolReferenceBlock({ name: 'read' }),
+            { type: 'text', text: `read parameters: ${JSON.stringify(read.inputSchema)}` },
+          ],
+        ])('sends every reference in a result as text when the result also holds %s', async (_name, other, sent) => {
+          expect(await sentToolResult([new ToolReferenceBlock({ name: 'shell' }), other])).toEqual(
+            toolResult([{ type: 'text', text: shellText }, sent])
+          )
+        })
+      })
+    })
+
+    describe('injected blocks', () => {
+      const injected = (text: string) => new InjectedBlock({ text, source: 'test' })
+      const turnScoped = (text: string) => ({
+        role: 'system',
+        content: [{ type: 'text', text }],
+        clear_at: 'next_user_message',
+      })
+
+      it('sends each user message its injected text as a turn-scoped system message after it', async () => {
+        const { captured, mockClient } = setupCapture()
+        const provider = new AnthropicModel({
+          client: mockClient,
+          modelId: 'claude-opus-5-5',
+          betas: ['interleaved-thinking-2025-05-14'],
+          cacheConfig: {},
+        })
+        const messages = [
+          new Message({ role: 'user', content: [new TextBlock('first'), injected('one')] }),
+          new Message({ role: 'assistant', content: [new TextBlock('ok')] }),
+          new Message({ role: 'user', content: [new TextBlock('second'), injected('two'), injected('three')] }),
+        ]
+
+        await collectIterator(provider.stream(messages))
+
+        expect(captured.request.messages).toEqual([
+          { role: 'user', content: [{ type: 'text', text: 'first' }] },
+          turnScoped('one'),
+          { role: 'assistant', content: [{ type: 'text', text: 'ok' }] },
+          { role: 'user', content: [{ type: 'text', text: 'second', cache_control: { type: 'ephemeral' } }] },
+          {
+            role: 'system',
+            content: [
+              { type: 'text', text: 'two' },
+              { type: 'text', text: 'three' },
+            ],
+            clear_at: 'next_user_message',
+          },
+        ])
+        expect(captured.options).toEqual({
+          headers: { 'anthropic-beta': 'interleaved-thinking-2025-05-14,mid-conversation-system-clear-at-2026-08-21' },
+        })
+      })
+
+      it('leaves out the system message of a user message followed directly by another', async () => {
+        const { captured, mockClient } = setupCapture()
+        const provider = new AnthropicModel({ client: mockClient, modelId: 'claude-opus-5-5' })
+        const messages = [
+          new Message({ role: 'user', content: [new TextBlock('first'), injected('one')] }),
+          new Message({ role: 'user', content: [new TextBlock('second'), injected('two')] }),
+        ]
+
+        await collectIterator(provider.stream(messages))
+
+        expect(captured.request.messages).toEqual([
+          { role: 'user', content: [{ type: 'text', text: 'first' }] },
+          { role: 'user', content: [{ type: 'text', text: 'second' }] },
+          turnScoped('two'),
+        ])
+      })
+
+      it('sends no injected text and no beta to a model without temporary messages', async () => {
+        const { captured, mockClient } = setupCapture()
+        const provider = new AnthropicModel({ client: mockClient, modelId: 'claude-sonnet-4-6' })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('first'), injected('one')] })]
+
+        await collectIterator(provider.stream(messages))
+
+        expect(captured.request.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'first' }] }])
+        expect(captured.options).toBeUndefined()
+      })
+
+      it('receives a JSON document through the proxy, which it sends as text', async () => {
+        const { captured, mockClient } = setupCapture()
+        const proxy = new ModelProxy(new AnthropicModel({ client: mockClient, modelId: 'claude-sonnet-4-6' }))
+        const json = new DocumentBlock({ name: 'data', format: 'json', source: { text: '{"a": 1}' } })
+
+        // The capture client sends no response, so the aggregated stream ends in an error after the request.
+        await expect(
+          collectIterator(proxy.streamAggregated([new Message({ role: 'user', content: [json] })]))
+        ).rejects.toThrow()
+
+        expect(captured.request.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: '{"a": 1}' }] }])
+      })
+
+      it('leaves cleared injected blocks out of the token estimate', async () => {
+        const proxy = new ModelProxy(new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-opus-5-5' }))
+        const conversation = (first: Message): Message[] => [
+          first,
+          new Message({ role: 'assistant', content: [new TextBlock('ok')] }),
+          new Message({ role: 'user', content: [new TextBlock('second'), injected('two')] }),
+        ]
+        const withEarlier = conversation(
+          new Message({ role: 'user', content: [new TextBlock('first'), injected('x'.repeat(400))] })
+        )
+        const withoutEarlier = conversation(new Message({ role: 'user', content: [new TextBlock('first')] }))
+
+        expect(await proxy.countTokens(withEarlier)).toBe(await proxy.countTokens(withoutEarlier))
+      })
+
+      it('counts the system message natively, with the beta', async () => {
+        const countTokens = vi.fn(async () => ({ input_tokens: 9 }))
+        const client = { messages: { stream: vi.fn(), countTokens } } as unknown as Anthropic
+        const provider = new AnthropicModel({ client, modelId: 'claude-opus-5-5', useNativeTokenCount: true })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('first'), injected('one')] })]
+
+        expect(await provider.countTokens(messages)).toBe(9)
+        expect(countTokens).toHaveBeenCalledWith(
+          {
+            model: 'claude-opus-5-5',
+            messages: [{ role: 'user', content: [{ type: 'text', text: 'first' }] }, turnScoped('one')],
+          },
+          { headers: { 'anthropic-beta': 'mid-conversation-system-clear-at-2026-08-21' } }
+        )
+      })
     })
 
     describe('Beta headers', () => {
@@ -1418,6 +1863,16 @@ describe('AnthropicModel', () => {
 
       expect(result).toBe(42)
       expect(mockCountTokens).toHaveBeenCalledOnce()
+    })
+
+    it('should fall back to the heuristic when the client has no countTokens', async () => {
+      const model = new AnthropicModel({
+        client: { messages: { stream: vi.fn() } },
+        modelId: 'claude-sonnet-4-6',
+        useNativeTokenCount: true,
+      })
+
+      expect(await model.countTokens(messages)).toBe(2)
     })
 
     it('should include system prompt in request', async () => {
@@ -1664,6 +2119,84 @@ describe('AnthropicModel', () => {
 
       expect(breakpoints(captured.request)).toEqual([['tools', 't2', { type: 'ephemeral' }]])
       expect(captured.request.tools[0].cache_control).toBeUndefined()
+    })
+
+    it('sends deferred tools with defer_loading and caches the last non-deferred tool', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { messagesTTL: false } })
+      const specs = [...toolSpecs, { name: 't3', description: 'tool three', inputSchema: { type: 'object' as const } }]
+
+      await collectIterator(
+        provider.stream([userMessage('Hi')], { toolSpecs: specs, deferredTools: new Set(['t1', 't3']) })
+      )
+
+      expect(captured.request.tools).toEqual([
+        { name: 't1', description: 'tool one', input_schema: { type: 'object' }, defer_loading: true },
+        { name: 't2', description: 'tool two', input_schema: { type: 'object' }, cache_control: { type: 'ephemeral' } },
+        { name: 't3', description: 'tool three', input_schema: { type: 'object' }, defer_loading: true },
+      ])
+    })
+
+    it('lists the deferred tools in the load_tools description, since the API hides them', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { messagesTTL: false } })
+      const loader = {
+        name: 'load_tools',
+        description: 'Load tools.',
+        inputSchema: { type: 'object' as const },
+      }
+      await collectIterator(
+        provider.stream([userMessage('Hi')], {
+          toolSpecs: [loader, ...toolSpecs],
+          deferredTools: new Set(['t1']),
+        })
+      )
+      expect(captured.request.tools[0].description).toBe('Load tools.\n\nTools you can load:\n- t1: tool one')
+    })
+
+    it('omits defer_loading on a model without native deferred tools', async () => {
+      const { captured, mockClient } = setupCapture()
+      for (const config of [
+        { modelId: 'claude-opus-4-1' },
+        { modelId: 'claude-opus-5-5', modelInfo: { capabilities: { deferredToolLoading: 'unsupported' as const } } },
+      ]) {
+        await collectIterator(
+          new AnthropicModel({ client: mockClient, ...config }).stream([userMessage('Hi')], {
+            toolSpecs: [toolSpecs[0]!],
+            deferredTools: new Set(['t1']),
+          })
+        )
+        expect(captured.request.tools).toEqual([
+          { name: 't1', description: 'tool one', input_schema: { type: 'object' } },
+        ])
+      }
+    })
+
+    it('omits defer_loading on a tool the call does not defer', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient })
+
+      await collectIterator(
+        provider.stream([userMessage('Hi')], { toolSpecs: [toolSpecs[0]!], deferredTools: new Set(['t2']) })
+      )
+
+      expect(captured.request.tools).toEqual([
+        { name: 't1', description: 'tool one', input_schema: { type: 'object' } },
+      ])
+    })
+
+    it('adds no tools breakpoint when every tool is deferred', async () => {
+      const { captured, mockClient } = setupCapture()
+      const provider = new AnthropicModel({ client: mockClient, cacheConfig: { messagesTTL: false } })
+
+      await collectIterator(
+        provider.stream([userMessage('Hi')], {
+          toolSpecs,
+          deferredTools: new Set(toolSpecs.map((spec) => spec.name)),
+        })
+      )
+
+      expect(breakpoints(captured.request)).toEqual([])
     })
 
     it('carries a toolsTTL onto cache_control', async () => {
@@ -2556,6 +3089,215 @@ describe('AnthropicModel', () => {
     })
   })
 
+  describe('API version compatibility', () => {
+    const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+    const pdf = new DocumentBlock({ name: 'doc.pdf', format: 'pdf', source: { bytes: new Uint8Array([1, 2, 3]) } })
+    const helloRequest = {
+      model: 'm1',
+      max_tokens: 64000,
+      stream: true,
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello' }] }],
+    }
+
+    /** Captures the request the next client built from `clientConfig` sends. */
+    const captureBuiltClient = () => {
+      const captured: { request: any } = { request: null }
+      vi.mocked(Anthropic).mockImplementationOnce(function () {
+        return {
+          messages: {
+            stream: vi.fn((req) => {
+              captured.request = req
+              return (async function* () {})()
+            }),
+          },
+        }
+      })
+      return captured
+    }
+
+    /** Like `captureBuiltClient`, but builds a real SDK client so its `ANTHROPIC_CUSTOM_HEADERS` handling applies. */
+    const captureRealClient = async () => {
+      const { default: RealAnthropic } = await vi.importActual<typeof import('@anthropic-ai/sdk')>('@anthropic-ai/sdk')
+      const captured: { request: any } = { request: null }
+      vi.mocked(Anthropic).mockImplementationOnce(function (options) {
+        const client = new RealAnthropic(options)
+        client.messages.stream = vi.fn((req) => {
+          captured.request = req
+          return (async function* () {})()
+        }) as unknown as typeof client.messages.stream
+        return client
+      })
+      return captured
+    }
+
+    it.runIf(isNode)('rejects temperature when ANTHROPIC_CUSTOM_HEADERS pins the current API version', async () => {
+      vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'anthropic-version: 2026-10-21')
+      const captured = await captureRealClient()
+      const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'm1', temperature: 0.2 })
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow(
+        'temperature is not supported by Anthropic API version 2026-10-21, pinned by the ANTHROPIC_CUSTOM_HEADERS environment variable'
+      )
+      expect(captured.request).toBeNull()
+    })
+
+    it('leaves the check to the API for an injected client', async () => {
+      const stream = vi.fn(() => (async function* () {})())
+      const provider = new AnthropicModel({
+        client: { messages: { stream } } as unknown as Anthropic,
+        temperature: 0.2,
+      })
+
+      await collectIterator(provider.stream(messages))
+
+      expect(stream).toHaveBeenCalledWith(expect.objectContaining({ temperature: 0.2 }))
+    })
+
+    it('rejects temperature when the current API version is pinned', async () => {
+      captureBuiltClient()
+      const provider = new AnthropicModel({
+        apiKey: 'sk-test',
+        modelId: 'm1',
+        temperature: 0.2,
+        clientConfig: { defaultHeaders: { 'anthropic-version': '2026-10-21' } },
+      })
+
+      await expect(collectIterator(provider.stream(messages))).rejects.toThrow(
+        "temperature is not supported by Anthropic API version 2026-10-21, pinned by clientConfig.defaultHeaders['anthropic-version']"
+      )
+    })
+
+    describe.skipIf(SDK_VERSION.startsWith('0.'))('on @anthropic-ai/sdk 1.x', () => {
+      it.each([
+        { name: 'temperature', config: { temperature: 0.2 }, params: 'temperature is' },
+        { name: 'topP', config: { topP: 0.9 }, params: 'top_p is' },
+        { name: 'params.top_k', config: { params: { top_k: 3 } }, params: 'top_k is' },
+        {
+          name: 'several params',
+          config: { temperature: 0.2, params: { top_p: 0.9 } },
+          params: 'temperature, top_p are',
+        },
+      ])('rejects $name before sending the request', async ({ config, params }) => {
+        const captured = captureBuiltClient()
+        const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'm1', ...config })
+
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow(
+          `${params} not supported by Anthropic API version 2026-10-21, the default for @anthropic-ai/sdk ${SDK_VERSION}`
+        )
+        await expect(collectIterator(provider.stream(messages))).rejects.toThrow("'anthropic-version': '2023-06-01'")
+        expect(captured.request).toBeNull()
+      })
+
+      it.each([
+        { name: 'an object', defaultHeaders: { 'Anthropic-Version': '2023-06-01' } },
+        { name: 'header tuples', defaultHeaders: [['anthropic-version', '2023-06-01']] },
+        { name: 'a Headers instance', defaultHeaders: new Headers({ 'anthropic-version': '2023-06-01' }) },
+      ])('sends temperature when the previous API version is pinned as $name', async ({ defaultHeaders }) => {
+        const captured = captureBuiltClient()
+        const provider = new AnthropicModel({
+          apiKey: 'sk-test',
+          modelId: 'm1',
+          temperature: 0.2,
+          clientConfig: { defaultHeaders },
+        })
+
+        await collectIterator(provider.stream(messages))
+
+        expect(captured.request).toStrictEqual({ ...helloRequest, temperature: 0.2 })
+      })
+
+      it.runIf(isNode)(
+        'lets a clientConfig pin win over a differently cased ANTHROPIC_CUSTOM_HEADERS pin',
+        async () => {
+          vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'Anthropic-Version: 2026-10-21')
+          const captured = await captureRealClient()
+          const provider = new AnthropicModel({
+            apiKey: 'sk-test',
+            modelId: 'm1',
+            temperature: 0.2,
+            clientConfig: { defaultHeaders: { 'anthropic-version': '2023-06-01' } },
+          })
+
+          await collectIterator(provider.stream(messages))
+
+          expect(captured.request).toStrictEqual({ ...helloRequest, temperature: 0.2 })
+        }
+      )
+
+      it.runIf(isNode)('sends temperature when ANTHROPIC_CUSTOM_HEADERS pins the previous API version', async () => {
+        vi.stubEnv('ANTHROPIC_CUSTOM_HEADERS', 'anthropic-version: 2023-06-01')
+        const captured = await captureRealClient()
+        const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'm1', temperature: 0.2 })
+
+        await collectIterator(provider.stream(messages))
+
+        expect(captured.request).toStrictEqual({ ...helloRequest, temperature: 0.2 })
+      })
+
+      it('skips PDF documents in assistant messages', async () => {
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+        const captured = captureBuiltClient()
+        const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'm1' })
+        const conversation = [
+          new Message({ role: 'user', content: [new TextBlock('Summarize'), pdf] }),
+          new Message({ role: 'assistant', content: [new TextBlock('Here it is'), pdf] }),
+        ]
+
+        await collectIterator(provider.stream(conversation))
+
+        expect(captured.request.messages[0].content.map((block: { type: string }) => block.type)).toEqual([
+          'text',
+          'document',
+        ])
+        expect(captured.request.messages[1].content.map((block: { type: string }) => block.type)).toEqual(['text'])
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('document blocks are not accepted in assistant messages')
+        )
+        warnSpy.mockRestore()
+      })
+    })
+
+    // Runs in CI's job against the lowest supported @anthropic-ai/sdk. Browser mode can't re-mock VERSION per test.
+    describe.runIf(SDK_VERSION.startsWith('0.'))('on @anthropic-ai/sdk 0.x', () => {
+      it('sends sampling params', async () => {
+        const captured = captureBuiltClient()
+        const provider = new AnthropicModel({
+          apiKey: 'sk-test',
+          modelId: 'm1',
+          temperature: 0.2,
+          params: { top_k: 3 },
+        })
+
+        await collectIterator(provider.stream(messages))
+
+        expect(captured.request).toStrictEqual({ ...helloRequest, temperature: 0.2, top_k: 3 })
+      })
+
+      it('keeps PDF documents in assistant messages', async () => {
+        const captured = captureBuiltClient()
+        const provider = new AnthropicModel({ apiKey: 'sk-test', modelId: 'm1' })
+
+        await collectIterator(provider.stream([new Message({ role: 'assistant', content: [pdf] })]))
+
+        expect(captured.request).toStrictEqual({
+          ...helloRequest,
+          messages: [
+            {
+              role: 'assistant',
+              content: [
+                {
+                  type: 'document',
+                  title: 'doc.pdf',
+                  source: { type: 'base64', media_type: 'application/pdf', data: 'AQID' },
+                },
+              ],
+            },
+          ],
+        })
+      })
+    })
+  })
+
   describe('anthropicTools', () => {
     const WEB_SEARCH_TOOL = { type: 'web_search_20260318' as const, name: 'web_search' as const, max_uses: 3 }
     const FUNCTION_TOOL_SPEC = {
@@ -2685,6 +3427,23 @@ describe('AnthropicModel', () => {
         warnSpy.mockRestore()
       }
     )
+
+    it('names a toolset by its type when a forced turn omits it', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const { mockClient } = setupCapture()
+      const toolset = { type: 'browser_toolset_20260801' } as unknown as Anthropic.ToolUnion
+      const provider = new AnthropicModel({ client: mockClient, anthropicTools: [toolset] })
+
+      await collectIterator(
+        provider.stream([new Message({ role: 'user', content: [new TextBlock('Hi')] })], {
+          toolSpecs: [FUNCTION_TOOL_SPEC],
+          toolChoice: { any: {} },
+        })
+      )
+
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('server_tools=<browser_toolset_20260801>'))
+      warnSpy.mockRestore()
+    })
 
     it('does not let params.tools reach a forced turn that has no function tools', async () => {
       const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
@@ -3001,5 +3760,352 @@ describe('AnthropicModel', () => {
         content: [{ type: 'text', text: 'Agents are autonomous.' }],
       })
     })
+  })
+})
+
+describe('AnthropicModel server-side summary', () => {
+  const storedCompaction = (text = 'summary', signature = 'sig'): SummaryBlock =>
+    new SummaryBlock({ provider: 'anthropic', signature, text })
+
+  const compactionClient = (response: Record<string, unknown>) => {
+    const captured: { request: any; options: any } = { request: null, options: null }
+    const client = {
+      messages: {
+        stream: vi.fn((req, opts) => {
+          captured.request = req
+          captured.options = opts
+          return (async function* () {})()
+        }),
+      },
+      beta: {
+        messages: {
+          stream: vi.fn((req, opts) => {
+            captured.request = req
+            captured.options = opts
+            return { finalMessage: async () => response }
+          }),
+        },
+      },
+    } as unknown as Anthropic
+    return { captured, client }
+  }
+
+  const compactionModel = (client: Anthropic) =>
+    new AnthropicModel({ client, modelId: 'claude-sonnet-5-5', maxTokens: 1, stopSequences: ['STOP'] })
+
+  it('sends a compaction request and returns the summary block', async () => {
+    const { captured, client } = compactionClient({
+      stop_reason: 'compaction',
+      content: [{ type: 'compaction', content: 'the summary', signature: 's1' }],
+    })
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('hi')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('yo')] }),
+    ]
+
+    const toolSpec = { name: 'read', description: 'Read a file', inputSchema: { type: 'object' as const } }
+    const model = compactionModel(client)
+    model.updateConfig({ params: { context_management: { edits: [] } } })
+
+    const result = await model.summarize(messages, {
+      systemPrompt: 'sys',
+      toolSpecs: [toolSpec],
+      instructions: 'keep ids',
+    })
+
+    expect(captured.request).toEqual({
+      model: 'claude-sonnet-5-5',
+      max_tokens: 1,
+      stream: true,
+      system: 'sys',
+      tools: [{ name: 'read', description: 'Read a file', input_schema: { type: 'object' } }],
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'yo' }] },
+      ],
+      compaction: { type: 'summarize', instructions: 'keep ids' },
+    })
+    expect(captured.options).toEqual({ headers: { 'anthropic-beta': 'compact-2026-09-04' } })
+    expect(result).toEqual({ content: [storedCompaction('the summary', 's1')] })
+  })
+
+  it.each([
+    { name: 'a 429', error: Object.assign(new Error('rate limited'), { status: 429 }), type: ModelThrottledError },
+    {
+      name: 'a context overflow',
+      error: new Error('prompt is too long: 300000 tokens'),
+      type: ContextWindowOverflowError,
+    },
+  ])('maps $name from the compaction request like stream()', async ({ error, type }) => {
+    const client = {
+      messages: { stream: vi.fn() },
+      beta: { messages: { stream: vi.fn(() => ({ finalMessage: async () => Promise.reject(error) })) } },
+    } as unknown as Anthropic
+
+    await expect(
+      compactionModel(client).summarize([new Message({ role: 'user', content: [new TextBlock('hi')] })])
+    ).rejects.toThrow(type)
+  })
+
+  const compactionUsage = {
+    input_tokens: 100,
+    output_tokens: 20,
+    cache_read_input_tokens: 30,
+    cache_creation_input_tokens: 5,
+  }
+  const formattedCompactionUsage = {
+    inputTokens: 100,
+    outputTokens: 20,
+    totalTokens: 155,
+    cacheReadInputTokens: 30,
+    cacheWriteInputTokens: 5,
+  }
+  const hi = (): Message[] => [new Message({ role: 'user', content: [new TextBlock('hi')] })]
+  const agentMetadata = { sessionId: 'session' }
+  const baseResult = {
+    content: [new SummaryBlock({ text: 'client-side' })],
+    usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+  }
+
+  it('returns the compaction usage', async () => {
+    const { client } = compactionClient({
+      stop_reason: 'compaction',
+      content: [{ type: 'compaction', content: 'the summary' }],
+      usage: compactionUsage,
+    })
+
+    const result = await compactionModel(client).summarize(hi())
+
+    expect(result).toEqual({
+      content: [new SummaryBlock({ provider: 'anthropic', text: 'the summary' })],
+      usage: formattedCompactionUsage,
+    })
+  })
+
+  it('counts the compaction iterations usage', async () => {
+    const zero = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
+    const { client } = compactionClient({
+      stop_reason: 'compaction',
+      content: [{ type: 'compaction', content: 'the summary' }],
+      usage: { ...zero, iterations: [{ ...compactionUsage, type: 'compaction' }] },
+    })
+
+    const result = await compactionModel(client).summarize(hi())
+
+    expect(result).toEqual({
+      content: [new SummaryBlock({ provider: 'anthropic', text: 'the summary' })],
+      usage: formattedCompactionUsage,
+    })
+  })
+
+  it.each([
+    { name: 'no summary', response: { stop_reason: 'end_turn', content: [] } },
+    { name: 'text only', response: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'x' }] } },
+  ])('uses the base implementation without a compaction block: $name', async ({ response }) => {
+    const { client } = compactionClient({ ...response, usage: compactionUsage })
+    const baseSummarize = vi.spyOn(Model.prototype, 'summarize').mockResolvedValue(baseResult)
+    const messages = hi()
+    const options = { instructions: 'keep ids', agentMetadata }
+
+    const result = await compactionModel(client).summarize(messages, options)
+
+    expect(baseSummarize).toHaveBeenCalledTimes(1)
+    expect(baseSummarize).toHaveBeenCalledWith(messages, options)
+    expect(result).toEqual({
+      content: baseResult.content,
+      usage: {
+        inputTokens: 110,
+        outputTokens: 25,
+        totalTokens: 170,
+        cacheReadInputTokens: 30,
+        cacheWriteInputTokens: 5,
+      },
+    })
+    baseSummarize.mockRestore()
+  })
+
+  it.each([
+    {
+      name: 'rejected',
+      error: new Anthropic.BadRequestError(
+        400,
+        undefined,
+        'does not support the compaction strategy',
+        new Headers()
+      ) as Error,
+    },
+    { name: 'overloaded', error: new Anthropic.InternalServerError(529, undefined, 'overloaded', new Headers()) },
+    { name: 'timeout', error: new Anthropic.APIConnectionTimeoutError() },
+    { name: 'connection', error: new Anthropic.APIConnectionError({ message: 'connection' }) },
+  ])('uses the base implementation when compaction fails: $name', async ({ error }) => {
+    const client = {
+      messages: { stream: vi.fn() },
+      beta: { messages: { stream: vi.fn(() => ({ finalMessage: async () => Promise.reject(error) })) } },
+    } as unknown as Anthropic
+    const baseSummarize = vi.spyOn(Model.prototype, 'summarize').mockResolvedValue(baseResult)
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    const result = await compactionModel(client).summarize(hi())
+
+    expect(result).toEqual(baseResult)
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('compaction request failed | summarizing client-side'))
+    baseSummarize.mockRestore()
+    warnSpy.mockRestore()
+  })
+
+  it('sends no client-side request after a cancel during compaction', async () => {
+    const controller = new AbortController()
+    const client = {
+      messages: { stream: vi.fn() },
+      beta: {
+        messages: {
+          stream: vi.fn(() => ({
+            finalMessage: async () => {
+              controller.abort()
+              throw new Anthropic.APIConnectionError({ message: 'aborted' })
+            },
+          })),
+        },
+      },
+    } as unknown as Anthropic
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    const result = await compactionModel(client).summarize(hi(), { cancelSignal: controller.signal })
+
+    expect(result).toEqual({ content: [], usage: createEmptyUsage() })
+    expect(client.messages.stream).not.toHaveBeenCalled()
+    warnSpy.mockRestore()
+  })
+
+  it('throws errors other than an API error', async () => {
+    const client = {
+      messages: { stream: vi.fn() },
+      beta: {
+        messages: { stream: vi.fn(() => ({ finalMessage: async () => Promise.reject(new Error('overloaded')) })) },
+      },
+    } as unknown as Anthropic
+    const baseSummarize = vi.spyOn(Model.prototype, 'summarize')
+
+    await expect(compactionModel(client).summarize(hi())).rejects.toThrow('overloaded')
+
+    expect(baseSummarize).not.toHaveBeenCalled()
+    baseSummarize.mockRestore()
+  })
+
+  it('uses the base implementation for a client without the beta messages API', async () => {
+    const client = { messages: { stream: vi.fn() } } as unknown as Anthropic
+    const baseSummarize = vi.spyOn(Model.prototype, 'summarize').mockResolvedValue(baseResult)
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    const result = await compactionModel(client).summarize(hi())
+
+    expect(result).toEqual(baseResult)
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('client has no beta messages API'))
+    baseSummarize.mockRestore()
+    warnSpy.mockRestore()
+  })
+
+  it.each([
+    { name: 'unlisted', config: { modelId: 'claude-sonnet-4-5' } },
+    {
+      name: 'turned off',
+      config: { modelId: 'claude-sonnet-5-5', modelInfo: { capabilities: { serverSideSummary: false } } },
+    },
+  ])('uses the base implementation without the capability: $name', async ({ config }) => {
+    const { client } = compactionClient({})
+    const model = new AnthropicModel({ client, maxTokens: 1, ...config })
+    const messages = hi()
+    const options = { systemPrompt: 'sys', instructions: 'keep ids', agentMetadata }
+    const result = { content: [new SummaryBlock({ text: 'client-side' })] }
+    const baseSummarize = vi.spyOn(Model.prototype, 'summarize').mockResolvedValue(result)
+
+    expect(await model.summarize(messages, options)).toBe(result)
+
+    expect(baseSummarize).toHaveBeenCalledTimes(1)
+    expect(baseSummarize).toHaveBeenCalledWith(messages, options)
+    expect(client.beta.messages.stream).not.toHaveBeenCalled()
+    baseSummarize.mockRestore()
+  })
+
+  it('sends messages from the last compaction block', async () => {
+    const { captured, client } = compactionClient({})
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('first')] }),
+      new Message({ role: 'assistant', content: [storedCompaction('old')] }),
+      new Message({ role: 'user', content: [new TextBlock('more')] }),
+      new Message({ role: 'assistant', content: [storedCompaction('new', 's2'), new TextBlock('after')] }),
+      new Message({ role: 'user', content: [new TextBlock('next')] }),
+    ]
+
+    await collectIterator(compactionModel(client).stream(messages))
+
+    expect(captured.request.messages).toEqual([
+      {
+        role: 'assistant',
+        content: [
+          { type: 'compaction', content: 'new', signature: 's2' },
+          { type: 'text', text: 'after' },
+        ],
+      },
+      { role: 'user', content: [{ type: 'text', text: 'next' }] },
+    ])
+    expect(captured.options).toEqual({ headers: { 'anthropic-beta': 'compact-2026-09-04' } })
+  })
+
+  it('counts tokens from the last compaction block', async () => {
+    const countTokens = vi.fn(async () => ({ input_tokens: 7 }))
+    const client = { messages: { countTokens } } as unknown as Anthropic
+    const model = new AnthropicModel({ client, modelId: 'claude-sonnet-5-5', maxTokens: 1, useNativeTokenCount: true })
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('first '.repeat(500))] }),
+      new Message({ role: 'assistant', content: [storedCompaction('new', 's2')] }),
+      new Message({ role: 'user', content: [new TextBlock('next')] }),
+    ]
+
+    expect(await model.countTokens(messages)).toBe(7)
+
+    const [params, options] = countTokens.mock.calls[0] as unknown as [any, any]
+    expect(params.messages).toEqual([
+      { role: 'assistant', content: [{ type: 'compaction', content: 'new', signature: 's2' }] },
+      { role: 'user', content: [{ type: 'text', text: 'next' }] },
+    ])
+    expect(options).toEqual({ headers: { 'anthropic-beta': 'compact-2026-09-04' } })
+
+    const estimating = new AnthropicModel({ client, modelId: 'claude-sonnet-5-5', maxTokens: 1 })
+    expect(await estimating.countTokens(messages)).toBe(await estimating.countTokens(messages.slice(1)))
+  })
+
+  it.each([
+    'claude-haiku-5-5',
+    'claude-sonnet-5-5',
+    'claude-opus-5-5',
+    'claude-fable-5-1',
+    'claude-sonnet-5-5-20260401',
+  ])('turns server-side summary on by default for listed model %s', (modelId) => {
+    const model = new AnthropicModel({ apiKey: 'sk-ant-test', modelId, maxTokens: 1 })
+
+    expect(model.modelInfo.capabilities?.serverSideSummary).toBe(true)
+  })
+
+  it.each(['claude-sonnet-4-5', 'm1'])('leaves server-side summary unknown for other model %s', (modelId) => {
+    const model = new AnthropicModel({ apiKey: 'sk-ant-test', modelId, maxTokens: 1 })
+
+    expect(model.modelInfo.capabilities?.serverSideSummary).toBeUndefined()
+  })
+
+  it('sends the compaction text without the capability', async () => {
+    const { captured, client } = compactionClient({})
+    const model = compactionModel(client)
+    model.updateConfig({ modelInfo: { capabilities: { serverSideSummary: false } } })
+    const messages = [
+      new Message({ role: 'user', content: [new TextBlock('first')] }),
+      new Message({ role: 'assistant', content: [storedCompaction('old')] }),
+    ]
+
+    await collectIterator(model.stream(messages))
+
+    expect(model.modelInfo.capabilities?.serverSideSummary).toBe(false)
+    expect(captured.request.messages[1].content).toEqual([{ type: 'text', text: 'old' }])
+    expect(captured.options).toBeUndefined()
   })
 })

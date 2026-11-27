@@ -8,6 +8,8 @@ integrationType: model-provider
 sourceLinks:
   - path: strands-py/src/strands/models/model.py
   - path: strands-ts/src/models/model.ts
+  - path: strands-py/src/strands/models/_model_info.py
+  - path: strands-ts/src/models/model-info.ts
 ---
 
 When Strands Agents doesn't ship a provider for the model you want to run, implement the `Model` interface yourself. A custom model provider connects any LLM service to the agent loop while keeping the integration private to your codebase.
@@ -39,6 +41,7 @@ The base class also provides optional methods you can override:
 
 - `count_tokens()`: Estimate input token count (defaults to a character-based heuristic).
 - `estimate_utilization()`: Compute the ratio of input tokens to `context_window_limit` (defaults to 200,000 when not configured). See [Utilization Estimation](../agents/conversation-management/#utilization-estimation).
+- `model_info`: Report what your service supports, such as turning off server-side summary. See [Model info](#model-info).
 </Tab>
 <Tab label="TypeScript">
 
@@ -52,6 +55,7 @@ The base class also provides optional methods you can override:
 
 - `countTokens()`: Estimate input token count (defaults to a character-based heuristic).
 - `estimateUtilization()`: Compute the ratio of input tokens to `contextWindowLimit` (defaults to 200,000 when not configured). See [Utilization Estimation](../agents/conversation-management/#utilization-estimation).
+- `modelInfo`: Report what your service supports, such as turning off server-side summary. See [Model info](#model-info).
 </Tab>
 </Tabs>
 
@@ -70,12 +74,12 @@ Define a `ModelConfig` `TypedDict` to hold the settings for invoking your model.
 # your_org/models/custom_model.py
 import logging
 import os
-from typing import Any, AsyncIterable, Optional, TypedDict
+from typing import Any, AsyncIterable, Optional
 from typing_extensions import Unpack, override
 
 from custom.model import CustomModelClient
 
-from strands.models import Model
+from strands.models import BaseModelConfig, Model
 from strands.types.content import Messages
 from strands.types.streaming import StreamEvent
 from strands.types.tools import ToolSpec
@@ -86,7 +90,7 @@ logger = logging.getLogger(__name__)
 class CustomModel(Model):
     """Your custom model provider implementation."""
 
-    class ModelConfig(TypedDict):
+    class ModelConfig(BaseModelConfig):
         """
         Configuration your model.
 
@@ -159,6 +163,19 @@ The `stream` method accepts three parameters:
 - [`Messages`](@api/python/strands.types.content#Messages): A list of Strands Agents messages, containing a [Role](@api/python/strands.types.content#Role) and a list of [ContentBlocks](@api/python/strands.types.content#ContentBlock).
 - [`list[ToolSpec]`](@api/python/strands.types.tools#ToolSpec): List of tool specifications that the model can decide to use.
 - `SystemPrompt`: A system prompt string given to the Model to prompt it how to answer the user.
+
+Beyond those, the SDK passes keyword arguments that a provider can either declare by name or leave to `**kwargs`:
+
+- `tool_choice`: Selection strategy for tool invocation.
+- `system_prompt_content`: System prompt content blocks for advanced features like caching.
+- `invocation_state`: Caller-provided state/context that was passed to the agent when it was invoked.
+- `model_state`: Runtime state for model providers (e.g., server-side response ids).
+- `dynamic_trailing_blocks`: How many content blocks at the end of the final user message may change between calls. A provider that inserts prompt cache points should place them before that boundary so the cached prefix stays stable; `0` means no such tail.
+- `cancel_signal`: Event a provider can observe to abort an in-flight request.
+- `agent_metadata`: Stable identity of the invoking agent, such as its session ID.
+- `structured_output_model`: Output model the call must produce when the provider enforces structured output itself.
+
+Keep `**kwargs` in your signature so a later addition to this list does not break your provider.
 
 ```python
     @override
@@ -339,15 +356,28 @@ Events use the dictionary-based [StreamEvent](@api/python/strands.types.streamin
 }
 ```
 * [`metadata`](@api/python/strands.types.streaming#MetadataEvent): Event representing the metadata of the response. This contains the input, output, and total token count, along with the latency of the request.
+
+  Report usage in this form, whatever your provider's API returns:
+
+  - `inputTokens` counts every input token, cached or not. If your provider reports cached
+    tokens separately, add them in.
+  - `cacheReadInputTokens` and `cacheWriteInputTokens` (optional) are the parts of
+    `inputTokens` that were read from or written to the cache, not extra tokens.
+  - `totalTokens` is `inputTokens + outputTokens`.
+
+  This matches the OpenTelemetry GenAI semantic conventions, and the SDK's token
+  accounting handles it correctly; see
+  [Metrics](../observability-evaluation/metrics.mdx#overview).
 ```python
 {
     "metrics": {
         "latencyMs": 123 # Latency of the model request in milliseconds.
     },
     "usage": {
-        "inputTokens": 234, # Number of tokens sent in the request to the model.
+        "inputTokens": 234, # All input tokens, including cached tokens.
+        "cacheReadInputTokens": 200, # Part of inputTokens read from the cache (optional).
         "outputTokens": 234, # Number of tokens that the model generated for the request.
-        "totalTokens": 468 # Total number of tokens (input + output).
+        "totalTokens": 468 # inputTokens + outputTokens.
     }
 }
 ```
@@ -433,13 +463,26 @@ const messageStop: ModelMessageStopEventData = {
 ```
 
 * `ModelMetadataEvent`: Provides usage and metrics information
+
+  Report usage in this form, whatever your provider's API returns:
+
+  - `inputTokens` counts every input token, cached or not. If your provider reports cached
+    tokens separately, add them in.
+  - `cacheReadInputTokens` and `cacheWriteInputTokens` (optional) are the parts of
+    `inputTokens` that were read from or written to the cache, not extra tokens.
+  - `totalTokens` is `inputTokens + outputTokens`.
+
+  This matches the OpenTelemetry GenAI semantic conventions, and the SDK's token
+  accounting handles it correctly; see
+  [Metrics](../observability-evaluation/metrics.mdx#overview).
 ```typescript
 const metadata: ModelMetadataEventData = {
   type: 'modelMetadataEvent',
   usage: {
-    inputTokens: 234,
+    inputTokens: 234, // All input tokens, including cached tokens.
+    cacheReadInputTokens: 200, // Part of inputTokens read from the cache (optional).
     outputTokens: 234,
-    totalTokens: 468,
+    totalTokens: 468, // inputTokens + outputTokens.
   },
   metrics: {
     latencyMs: 123,
@@ -498,3 +541,61 @@ If your model API supports tool calling, format the tool specifications in `stre
 ### Error Handling
 
 Map your API's failures onto the SDK's exceptions so the agent loop can react. Handle context window overflows (raise `ContextWindowOverflowException`), connection errors, authentication failures, rate limits, and malformed responses.
+
+### Model Info
+
+To tell the agent what your service supports, report it through
+<Syntax py="model_info" ts="modelInfo" />. The base `Model` class fills in what the SDK
+already knows about your configured model, such as its context window, by looking up the
+model ID in
+[`shared/model-info.json`](https://github.com/strands-agents/harness-sdk/blob/main/shared/model-info.json).
+Python reads the ID from `get_config()["model_id"]`; TypeScript reads the `modelId`
+getter. Store your default model ID in the config so an unconfigured provider still gets
+those facts.
+
+Override <Syntax py="model_info" ts="modelInfo" /> for what your service does differently.
+Put your facts over the base result and the user's
+<Syntax py="model_info" ts="modelInfo" /> config over yours, so their override still
+wins. Most providers need at least this one: turn off
+<Syntax py="server_side_summary" ts="serverSideSummary" /> unless your service summarizes
+server-side and you override <Syntax py="summarize" ts="summarize" /> to use it. Every
+built-in provider except Anthropic turns it off.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands.models import ModelCapabilities, ModelInfo
+
+
+class CustomModel(Model):
+    @property
+    @override
+    def model_info(self) -> ModelInfo:
+        return ModelInfo.merge(
+            super().model_info,
+            ModelInfo(capabilities=ModelCapabilities(server_side_summary=False)),
+            self.get_config().get("model_info"),
+        )
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/custom_model_provider_imports.ts:model_info_imports"
+
+--8<-- "user-guide/sdk/model-providers/custom_model_provider.ts:model_info"
+```
+</Tab>
+</Tabs>
+
+Report <Syntax py="stateful" ts="stateful" /> as `true` only if your service keeps
+conversation state: the agent then sends only the latest message and rejects a
+conversation or context manager. Don't read
+<Syntax py="self.stateful" ts="this.stateful" /> inside the override, because it reads
+<Syntax py="model_info" ts="modelInfo" />. Limits you report win over the user's
+<Syntax py="context_window_limit" ts="contextWindowLimit" />. If they don't depend on
+your service, contribute the model to
+[`shared/model-info.json`](https://github.com/strands-agents/harness-sdk/blob/main/shared/model-info.json)
+so every provider and the user's setting can use them; until that ships, reporting them
+in the override works.

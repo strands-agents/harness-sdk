@@ -1,5 +1,5 @@
 import { InterventionHandler } from '../../interventions/handler.js'
-import { confirm, proceed, defaultEvaluate } from '../../interventions/actions.js'
+import { confirm, deny, proceed, defaultEvaluate } from '../../interventions/actions.js'
 import { logger } from '../../logging/logger.js'
 import { createDecisionModelRiskClassifier, createLlmRiskClassifier } from './classifier.js'
 import type {
@@ -38,6 +38,12 @@ function createStdioAsk(includeTrust: boolean): (prompt: string) => Promise<JSON
     return task
   }
 }
+
+/**
+ * Options accepted alongside `'auto'`: how the human is reached (`ask`) and the calls that skip the
+ * decision entirely (`allowedTools`). Options that decide the strategy are not accepted.
+ */
+export type HumanInTheLoopAutoConfig = Pick<HumanInTheLoopConfig, 'allowedTools' | 'ask'>
 
 /**
  * Configuration for the {@link HumanInTheLoop} intervention handler.
@@ -113,6 +119,7 @@ export interface HumanInTheLoopConfig {
    * - **Default** (omitted): uses interrupt/resume — agent pauses, caller resumes with response.
    * - **`'stdio'`**: prompts via CLI readline (Node.js only). Agent blocks inline until human responds.
    * - **Custom function**: your own async prompt logic (Slack, web UI, etc.). Agent blocks inline.
+   *   Returning `undefined` denies the call.
    */
   ask?: ((prompt: string) => Promise<JSONValue>) | 'stdio'
 }
@@ -140,12 +147,16 @@ export interface HumanInTheLoopConfig {
  *   interventions: [new HumanInTheLoop({ allowedTools: ['readFile'] })],
  * })
  *
- * // LLM-driven risk classification — only risky calls get escalated
+ * // Auto mode — the SDK's current best approval strategy decides which calls need a human
+ * // (today: LLM risk classification). May change between releases; configure the handler
+ * // explicitly (e.g. `classifier`) for fixed behavior.
  * const agent = new Agent({
- *   interventions: [new HumanInTheLoop({
- *     allowedTools: ['readFile', 'listDir'],
- *     classifier: true,
- *   })],
+ *   interventions: [new HumanInTheLoop('auto')],
+ * })
+ *
+ * // Auto mode, prompting in the terminal and letting readFile skip the decision entirely
+ * const agent = new Agent({
+ *   interventions: [new HumanInTheLoop('auto', { ask: 'stdio', allowedTools: ['readFile'] })],
  * })
  *
  * // Risk classification via a DecisionModel
@@ -179,8 +190,28 @@ export class HumanInTheLoop extends InterventionHandler {
   private readonly _ask: ((prompt: string) => Promise<JSONValue>) | undefined
   private readonly _classifiedToolUseIds: Set<string> = new Set()
 
-  constructor(config?: HumanInTheLoopConfig) {
+  /**
+   * Auto mode: let the SDK decide which tool calls need a human, using the approval strategy it currently
+   * considers the best available. Today that is the built-in LLM risk classifier (the same as
+   * `classifier: true`): low-risk calls run on their own and risky ones are escalated to the human. What
+   * `'auto'` resolves to may change between releases as better approaches become available. To pin the
+   * strategy, pass a full config instead.
+   *
+   * @param mode - `'auto'`.
+   * @param options - Only `ask` and `allowedTools`; options that decide the strategy are rejected.
+   * @throws Error if the mode is unknown, or `'auto'` is combined with a strategy option.
+   */
+  constructor(mode: 'auto', options?: HumanInTheLoopAutoConfig)
+  /**
+   * @param config - Handler configuration. Omitted: every tool not in `allowedTools` requires approval.
+   */
+  constructor(config?: HumanInTheLoopConfig)
+  constructor(modeOrConfig?: 'auto' | HumanInTheLoopConfig, autoOptions?: HumanInTheLoopAutoConfig) {
     super()
+    if (typeof modeOrConfig === 'object' && autoOptions !== undefined) {
+      throw new Error('pass a single HumanInTheLoopConfig; a second argument is only accepted after "auto"')
+    }
+    const config = typeof modeOrConfig === 'string' ? resolveMode(modeOrConfig, autoOptions) : modeOrConfig
     this._allowedTools = new Set(config?.allowedTools ?? [])
     this._classifier = this._resolveClassifier(config?.classifier)
     if (this._classifier && this._allowedTools.has('*')) {
@@ -220,21 +251,29 @@ export class HumanInTheLoop extends InterventionHandler {
 
     const response = await this._ask(prompt)
 
+    // An inline caller has no way to resume an interrupt, so a missing answer fails closed.
+    if (response === undefined) {
+      return deny(`Tool "${toolName}" denied: approval callback returned no response.`)
+    }
+
     if (!isNegated && this._enableTrust && this._evaluateTrust(response)) {
       this._trustTool(event, toolName)
       return proceed()
     }
 
-    return confirm(prompt, {
-      response,
-      evaluate: this._evaluate ?? defaultEvaluate,
-    })
+    return this._decideAskResponse(toolName, response)
+  }
+
+  /** Decides on the answer the human just gave, without consulting stored interrupt responses. */
+  private _decideAskResponse(toolName: string, response: JSONValue): InterventionAction {
+    const evaluateResponse = this._evaluate ?? defaultEvaluate
+    return evaluateResponse(response) ? proceed() : deny(`Tool "${toolName}" denied: the human rejected the call.`)
   }
 
   /**
    * Precedence (first match wins):
    * 1. Negated (`!tool`) → always requires approval (cannot be trusted)
-   * 2. Trusted at runtime via 't' response (stored in agent.appState) → runs freely
+   * 2. Trusted at runtime via 't' response (stored in agent.appState, only read when enableTrust) → runs freely
    * 3. Wildcard (`*`) → runs freely
    * 4. Explicitly listed in allowedTools → runs freely
    * 5. Classifier (if provided) → its decision
@@ -247,8 +286,7 @@ export class HumanInTheLoop extends InterventionHandler {
       return { requiresHumanInTheLoop: true }
     }
 
-    const trusted = (event.agent.appState.get(TRUSTED_TOOLS_KEY) as string[] | undefined) ?? []
-    if (trusted.includes(toolName)) {
+    if (this._enableTrust && this._trustedTools(event).includes(toolName)) {
       return { requiresHumanInTheLoop: false }
     }
 
@@ -279,10 +317,19 @@ export class HumanInTheLoop extends InterventionHandler {
   }
 
   private _trustTool(event: BeforeToolCallEvent, toolName: string): void {
-    const trusted = (event.agent.appState.get(TRUSTED_TOOLS_KEY) as string[] | undefined) ?? []
+    const trusted = this._trustedTools(event)
     if (!trusted.includes(toolName)) {
       event.agent.appState.set(TRUSTED_TOOLS_KEY, [...trusted, toolName])
     }
+  }
+
+  /** Agent state can be restored from a session, so anything other than a list of strings counts as empty. */
+  private _trustedTools(event: BeforeToolCallEvent): string[] {
+    const trusted = event.agent.appState.get(TRUSTED_TOOLS_KEY)
+    if (Array.isArray(trusted) && trusted.every((toolName): toolName is string => typeof toolName === 'string')) {
+      return trusted
+    }
+    return []
   }
 
   private _resolveClassifier(
@@ -299,4 +346,27 @@ export class HumanInTheLoop extends InterventionHandler {
     if (typeof response === 'string') return TRUST_RESPONSES.has(response.toLowerCase().trim())
     return false
   }
+}
+
+const AUTO_OPTION_KEYS = new Set<string>(['allowedTools', 'ask'])
+
+/**
+ * Resolve a mode and its options to the full config it stands for. This is the one place that defines
+ * what `'auto'` currently resolves to.
+ *
+ * @param mode - The mode passed to the constructor.
+ * @param options - The options passed alongside the mode.
+ * @returns The handler config the mode resolves to.
+ * @throws Error if the mode is unknown, or `'auto'` is combined with a strategy option.
+ */
+function resolveMode(mode: string, options: HumanInTheLoopAutoConfig | undefined): HumanInTheLoopConfig {
+  if (mode !== 'auto') throw new Error(`mode must be 'auto' or omitted, got ${JSON.stringify(mode)}`)
+  const strategyKeys = Object.keys(options ?? {}).filter((key) => !AUTO_OPTION_KEYS.has(key))
+  if (strategyKeys.length > 0) {
+    throw new Error(
+      `'auto' only accepts ask and allowedTools, got ${strategyKeys.join(', ')}; pass a HumanInTheLoopConfig ` +
+        '(e.g. { classifier }) to choose the strategy yourself'
+    )
+  }
+  return { ...options, classifier: true }
 }

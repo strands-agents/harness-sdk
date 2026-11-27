@@ -5,17 +5,20 @@ Each call runs in a fresh shell; state does not persist across calls. These
 spawn ``sh`` and require POSIX, so they are skipped on Windows.
 """
 
+import asyncio
 import json
 import sys
 from types import SimpleNamespace
 
 import pytest
 
-from strands.sandbox.errors import SandboxTimeoutError
+from strands import Agent
+from strands.sandbox.errors import SandboxAbortError, SandboxTimeoutError
 from strands.sandbox.not_a_sandbox_local_environment import NotASandboxLocalEnvironment
 from strands.types.tools import ToolContext
 from strands.vended_tools.shell import make_shell, shell
 from strands.vended_tools.shell.types import SANDBOX_SHELL_DESCRIPTION, ShellExecutionError
+from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell required")
 
@@ -72,6 +75,16 @@ class TestMakeShell:
         assert str(exc_info.value) == f"Execution timed out after 0.3 seconds\n{json.dumps(partial)}"
 
     @pytest.mark.asyncio
+    async def test_stops_the_command_when_the_tool_call_is_cancelled(self, sandbox_shell):
+        ctx = _tool_context()
+        asyncio.get_event_loop().call_later(0.3, ctx.cancel_signal.set)
+        # SandboxAbortError, not ShellExecutionError: cancellation is not a shell failure.
+        with pytest.raises(SandboxAbortError) as exc_info:
+            await sandbox_shell(command="echo partial; echo warn >&2; sleep 60", tool_context=ctx)
+        partial = {"output": "partial\n", "error": "warn\n", "exit_code": 130}
+        assert str(exc_info.value) == f"Execution aborted\n{json.dumps(partial)}"
+
+    @pytest.mark.asyncio
     async def test_wraps_sandbox_error_as_shell_execution_error(self):
         class _BoomSandbox(NotASandboxLocalEnvironment):
             async def execute(self, *args, **kwargs):
@@ -101,6 +114,24 @@ class TestDefaultShell:
         assert "via-context" in result["output"]
 
 
+class TestAgentCancel:
+    @pytest.mark.asyncio
+    async def test_agent_cancel_stops_a_running_command(self):
+        tool_use = {"toolUseId": "t1", "name": "shell", "input": {"command": "sleep 60"}}
+        model = MockedModelProvider([{"role": "assistant", "content": [{"toolUse": tool_use}]}])
+        agent = Agent(model=model, tools=[shell], callback_handler=None)
+
+        asyncio.get_event_loop().call_later(0.5, agent.cancel)
+        result = await asyncio.wait_for(agent.invoke_async("go"), timeout=30)
+
+        assert result.stop_reason == "cancelled"
+        partial = json.dumps({"output": "", "error": "", "exit_code": 130})
+        error = {"text": f"Error: SandboxAbortError - Execution aborted\n{partial}"}
+        assert agent.messages[-1]["content"] == [
+            {"toolResult": {"toolUseId": "t1", "status": "error", "content": [error]}}
+        ]
+
+
 class TestToolMetadata:
     """Tests for tool names, descriptions, and input schemas."""
 
@@ -121,6 +152,46 @@ class TestToolMetadata:
         assert "command" in props
         assert "timeout" in props
         assert "tool_context" not in props
+
+    @pytest.mark.parametrize(("tool", "exp_default"), [(shell, 120), (make_shell(default_timeout=300), 300)])
+    def test_timeout_schema(self, tool, exp_default):
+        tru_timeout = tool.tool_spec["inputSchema"]["json"]["properties"]["timeout"]
+        exp_timeout = {
+            "type": "integer",
+            "default": exp_default,
+            "description": "Optional per-execution timeout in seconds.",
+        }
+        assert tru_timeout == exp_timeout
+
+    @pytest.mark.parametrize("default_timeout", [0, -1, float("inf"), float("nan")])
+    def test_default_timeout_must_be_positive_and_finite(self, default_timeout):
+        with pytest.raises(ValueError, match="default_timeout must be a positive finite number"):
+            make_shell(default_timeout=default_timeout)
+
+
+class TestDefaultTimeout:
+    """``default_timeout`` is what reaches the sandbox when the model omits ``timeout``."""
+
+    class _RecordingSandbox(NotASandboxLocalEnvironment):
+        def __init__(self):
+            super().__init__()
+            self.timeouts: list[int] = []
+
+        async def execute(self, command, *, timeout=None, **kwargs):
+            self.timeouts.append(timeout)
+            return await super().execute(command, timeout=timeout, **kwargs)
+
+    @pytest.mark.asyncio
+    async def test_custom_default_reaches_sandbox(self):
+        sandbox = self._RecordingSandbox()
+        await make_shell(sandbox=sandbox, default_timeout=300)(command="true", tool_context=_tool_context())
+        assert sandbox.timeouts == [300]
+
+    @pytest.mark.asyncio
+    async def test_explicit_timeout_wins_over_default(self):
+        sandbox = self._RecordingSandbox()
+        await make_shell(sandbox=sandbox, default_timeout=300)(command="true", tool_context=_tool_context(), timeout=7)
+        assert sandbox.timeouts == [7]
 
 
 class TestDeprecatedBashAliases:

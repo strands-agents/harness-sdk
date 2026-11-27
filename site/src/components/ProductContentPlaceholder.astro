@@ -1,0 +1,113 @@
+<div class="product-content-placeholder" data-product-content-placeholder aria-hidden="true">
+  <svg viewBox="0 0 720 405" focusable="false">
+    <rect class="placeholder-canvas" width="720" height="405" rx="24" />
+
+    <g class="placeholder-dots">
+      <circle cx="72" cy="70" r="5" />
+      <circle cx="104" cy="70" r="5" />
+      <circle cx="136" cy="70" r="5" />
+      <circle cx="584" cy="334" r="5" />
+      <circle cx="616" cy="334" r="5" />
+      <circle cx="648" cy="334" r="5" />
+    </g>
+
+    <rect class="placeholder-sheet placeholder-sheet--left" x="154" y="72" width="400" height="262" rx="18" />
+    <rect class="placeholder-sheet placeholder-sheet--right" x="166" y="72" width="400" height="262" rx="18" />
+
+    <g class="placeholder-page">
+      <rect class="placeholder-page__surface" x="170" y="61" width="380" height="282" rx="18" />
+      <rect class="placeholder-page__accent" x="198" y="91" width="82" height="10" rx="5" />
+      <rect class="placeholder-page__line placeholder-page__line--title" x="198" y="124" width="242" height="18" rx="9" />
+      <rect class="placeholder-page__line" x="198" y="154" width="164" height="10" rx="5" />
+
+      <rect class="placeholder-page__panel" x="198" y="188" width="324" height="92" rx="12" />
+      <circle class="placeholder-page__node placeholder-page__node--accent" cx="240" cy="234" r="14" />
+      <circle class="placeholder-page__node" cx="360" cy="234" r="14" />
+      <circle class="placeholder-page__node" cx="480" cy="234" r="14" />
+      <path class="placeholder-page__connector" d="M255 234h89m31 0h89" />
+
+      <rect class="placeholder-page__line" x="198" y="307" width="174" height="9" rx="4.5" />
+      <rect class="placeholder-page__line placeholder-page__line--short" x="388" y="307" width="134" height="9" rx="4.5" />
+    </g>
+  </svg>
+</div>
+
+<style>
+  .product-content-placeholder {
+    width: 100%;
+    height: 100%;
+    color: var(--product-content-accent);
+  }
+
+  .product-content-placeholder svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  .placeholder-canvas {
+    fill: color-mix(in srgb, currentColor 7%, var(--bg));
+  }
+
+  .placeholder-dots {
+    fill: color-mix(in srgb, currentColor 50%, var(--border));
+  }
+
+  .placeholder-sheet {
+    fill: var(--card-bg);
+    stroke: color-mix(in srgb, currentColor 28%, var(--border));
+    stroke-width: 2;
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+
+  .placeholder-sheet--left {
+    transform: rotate(-4deg);
+  }
+
+  .placeholder-sheet--right {
+    transform: rotate(4deg);
+  }
+
+  .placeholder-page__surface {
+    fill: var(--card-bg);
+    stroke: color-mix(in srgb, currentColor 46%, var(--border));
+    stroke-width: 2;
+  }
+
+  .placeholder-page__accent,
+  .placeholder-page__node--accent {
+    fill: currentColor;
+  }
+
+  .placeholder-page__line {
+    fill: color-mix(in srgb, var(--fg) 24%, transparent);
+  }
+
+  .placeholder-page__line--title {
+    fill: color-mix(in srgb, var(--fg) 72%, transparent);
+  }
+
+  .placeholder-page__line--short {
+    fill: color-mix(in srgb, var(--fg) 14%, transparent);
+  }
+
+  .placeholder-page__panel {
+    fill: color-mix(in srgb, currentColor 8%, var(--bg));
+    stroke: color-mix(in srgb, currentColor 24%, var(--border));
+    stroke-width: 2;
+  }
+
+  .placeholder-page__node {
+    fill: var(--card-bg);
+    stroke: color-mix(in srgb, currentColor 60%, var(--border));
+    stroke-width: 3;
+  }
+
+  .placeholder-page__connector {
+    fill: none;
+    stroke: color-mix(in srgb, currentColor 56%, var(--border));
+    stroke-width: 3;
+    stroke-dasharray: 7 7;
+  }
+</style>

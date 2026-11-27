@@ -1,0 +1,61 @@
+namespace Drupe {
+  type SystemContext = {
+    now: datetime
+  };
+
+  type delete_fileInput = {
+    path: String
+  };
+
+  type delete_fileOutput = {  };
+
+  type searchInput = {
+    query: String
+  };
+
+  type searchOutput = {  };
+
+  entity Resource;
+
+  entity User;
+
+  action "CallTool" in [Action::"Mcp"] appliesTo {
+    principal: [User],
+    resource: [Resource],
+    context: {
+      isOutput: Bool,
+      output?: {      },
+      system: SystemContext
+    }
+  };
+
+  action "Mcp" appliesTo {
+    principal: [User],
+    resource: [Resource],
+    context: {
+      isOutput: Bool,
+      output?: {      },
+      system: SystemContext
+    }
+  };
+
+  action "delete_file" in [Action::"CallTool"] appliesTo {
+    principal: [User],
+    resource: [Resource],
+    context: {
+      input: delete_fileInput,
+      output?: delete_fileOutput,
+      system: SystemContext
+    }
+  };
+
+  action "search" in [Action::"CallTool"] appliesTo {
+    principal: [User],
+    resource: [Resource],
+    context: {
+      input: searchInput,
+      output?: searchOutput,
+      system: SystemContext
+    }
+  };
+}

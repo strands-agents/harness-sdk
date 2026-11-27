@@ -1,16 +1,20 @@
+import { ModelError } from '../errors.js'
 import { DecisionModel } from './decision-model.js'
 import {
   askSystemOne,
+  httpTransport,
+  isRecord,
+  requireRecord,
   resolveSystemOneProviderConfig,
   type SystemOneProviderConfig,
+  type SystemOneTransport,
 } from './system-one-http-adapter.js'
-import type { DecisionInput, DecisionResult, Question } from './types.js'
+import type { DecisionCallOptions, DecisionInput, DecisionResult, Question } from './types.js'
 
 const DECISIONS_API_ENDPOINT = 'https://decisionapi.net/v1/systemone'
 const DECISIONS_API_DEFAULT_MODEL_ID = '~typesafe/jev-latest'
 const DECISIONS_API_DEFAULT_MIN_CONFIDENCE = 0.5
 const DECISIONS_API_MAX_QUESTIONS = 8
-const DECISIONS_API_MAX_BODY_BYTES = 32 * 1024
 
 /** Options for constructing a {@link DecisionsAPIDecisionModel}. */
 export interface DecisionsAPIDecisionModelOptions {
@@ -52,14 +56,36 @@ export class DecisionsAPIDecisionModel extends DecisionModel {
       modelId: DECISIONS_API_DEFAULT_MODEL_ID,
       defaultMinConfidence: DECISIONS_API_DEFAULT_MIN_CONFIDENCE,
       maxQuestions: DECISIONS_API_MAX_QUESTIONS,
-      maxBodyBytes: DECISIONS_API_MAX_BODY_BYTES,
     })
   }
 
   protected _ask<const Q extends Record<string, Question>>(
     state: DecisionInput,
-    questions: Q
+    questions: Q,
+    options: DecisionCallOptions
   ): Promise<DecisionResult<Q>> {
-    return askSystemOne(this._providerConfig, state, questions)
+    const transport = httpTransport(this._providerConfig)
+    const unwrappingTransport: SystemOneTransport = async (body, cancelSignal) =>
+      this._unwrapEnvelope(await transport(body, cancelSignal))
+    return askSystemOne(this._providerConfig, unwrappingTransport, state, questions, options.cancelSignal)
+  }
+
+  /**
+   * Returns the System One result from decisionapi.net's `{ code, message, data: { result } }` envelope.
+   * The envelope does not carry the model, so the result reports the requested one unless it names its own.
+   * A payload that is not enveloped is returned unchanged.
+   */
+  private _unwrapEnvelope(payload: unknown): unknown {
+    if (!isRecord(payload) || (!('code' in payload) && !('data' in payload))) return payload
+
+    const code = payload['code']
+    if (code !== 0) {
+      const detail = typeof payload['message'] === 'string' ? `: ${payload['message']}` : ''
+      throw new ModelError(`decision provider returned error code ${String(code)}${detail}`)
+    }
+
+    const data = requireRecord(payload['data'], 'decision provider data')
+    const result = requireRecord(data['result'], 'decision provider result')
+    return { model: this._providerConfig.modelId, ...result }
   }
 }

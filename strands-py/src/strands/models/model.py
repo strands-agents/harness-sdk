@@ -17,7 +17,11 @@ from ..plugins.plugin import Plugin
 from ..types.content import ContentBlock, Messages, SystemContentBlock
 from ..types.streaming import StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
+from ._cache_points import section_ttl
 from ._defaults import DEFAULT_CONTEXT_WINDOW_LIMIT
+from ._model_info import ModelCapabilities, ModelInfo, ModelLimits, lookup_model_info
+from ._model_proxy import _latest_user_index
+from ._summarize import SummarizeResult, _summarize_with_stream
 
 if TYPE_CHECKING:
     from ..agent.agent import Agent
@@ -55,6 +59,12 @@ def _count_content_block_tokens(
 
     if "text" in block:
         total += count_text(block["text"])
+
+    if "summary" in block:
+        total += count_text(block["summary"].get("text", ""))
+
+    if "injected" in block:
+        total += count_text(block["injected"]["text"])
 
     if "toolUse" in block:
         tool_use = block["toolUse"]
@@ -111,8 +121,11 @@ def _estimate_tokens_with_heuristic(
     elif system_prompt:
         total += _heuristic_estimate_text(system_prompt)
 
-    for message in messages:
+    latest_user = _latest_user_index(messages)
+    for index, message in enumerate(messages):
         for block in message["content"]:
+            if "injected" in block and index != latest_user:
+                continue
             total += _count_content_block_tokens(block, _heuristic_estimate_text, _heuristic_estimate_json)
 
     if tool_specs:
@@ -127,10 +140,20 @@ class BaseModelConfig(TypedDict, total=False):
 
     Attributes:
         context_window_limit: Maximum context window size in tokens for the model.
-            This value represents the total token capacity shared between input and output.
+            The same fact as ``model_info.limits.context_window``; setting it here is shorthand for
+            setting it through ``model_info``, and it wins over the shared model info. When both are
+            set, ``model_info`` wins. When not provided, vended providers still populate it from the
+            shared model info for callers that read ``get_config()``; ``model_info`` is the resolved
+            view to read.
+        model_info: Overrides for what the SDK knows about the model. Fields set here win over the
+            shared model info and the provider; ``capabilities.stateful`` changes how the agent loop
+            sends history, so set it only for a provider that keeps state server-side.
+            ``update_config(model_info=...)`` replaces the previous override entirely, it does not
+            merge into it.
     """
 
     context_window_limit: int | None
+    model_info: ModelInfo | None
 
 
 @dataclass
@@ -142,7 +165,9 @@ class CacheConfig:
     Attributes:
         strategy: Caching strategy to use.
             - "auto": Automatically detect model support and inject cachePoint to maximize cache coverage
-            - "anthropic": Inject cachePoint in Anthropic-compatible format without model support check
+            - "anthropic": Inject cachePoint in Anthropic-compatible format without model support check.
+              ``LiteLLMModel`` places them only where the backend can be Claude-style: a Claude model on any
+              provider, ``anthropic/``, or a gateway id that doesn't name its backend.
         ttl: Optional TTL duration for cache entries (e.g. "5m", "1h").
             When specified, auto-injected cache points will include this TTL value. Bedrock requires
             checkpoint TTLs to be non-increasing across toolConfig, system and messages, and rejects a
@@ -152,11 +177,17 @@ class CacheConfig:
             the same static system prefix hit the cache. A TTL string (e.g. "1h") sets this section's own
             duration and is honored as written; True derives the duration from ``ttl``; False disables it.
             A hand-placed system cache point is honored rather than doubled.
+        messages_ttl: Cache the conversation prefix, placing a cache point on durable user content. A TTL
+            string sets this section's own duration; True or None derives it from ``ttl``; False disables
+            the message cache point. Mirrors the TypeScript ``messagesTTL``. Read by ``BedrockModel``,
+            ``AnthropicModel`` and, on models that take cache points, ``LiteLLMModel`` and
+            ``OpenAIResponsesModel``, which accepts only the OpenAI lifetimes ``"30m"`` and ``"12h"``.
         cache_key: Stable identity a prompt-cache-routing provider (OpenAI, LiteLLM, Mistral) uses as its
             cache key. Left unset, it is derived per request as ``strands-<session_id>`` if the agent has
             a session manager, so repeat runs of a session share a cache prefix with no key management.
             Set it to a string to pin your own key, or ``False`` to opt out of routing entirely. The
             resolved key (whether set or derived from the session id) is transmitted to the provider.
+            ``LiteLLMModel`` sends it only to models LiteLLM accepts ``prompt_cache_key`` for.
         tools_ttl: Cache the tool definitions, auto-injecting a cache point on the tool block so repeated calls
             with the same tools hit the cache. A TTL string (e.g. "1h") sets this section's own
             duration and is honored as written; True derives the duration from ``ttl``; False disables it.
@@ -169,6 +200,14 @@ class CacheConfig:
     system_prompt_ttl: bool | str = True
     cache_key: str | Literal[False] | None = None
     tools_ttl: bool | str | None = None
+    messages_ttl: bool | str | None = None
+
+
+def _messages_cache_ttl(cache_config: CacheConfig | None) -> str | None:
+    """TTL for the message cache point: a ``messages_ttl`` string, else ``cache_config.ttl``."""
+    if cache_config is None:
+        return None
+    return section_ttl(cache_config.messages_ttl, cache_config.ttl)
 
 
 @dataclass
@@ -199,20 +238,63 @@ class Model(abc.ABC):
     def stateful(self) -> bool:
         """Whether the model manages conversation state server-side.
 
+        Reads ``model_info.capabilities.stateful``, so a provider that keeps state server-side sets
+        it there (see :attr:`model_info`) and a ``model_info`` config override can change it.
+
         Returns:
-            False by default. Model providers that support server-side state should override this.
+            False when unknown.
         """
-        return False
+        return bool(self.model_info.capabilities.stateful)
+
+    @property
+    def model_info(self) -> ModelInfo:
+        """Everything the SDK knows about the configured model, resolved on each read.
+
+        Layers, later ones winning: the shared model info for the configured model id,
+        ``temporary_messages`` off (a provider that can send them turns it back on), the
+        ``context_window_limit`` config value, and the ``model_info`` config override. Each read
+        returns a new record, so do not compare reads by identity.
+
+        A provider that knows better than the shared model info overrides this property: put its
+        facts over ``super().model_info``, then the user's ``self.get_config().get("model_info")``
+        over those so the override still wins::
+
+            from strands.models import ModelCapabilities, ModelInfo
+
+            ModelInfo.merge(
+                super().model_info,
+                ModelInfo(capabilities=ModelCapabilities(prompt_caching="auto")),
+                self.get_config().get("model_info"),
+            )
+
+        Do not read :attr:`stateful` inside the override; it reads this property.
+
+        Returns:
+            What the SDK knows about the model; empty when it knows nothing.
+        """
+        config = self.get_config()
+        if isinstance(config, dict):
+            model_id = config.get("model_id")
+            context_window_limit = config.get("context_window_limit")
+            override = config.get("model_info")
+        else:
+            model_id = getattr(config, "model_id", None)
+            context_window_limit = getattr(config, "context_window_limit", None)
+            override = getattr(config, "model_info", None)
+
+        return ModelInfo.merge(
+            lookup_model_info(model_id),
+            ModelInfo(
+                capabilities=ModelCapabilities(temporary_messages=False),
+                limits=ModelLimits(context_window=context_window_limit),
+            ),
+            override,
+        )
 
     @property
     def context_window_limit(self) -> int | None:
-        """Maximum context window size in tokens, or None if not configured."""
-        config = self.get_config()
-        return (
-            config.get("context_window_limit")
-            if isinstance(config, dict)
-            else getattr(config, "context_window_limit", None)
-        )
+        """Maximum context window size in tokens, or None if not known."""
+        return self.model_info.limits.context_window
 
     @abc.abstractmethod
     # pragma: no cover
@@ -266,6 +348,8 @@ class Model(abc.ABC):
         tool_choice: ToolChoice | None = None,
         system_prompt_content: list[SystemContentBlock] | None = None,
         invocation_state: dict[str, Any] | None = None,
+        model_state: dict[str, Any] | None = None,
+        dynamic_trailing_blocks: int = 0,
         cancel_signal: threading.Event | None = None,
         agent_metadata: "AgentMetadata | None" = None,
         structured_output_model: type[BaseModel] | None = None,
@@ -286,6 +370,10 @@ class Model(abc.ABC):
             tool_choice: Selection strategy for tool invocation.
             system_prompt_content: System prompt content blocks for advanced features like caching.
             invocation_state: Caller-provided state/context that was passed to the agent when it was invoked.
+            model_state: Runtime state for model providers (e.g., server-side response ids).
+            dynamic_trailing_blocks: How many content blocks at the end of the final user message may
+                change between calls. A provider that inserts prompt cache points should place them
+                before that boundary so the cached prefix stays stable; 0 means no such tail.
             cancel_signal: Event a provider can observe to abort an in-flight request. Support is
                 provider-dependent; a provider that ignores it still cancels at the SDK's
                 between-chunk checkpoint.
@@ -317,8 +405,9 @@ class Model(abc.ABC):
 
         Used for proactive context management (e.g., triggering compression at a threshold).
         Uses tiktoken's cl100k_base encoding when available, otherwise falls back to a
-        heuristic (characters / 4 for text, characters / 2 for JSON). Accuracy varies by
-        model provider. Not intended for billing or precise quota calculations.
+        heuristic (characters / 4 for text, characters / 2 for JSON). It counts only the latest user
+        message's injected blocks, the ones a model reads. Accuracy varies by model provider. Not
+        intended for billing or precise quota calculations.
 
         Subclasses may override this method to provide model-specific token counting
         using native APIs for improved accuracy.
@@ -333,6 +422,60 @@ class Model(abc.ABC):
             Estimated total input tokens.
         """
         return _estimate_tokens_with_heuristic(messages, tool_specs, system_prompt, system_prompt_content)
+
+    async def summarize(
+        self,
+        messages: Messages,
+        *,
+        tool_specs: list[ToolSpec] | None = None,
+        system_prompt: str | None = None,
+        system_prompt_content: list[SystemContentBlock] | None = None,
+        instructions: str | None = None,
+        cancel_signal: threading.Event | None = None,
+        agent_metadata: "AgentMetadata | None" = None,
+        **kwargs: Any,
+    ) -> SummarizeResult:
+        """Summarize ``messages``.
+
+        ``messages`` is a request as the caller would send it to :meth:`stream`, along with its ``tool_specs`` and
+        system prompt. The base implementation sends that request closed by an instruction not to act on it or call
+        tools, followed by ``instructions`` (or default ones), and otherwise as given, so a caller that replays its
+        own conversation can share its prompt cache. The summary is the reply's text, including a reply cut off at the
+        output limit or a stop sequence. A reply that ends for another reason, such as a tool call, a cancellation or
+        a guardrail, or that holds no text, gives an empty result.
+
+        Every summary is a ``summary`` block. The base implementation sets its ``provider`` to ``None``. A provider that
+        reports ``model_info.capabilities.server_side_summary`` as True overrides this method to summarize
+        server-side and sets ``provider`` to its own name, using the base implementation when the capability is off
+        or the server-side summary fails, as ``AnthropicModel`` does. A summary with a ``provider`` can stand in for
+        the messages it summarized only when they start at the conversation's first message; a caller that
+        summarizes anything else uses only its text.
+
+        Args:
+            messages: The request to summarize, left unmodified.
+            tool_specs: The request's tool specifications.
+            system_prompt: The request's plain string system prompt. Ignored if system_prompt_content is provided.
+            system_prompt_content: The request's structured system prompt. Takes priority over system_prompt.
+            instructions: Summarization instructions replacing the default ones, which ``None`` or ``""`` keeps. The
+                base implementation's instruction not to act on the request or call tools is always sent.
+            cancel_signal: Event that aborts the call.
+            agent_metadata: Stable identity of the invoking agent, as passed to :meth:`stream`. A provider may consult
+                it to derive a prompt-cache routing key, so a replay can share the agent's cache.
+            **kwargs: Additional keyword arguments for future extensibility.
+
+        Returns:
+            The summary and the token usage of the calls made for it.
+        """
+        return await _summarize_with_stream(
+            self,
+            messages,
+            tool_specs=tool_specs,
+            system_prompt=system_prompt,
+            system_prompt_content=system_prompt_content,
+            instructions=instructions,
+            cancel_signal=cancel_signal,
+            agent_metadata=agent_metadata,
+        )
 
     def estimate_utilization(self, input_tokens: int) -> float:
         """Estimate the fraction of the model's context window consumed by the given input token count.

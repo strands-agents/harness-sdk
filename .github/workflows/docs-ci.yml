@@ -18,11 +18,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Checkout samples
+        uses: actions/checkout@v7
+        with:
+          repository: strands-agents/samples
+          ref: main
+          path: samples-source
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: '22'
+          node-version-file: .node-version
 
       - name: Install dependencies
         run: npm ci
@@ -36,6 +46,8 @@ jobs:
         # Node's default heap on the runner; raise the ceiling to avoid an OOM.
         env:
           NODE_OPTIONS: --max-old-space-size=4096
+          SAMPLES_SOURCE_DIR: ${{ github.workspace }}/samples-source
+          SAMPLES_REQUIRE_SOURCE: '1'
 
       - name: Typecheck
         run: npm run typecheck
@@ -46,6 +58,14 @@ jobs:
 
       - name: Re-link SDK types
         run: npm install
+
+      - name: Build TypeScript harness against local SDK
+        run: |
+          npm ci
+          npm install --no-save ../strands-ts
+          # Resolve the linked SDK's peer dependencies from the harness's dependency tree.
+          npm run build -- --preserveSymlinks
+        working-directory: harness-ts
 
       - name: Typecheck snippets
         run: npm run typecheck:snippets

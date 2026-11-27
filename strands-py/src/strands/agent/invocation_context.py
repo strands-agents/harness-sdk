@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
 
 from typing_extensions import Required
@@ -24,6 +25,27 @@ class InvocationContextUsage(Usage):
     """
 
     turns_taken: Required[int]
+
+
+@dataclass(frozen=True, kw_only=True)
+class ModelUsage:
+    """Token usage of one model in a request.
+
+    Attributes:
+        provider_name: Name of the model's provider. For the SDK's own model classes it is one of
+            ``anthropic``, ``bedrock``, ``google``, ``litellm``, ``llamaapi``, ``llamacpp``, ``mistral``,
+            ``ollama``, ``openai``, ``sagemaker``, or ``writer``. A decision model reports the provider name
+            from its own metadata, or its wrapped model's name when it has one. ``None`` when the SDK cannot
+            tell. Existing names do not change, more may be added, and a ``None`` may later get a name. It is
+            not the OpenTelemetry provider value.
+        model_id: The model id the calls were made with, or the endpoint name for a SageMaker model; ``None``
+            when not known.
+        usage: The summed usage of every call to this model.
+    """
+
+    provider_name: str | None
+    model_id: str | None
+    usage: Usage = field(hash=False)
 
 
 # Contexts are shared across threads: sync tools, and the agents they call, run on worker threads.
@@ -53,6 +75,8 @@ class InvocationContext:
     _parent: InvocationContext | None
     _auxiliary: bool
     _usage: InvocationContextUsage
+    _usage_by_model: dict[tuple[str | None, str | None], Usage]
+    _structured_output_failures: int
 
     def __init__(self) -> None:
         """Reject direct construction.
@@ -71,16 +95,35 @@ class InvocationContext:
         return self._usage
 
     @property
+    def usage_by_model(self) -> list[ModelUsage]:
+        """The token usage in :attr:`usage`, split by the model that produced it.
+
+        One record per distinct ``(provider_name, model_id)``, in the order they first recorded usage. Each is
+        a snapshot taken when this property is read. Their token counts add up to :attr:`usage`. Usage whose
+        model is not known is under a record whose ``provider_name`` and ``model_id`` are ``None``.
+        """
+        with _usage_lock:
+            return [
+                ModelUsage(provider_name=provider_name, model_id=model_id, usage=usage.copy())
+                for (provider_name, model_id), usage in self._usage_by_model.items()
+            ]
+
+    @property
     def _limiting_parent(self) -> InvocationContext | None:
         """The parent whose limits also apply to this instance, if any."""
         return None if self._auxiliary else self._parent
 
-    def _record_usage(self, usage: Usage) -> None:
-        """Add one model call's usage to this instance and every parent."""
+    def _record_usage(self, usage: Usage, provider_name: str | None = None, model_id: str | None = None) -> None:
+        """Add one model call's usage to this instance and every parent, under the model that made the call."""
+        model_key = (provider_name, model_id)
         with _usage_lock:
             context: InvocationContext | None = self
             while context is not None:
                 _add_usage(context._usage, usage)
+                model_usage = context._usage_by_model.setdefault(
+                    model_key, Usage(inputTokens=0, outputTokens=0, totalTokens=0)
+                )
+                _add_usage(model_usage, usage)
                 context = context._parent
 
     def _take_turn(self) -> StopReason | None:
@@ -100,6 +143,23 @@ class InvocationContext:
                 context._usage["turns_taken"] += 1
                 context = context._limiting_parent
             return None
+
+    def _record_structured_output_failure(self) -> None:
+        """Count one failed structured output attempt here and in every parent whose limits apply."""
+        with _usage_lock:
+            context: InvocationContext | None = self
+            while context is not None:
+                context._structured_output_failures += 1
+                context = context._limiting_parent
+
+    def _has_limit(self, key: str) -> bool:
+        """Whether this instance or a parent whose limits apply to it sets the limit named ``key``."""
+        context: InvocationContext | None = self
+        while context is not None:
+            if context._limits and context._limits.get(key) is not None:
+                return True
+            context = context._limiting_parent
+        return False
 
 
 def _create_invocation_context(
@@ -125,11 +185,13 @@ def _create_invocation_context(
     context._parent = parent
     context._auxiliary = auxiliary
     context._usage = InvocationContextUsage(turns_taken=0, inputTokens=0, outputTokens=0, totalTokens=0)
+    context._usage_by_model = {}
+    context._structured_output_failures = 0
     return context
 
 
-def _add_usage(total: InvocationContextUsage, usage: Usage) -> None:
-    """Add one model call's usage to a context's running total."""
+def _add_usage(total: Usage, usage: Usage) -> None:
+    """Add one model call's usage to a running total."""
     total["inputTokens"] += usage["inputTokens"]
     total["outputTokens"] += usage["outputTokens"]
     total["totalTokens"] += usage["totalTokens"]
@@ -211,7 +273,7 @@ def _reached_limit(invocation_context: InvocationContext) -> StopReason | None:
     """Return the stop reason for the first limit reached, or ``None`` if none is reached.
 
     Checks this instance's own limits first and then each parent's. Within one instance the
-    order is turns, then total_tokens, then output_tokens.
+    order is turns, then total_tokens, then output_tokens, then structured_output_attempts.
     """
     own = _reached_own_limit(invocation_context)
     if own is not None:
@@ -234,4 +296,10 @@ def _reached_own_limit(invocation_context: InvocationContext) -> StopReason | No
     output_tokens = limits.get("output_tokens")
     if output_tokens is not None and usage["outputTokens"] >= output_tokens:
         return "limit_output_tokens"
+    structured_output_attempts = limits.get("structured_output_attempts")
+    if (
+        structured_output_attempts is not None
+        and invocation_context._structured_output_failures >= structured_output_attempts
+    ):
+        return "limit_structured_output_attempts"
     return None

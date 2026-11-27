@@ -1,0 +1,10 @@
+name: Graph
+description: Design and run a team of sub-agents as a directed acyclic graph, with each node receiving its upstream outputs.
+integrationType: tool
+maintainedBy: strands
+languages:
+  python: {}
+  typescript: {}
+github: https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/graph
+docsPage: docs/user-guide/sdk/tools/vended-tools/graph
+addedDate: 2026-10-30

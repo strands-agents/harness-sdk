@@ -17,6 +17,7 @@ from a2a.types import (
 )
 from a2a.types import Message as A2AMessage
 
+from strands._context_manager.placeholder import offload_placeholder
 from strands.agent.agent_result import AgentResult
 from strands.multiagent.a2a._converters import (
     _extract_task_state,
@@ -152,6 +153,14 @@ def test_convert_bare_task_response_uses_task_artifacts():
     assert isinstance(result, AgentResult)
     assert len(result.message["content"]) == 1
     assert result.message["content"][0]["text"] == "Task response"
+
+
+def test_convert_an_offloaded_block_to_the_text_the_model_receives():
+    content_blocks = [offload_placeholder("drop", "[Dropped: ~1,200 tokens]", "tu-1", 1200)]
+
+    parts = convert_content_blocks_to_parts(content_blocks)
+
+    assert [part.root for part in parts] == [TextPart(kind="text", text="[Dropped: ~1,200 tokens] [ref: tu-1]")]
 
 
 def test_convert_task_artifact_update_event():

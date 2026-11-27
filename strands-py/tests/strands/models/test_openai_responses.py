@@ -1,3 +1,4 @@
+import copy
 import logging
 import os
 import unittest.mock
@@ -7,12 +8,12 @@ import httpx
 import openai
 import pydantic
 import pytest
-from openai.types.responses import Response, ResponseErrorEvent, ResponseFailedEvent
+from openai.types.responses import Response, ResponseErrorEvent, ResponseFailedEvent, ResponseReasoningItem
 from openai.types.responses.response_error import ResponseError
 
 import strands
 from strands.agent import AgentMetadata
-from strands.models import CacheConfig
+from strands.models import CacheConfig, ModelCapabilities, ModelInfo
 from strands.models.openai_responses import _MAX_MEDIA_SIZE_BYTES, OpenAIResponsesModel
 from strands.types.exceptions import ContextWindowOverflowException, ModelThrottledException
 
@@ -507,6 +508,7 @@ def test_format_request(model, messages, tool_specs, system_prompt):
         ],
         "stream": True,
         "store": False,
+        "include": ["reasoning.encrypted_content"],
         "instructions": system_prompt,
         "tools": [
             {
@@ -889,6 +891,7 @@ async def test_stream(openai_client, model_id, model, agenerator, alist):
         "input": [{"role": "user", "content": [{"type": "input_text", "text": "test"}]}],
         "stream": True,
         "store": False,
+        "include": ["reasoning.encrypted_content"],
         "max_output_tokens": 100,
     }
     openai_client.responses.create.assert_called_once_with(**expected_request)
@@ -1134,6 +1137,7 @@ async def test_stream_response_incomplete_content_filter_with_tool_call(openai_c
     [
         "response.reasoning_text.delta",
         "response.reasoning_summary_text.delta",
+        "response.reasoning.delta",
     ],
 )
 async def test_stream_reasoning_content(openai_client, model, agenerator, alist, event_type):
@@ -1828,6 +1832,39 @@ def test_stateful(model_id, stateful):
     """Model.stateful reflects the stateful config option."""
     model = OpenAIResponsesModel(model_id=model_id, stateful=stateful)
     assert model.stateful is stateful
+    assert model.model_info.capabilities.stateful is stateful
+
+
+@pytest.mark.parametrize("stateful", [True, False])
+def test_stateful_model_info_override_wins_over_the_config_option(model_id, stateful):
+    model = OpenAIResponsesModel(
+        model_id=model_id,
+        stateful=not stateful,
+        model_info=ModelInfo(capabilities=ModelCapabilities(stateful=stateful)),
+    )
+
+    assert model.stateful is stateful
+
+
+@pytest.mark.asyncio
+async def test_stream_resolves_stateful_once_per_stream_not_once_per_event(openai_client, model_id, agenerator, alist):
+    """Resolving the record walks the config, so the stream must not re-read it per event."""
+    model = OpenAIResponsesModel(model_id=model_id, stateful=True)
+    mock_events = [
+        unittest.mock.Mock(type="response.created", response=unittest.mock.Mock(id="resp_abc")),
+        *[unittest.mock.Mock(type="response.output_text.delta", delta="x") for _ in range(50)],
+        unittest.mock.Mock(type="response.completed", response=unittest.mock.Mock(usage=None)),
+    ]
+    openai_client.responses.create = unittest.mock.AsyncMock(return_value=agenerator(mock_events))
+
+    with unittest.mock.patch.object(
+        OpenAIResponsesModel, "get_config", side_effect=model.config.copy
+    ) as mock_get_config:
+        await alist(
+            model.stream([{"role": "user", "content": [{"text": "hi"}]}], model_state={"response_id": "resp_0"})
+        )
+
+    assert mock_get_config.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -1900,7 +1937,7 @@ def test_format_request_messages_excludes_reasoning_content(caplog):
         {"role": "assistant", "content": "The answer is 42"},
         {"role": "user", "content": [{"type": "input_text", "text": "Thanks"}]},
     ]
-    assert "reasoningContent is not yet supported" in caplog.text
+    assert "reasoningContent from another provider or model" in caplog.text
 
 
 class TestCountTokens:
@@ -2326,3 +2363,948 @@ def test_format_request_logs_skipped_blocks_once_per_request(model, caplog):
     assert len(messages_logged) == 2
     assert "count=<3> | Location sources are not supported by OpenAI Responses" in messages_logged[0]
     assert "count=<3> | cachePoint content block is not supported by OpenAI Responses" in messages_logged[1]
+
+
+def test_format_request_logs_skipped_blocks_once_per_request_with_message_cache_checkpoints(caplog):
+    caplog.set_level(logging.WARNING, logger="strands.models.openai_responses")
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    s3_image = {"image": {"format": "png", "source": {"location": {"type": "s3", "uri": "s3://bucket/key.png"}}}}
+    messages = []
+    for turn in range(3):
+        messages.append({"role": "user", "content": [{"text": "look"}, s3_image]})
+        messages.append({"role": "assistant", "content": [{"text": f"answer {turn}"}]})
+
+    request = model._format_request(messages)
+
+    assert request["prompt_cache_options"] == {"mode": "explicit"}
+    messages_logged = [record.getMessage() for record in caplog.records]
+    assert len(messages_logged) == 1
+    assert "count=<3> | Location sources are not supported by OpenAI Responses" in messages_logged[0]
+
+
+@pytest.mark.parametrize(
+    ("model_id", "prompt_caching", "enabled"),
+    [
+        # Listed with promptCaching "cachePoints".
+        ("gpt-5.6", None, True),
+        ("gpt-6.1-terra", None, True),
+        ("openai.gpt-6.1-sol", None, True),
+        # Listed without cache points, or not listed at all: no id-based inference.
+        ("gpt-5.5", None, False),
+        ("openai.gpt-6.1-terra", None, False),
+        ("gpt-7-nova", None, False),
+        # A model_info override wins over the data.
+        ("gpt-6-sol", "auto", False),
+        ("gpt-6-sol", "unsupported", False),
+        ("my-finetune", "cache_points", True),
+    ],
+)
+def test_message_cache_follows_model_info(model_id, prompt_caching, enabled, messages):
+    model_info = ModelInfo(capabilities=ModelCapabilities(prompt_caching=prompt_caching)) if prompt_caching else None
+    model = OpenAIResponsesModel(model_id=model_id, cache_config=CacheConfig(), model_info=model_info)
+    request = model._format_request(messages)
+
+    checkpoint = {"mode": "explicit"} if enabled else None
+    assert request["input"] == _text_input("test", checkpoint)
+    assert request.get("prompt_cache_options") == ({"mode": "explicit"} if enabled else None)
+
+
+@pytest.mark.parametrize("cache_config", [None, CacheConfig(messages_ttl=False)])
+def test_message_cache_opt_out_keeps_original_shape(cache_config, captured_warnings):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=cache_config)
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"toolResult": {"toolUseId": "c1", "status": "success", "content": [{"text": "result"}]}},
+                {"text": "temporary"},
+            ],
+        }
+    ]
+    request = model._format_request(messages, dynamic_trailing_blocks=1)
+
+    assert request["input"] == OpenAIResponsesModel._format_request_messages(messages)
+    assert "prompt_cache_options" not in request
+    # messages_ttl gates checkpoints on this model, so it is not reported as having no effect.
+    assert not captured_warnings
+
+
+@pytest.mark.parametrize("options", [{"mode": "implicit", "ttl": "30m"}, {"mode": "explicit"}, {"ttl": "30m"}])
+def test_message_cache_preserves_native_options(options, messages):
+    params = {"prompt_cache_options": options}
+    original = copy.deepcopy(params)
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig(), params=params)
+
+    request = model._format_request(messages)
+
+    assert request["prompt_cache_options"] == {"mode": "explicit", **options}
+    assert params == original
+    assert model.config["params"] == original
+
+
+def _text_input(text, checkpoint=None):
+    """Expected input for a one-text user message, with ``checkpoint`` as its breakpoint when given."""
+    part = {"type": "input_text", "text": text}
+    if checkpoint is not None:
+        part["prompt_cache_breakpoint"] = checkpoint
+    return [{"role": "user", "content": [part]}]
+
+
+@pytest.mark.parametrize(
+    ("cache_config", "params", "checkpoint", "options"),
+    [
+        (CacheConfig(messages_ttl="12h"), {}, {"mode": "explicit", "ttl": "12h"}, {"mode": "explicit"}),
+        (CacheConfig(ttl="12h"), {}, {"mode": "explicit"}, {"mode": "explicit", "ttl": "12h"}),
+        (
+            CacheConfig(ttl="12h", messages_ttl="30m"),
+            {},
+            {"mode": "explicit", "ttl": "30m"},
+            {"mode": "explicit", "ttl": "12h"},
+        ),
+        # A caller-supplied lifetime wins over the configured one.
+        (
+            CacheConfig(ttl="12h"),
+            {"prompt_cache_options": {"ttl": "30m"}},
+            {"mode": "explicit"},
+            {"mode": "explicit", "ttl": "30m"},
+        ),
+    ],
+)
+def test_message_cache_maps_cache_lifetimes(cache_config, params, checkpoint, options, messages, captured_warnings):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=cache_config, params=params)
+    request = model._format_request(messages)
+
+    assert request["input"] == _text_input("test", checkpoint)
+    assert request["prompt_cache_options"] == options
+    assert "prompt_cache_retention" not in request
+    assert not captured_warnings
+
+
+def test_message_cache_lifetime_ttl_applies_without_checkpoints(messages, captured_warnings):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig(ttl="12h", messages_ttl=False))
+    request = model._format_request(messages)
+
+    assert request["input"] == _text_input("test")
+    assert request["prompt_cache_options"] == {"ttl": "12h"}
+    assert not captured_warnings
+
+
+def test_message_cache_ignores_and_warns_on_invalid_messages_ttl(messages):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig(messages_ttl="1h"))
+
+    with pytest.warns(UserWarning, match="not an openai cache lifetime"):
+        request = model._format_request(messages)
+
+    assert request["input"] == _text_input("test", {"mode": "explicit"})
+    assert request["prompt_cache_options"] == {"mode": "explicit"}
+
+
+def test_message_cache_keeps_retention_literal_ttl(messages, captured_warnings):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig(ttl="24h"))
+    request = model._format_request(messages)
+
+    assert request["prompt_cache_retention"] == "24h"
+    assert request["prompt_cache_options"] == {"mode": "explicit"}
+    assert not captured_warnings
+
+
+def test_cache_lifetime_ttl_is_ignored_and_warned_without_cache_points(messages):
+    model = OpenAIResponsesModel(model_id="gpt-5.5", cache_config=CacheConfig(ttl="12h", messages_ttl="12h"))
+
+    with pytest.warns(UserWarning, match="not an openai retention value") as record:
+        request = model._format_request(messages)
+
+    assert request["input"] == _text_input("test")
+    assert "prompt_cache_options" not in request
+    assert "prompt_cache_retention" not in request
+    # Without cache points, messages_ttl is reported as having no effect.
+    assert any("messages_ttl" in str(warning.message) for warning in record)
+
+
+@pytest.mark.parametrize(
+    "cache_config",
+    [
+        CacheConfig(),
+        # "anthropic" means SDK-placed cache points, the same mechanism as these checkpoints.
+        CacheConfig(strategy="anthropic"),
+        CacheConfig(messages_ttl=True),
+        CacheConfig(cache_key=False),
+    ],
+)
+def test_message_cache_places_checkpoints_without_warnings(cache_config, captured_warnings):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=cache_config)
+    request = model._format_request([{"role": "user", "content": [{"text": "durable"}]}])
+
+    assert request["prompt_cache_options"] == {"mode": "explicit"}
+    assert request["input"] == _text_input("durable", {"mode": "explicit"})
+    assert not captured_warnings
+
+
+def test_message_cache_excludes_multiple_temporary_blocks_without_mutation():
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"text": "durable"},
+                {"text": "temporary one"},
+                {"text": "temporary two"},
+            ],
+        }
+    ]
+    original = copy.deepcopy(messages)
+    request = model._format_request(messages, dynamic_trailing_blocks=2)
+
+    assert request["input"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "durable", "prompt_cache_breakpoint": {"mode": "explicit"}},
+                {"type": "input_text", "text": "temporary one"},
+                {"type": "input_text", "text": "temporary two"},
+            ],
+        }
+    ]
+    assert messages == original
+    assert model._format_request(messages, dynamic_trailing_blocks=2) == request
+
+
+def test_message_cache_retains_stable_prefix_after_user_turn_becomes_history():
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    first = model._format_request(
+        [{"role": "user", "content": [{"text": "durable one"}, {"text": "temporary one"}]}],
+        dynamic_trailing_blocks=1,
+    )
+    second = model._format_request(
+        [
+            {"role": "user", "content": [{"text": "durable one"}]},
+            {"role": "assistant", "content": [{"text": "answer"}]},
+            {"role": "user", "content": [{"text": "durable two"}, {"text": "temporary two"}]},
+        ],
+        dynamic_trailing_blocks=1,
+    )
+
+    checkpoint = {"mode": "explicit"}
+    assert first["input"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "durable one", "prompt_cache_breakpoint": checkpoint},
+                {"type": "input_text", "text": "temporary one"},
+            ],
+        }
+    ]
+    assert second["input"] == [
+        *_text_input("durable one", checkpoint),
+        {"role": "assistant", "content": "answer"},
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "durable two", "prompt_cache_breakpoint": checkpoint},
+                {"type": "input_text", "text": "temporary two"},
+            ],
+        },
+    ]
+
+
+def test_message_cache_tool_result_prefix_survives_replay_with_multiple_tools():
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    durable = [
+        {
+            "role": "user",
+            "content": [
+                {"toolResult": {"toolUseId": "c1", "status": "success", "content": [{"json": {"value": "一"}}]}},
+                {"text": "durable explanation"},
+                {"toolResult": {"toolUseId": "c2", "status": "success", "content": [{"text": "second result"}]}},
+            ],
+        }
+    ]
+    injected = copy.deepcopy(durable)
+    injected[0]["content"].extend([{"text": "temporary one"}, {"text": "temporary two"}])
+    original = copy.deepcopy(injected)
+    first = model._format_request(injected, dynamic_trailing_blocks=2)
+    second = model._format_request(
+        durable
+        + [
+            {"role": "assistant", "content": [{"text": "answer"}]},
+            {"role": "user", "content": [{"text": "next"}]},
+        ]
+    )
+
+    assert first["input"][:3] == second["input"][:3]
+    assert first["input"] == [
+        *_text_input("durable explanation"),
+        {
+            "type": "function_call_output",
+            "call_id": "c1",
+            "output": [{"type": "input_text", "text": '{"value": "一"}'}],
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "c2",
+            "output": [
+                {"type": "input_text", "text": "second result", "prompt_cache_breakpoint": {"mode": "explicit"}}
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "temporary one"},
+                {"type": "input_text", "text": "temporary two"},
+            ],
+        },
+    ]
+    assert injected == original
+
+
+def test_message_cache_retains_all_historical_durable_endpoints():
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    messages = []
+    for index in range(6):
+        messages.extend(
+            [
+                {"role": "user", "content": [{"text": f"user {index}"}]},
+                {"role": "assistant", "content": [{"text": f"assistant {index}"}]},
+            ]
+        )
+    earlier = model._format_request(messages[:6])
+    request = model._format_request(messages)
+
+    tru_checkpoints = [
+        item["content"][0]["text"]
+        for item in request["input"]
+        if item["role"] == "user" and "prompt_cache_breakpoint" in item["content"][0]
+    ]
+    exp_checkpoints = [f"user {index}" for index in range(6)]
+    assert tru_checkpoints == exp_checkpoints
+    assert request["input"][: len(earlier["input"])] == earlier["input"]
+
+
+@pytest.mark.parametrize("dynamic_trailing_blocks", [1, 5])
+def test_message_cache_temporary_only_turn_has_no_checkpoint(dynamic_trailing_blocks):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    request = model._format_request(
+        [{"role": "user", "content": [{"text": "temporary"}]}],
+        dynamic_trailing_blocks=dynamic_trailing_blocks,
+    )
+    assert request["input"] == [{"role": "user", "content": [{"type": "input_text", "text": "temporary"}]}]
+    # No checkpoint must not fall back to implicitly caching an entirely temporary request.
+    assert request["prompt_cache_options"] == {"mode": "explicit"}
+
+
+def test_message_cache_marks_trailing_durable_media_and_skips_cache_points(caplog):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    request = model._format_request(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"text": "durable"},
+                    {"cachePoint": {"type": "default"}},
+                    {"image": {"format": "png", "source": {"bytes": b"image"}}},
+                    {"text": "temporary"},
+                ],
+            }
+        ],
+        dynamic_trailing_blocks=1,
+    )
+
+    assert request["input"][0]["content"] == [
+        {"type": "input_text", "text": "durable"},
+        {
+            "type": "input_image",
+            "image_url": "data:image/png;base64,aW1hZ2U=",
+            "prompt_cache_breakpoint": {"mode": "explicit"},
+        },
+        {"type": "input_text", "text": "temporary"},
+    ]
+    assert "cachePoint content block is not supported" in caplog.text
+
+
+def test_message_cache_marks_media_only_tool_output_and_empty_history_has_no_checkpoints():
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    request = model._format_request(
+        [
+            {"role": "assistant", "content": [{"text": "calling tool"}]},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "toolResult": {
+                            "toolUseId": "c1",
+                            "status": "success",
+                            "content": [{"image": {"format": "png", "source": {"bytes": b"image"}}}],
+                        }
+                    },
+                    {"text": "temporary"},
+                ],
+            },
+        ],
+        dynamic_trailing_blocks=1,
+    )
+
+    assert request["prompt_cache_options"] == {"mode": "explicit"}
+    assert request["input"][1]["output"] == [
+        {
+            "type": "input_image",
+            "image_url": "data:image/png;base64,aW1hZ2U=",
+            "prompt_cache_breakpoint": {"mode": "explicit"},
+        }
+    ]
+    assert request["input"][2] == {"role": "user", "content": [{"type": "input_text", "text": "temporary"}]}
+    assert model._format_request([])["input"] == []
+
+
+def test_message_cache_preserves_stateful_response_chaining():
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig(), stateful=True)
+    model_state = {"response_id": "previous"}
+    request = model._format_request(
+        [{"role": "user", "content": [{"text": "durable"}, {"text": "temporary"}]}],
+        model_state=model_state,
+        dynamic_trailing_blocks=1,
+    )
+
+    assert request["store"] is True
+    assert request["previous_response_id"] == "previous"
+    assert model_state == {"response_id": "previous"}
+    assert request["input"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "durable", "prompt_cache_breakpoint": {"mode": "explicit"}},
+                {"type": "input_text", "text": "temporary"},
+            ],
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("block", "part"),
+    [
+        (
+            {"image": {"format": "png", "source": {"bytes": b"image"}}},
+            {"type": "input_image", "image_url": "data:image/png;base64,aW1hZ2U="},
+        ),
+        (
+            {"document": {"format": "pdf", "name": "doc", "source": {"bytes": b"pdf"}}},
+            {"type": "input_file", "filename": "doc.pdf", "file_data": "data:application/pdf;base64,cGRm"},
+        ),
+    ],
+)
+def test_message_cache_marks_durable_media_only_input(block, part):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    request = model._format_request([{"role": "user", "content": [block]}])
+
+    assert request["prompt_cache_options"] == {"mode": "explicit"}
+    assert request["input"] == [
+        {"role": "user", "content": [{**part, "prompt_cache_breakpoint": {"mode": "explicit"}}]}
+    ]
+
+
+def test_message_cache_without_input_parts_preserves_implicit_caching():
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    messages = [{"role": "assistant", "content": [{"text": "hello"}]}]
+    request = model._format_request(messages)
+
+    assert "prompt_cache_options" not in request
+    assert "prompt_cache_breakpoint" not in str(request)
+    assert request["input"] == model._format_request_messages(messages)
+
+
+def test_message_cache_dynamic_tail_skips_unsupported_blocks(caplog):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    request = model._format_request(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"text": "durable"},
+                    {"text": "temporary"},
+                    {"cachePoint": {"type": "default"}},
+                    {"reasoningContent": {"reasoningText": {"text": "thinking"}}},
+                ],
+            }
+        ],
+        dynamic_trailing_blocks=3,
+    )
+
+    assert request["input"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "durable", "prompt_cache_breakpoint": {"mode": "explicit"}},
+                {"type": "input_text", "text": "temporary"},
+            ],
+        }
+    ]
+    assert "cachePoint content block is not supported" in caplog.text
+    assert "reasoningContent from another provider or model" in caplog.text
+
+
+_DEVELOPER_PROMPT = {"role": "developer", "content": [{"type": "input_text", "text": "Be precise."}]}
+
+
+_INSTRUCTIONS = {"instructions": "Be precise."}
+
+
+@pytest.mark.parametrize(
+    ("model_id", "config", "exp_leading_input", "exp_fields"),
+    [
+        ("gpt-6.2-sol", {}, [_DEVELOPER_PROMPT], {}),
+        ("openai.gpt-6.2-astra", {"cache_config": CacheConfig()}, [_DEVELOPER_PROMPT], {}),
+        ("gpt-6.1-sol", {"cache_config": CacheConfig()}, [], _INSTRUCTIONS),
+        ("gpt-6.2-sol", {"stateful": True}, [], _INSTRUCTIONS),
+        ("gpt-6.2-sol", {"params": {"input": [{"role": "user", "content": "native input"}]}}, [], _INSTRUCTIONS),
+    ],
+)
+def test_format_request_sends_system_prompt_as_developer_message_where_instructions_never_cache(
+    model_id, config, exp_leading_input, exp_fields
+):
+    """Guards against https://github.com/strands-agents/harness-sdk/issues/6367: GPT-6.2 never caches instructions."""
+    model = OpenAIResponsesModel(model_id=model_id, **config)
+    messages = [{"role": "user", "content": [{"text": "hello"}]}]
+    base_request = model._format_request(messages)
+
+    tru_request = model._format_request(messages, system_prompt="Be precise.")
+    exp_request = {**base_request, **exp_fields, "input": [*exp_leading_input, *base_request["input"]]}
+    assert tru_request == exp_request
+
+
+def test_message_cache_leaves_native_input_override_under_caller_control():
+    params = {"input": [{"role": "user", "content": "native input"}]}
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig(), params=params)
+    request = model._format_request([{"role": "user", "content": [{"text": "not sent"}]}])
+
+    assert request["input"] == params["input"]
+    assert "prompt_cache_options" not in request
+    assert params == {"input": [{"role": "user", "content": "native input"}]}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("extra_body", "expected_extra_body"),
+    [
+        ({}, {"prompt_cache_options": {"mode": "explicit"}}),
+        ({"other": True}, {"prompt_cache_options": {"mode": "explicit"}, "other": True}),
+        ({"prompt_cache_options": {"mode": "implicit"}}, {"prompt_cache_options": {"mode": "implicit"}}),
+        ({"prompt_cache_options": {"ttl": "12h"}}, {"prompt_cache_options": {"mode": "explicit", "ttl": "12h"}}),
+    ],
+)
+async def test_message_cache_works_with_older_client_create_signature(
+    openai_client, alist, extra_body, expected_extra_body
+):
+    params = {"extra_body": extra_body}
+    original = copy.deepcopy(params)
+    calls = []
+
+    # Models the pre-prompt_cache_options signature: no catch-all kwargs accepting new fields.
+    async def create(*, model, input, stream, store, include, extra_body):
+        calls.append({"input": input, "extra_body": extra_body})
+
+        async def events():
+            yield SimpleNamespace(type="response.output_text.delta", delta="OK")
+
+        return events()
+
+    openai_client.responses.create.side_effect = create
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig(), params=params)
+    await alist(
+        model.stream(
+            [{"role": "user", "content": [{"text": "durable"}, {"text": "temporary"}]}], dynamic_trailing_blocks=1
+        )
+    )
+
+    assert calls[0]["extra_body"] == expected_extra_body
+    assert calls[0]["input"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "durable", "prompt_cache_breakpoint": {"mode": "explicit"}},
+                {"type": "input_text", "text": "temporary"},
+            ],
+        }
+    ]
+    assert model.config["params"] == original
+
+
+@pytest.mark.asyncio
+async def test_message_cache_structured_output_works_with_older_client_parse_signature(openai_client, alist):
+    calls = []
+
+    class Output(pydantic.BaseModel):
+        name: str
+
+    # Models the pre-prompt_cache_options signature: no catch-all kwargs accepting new fields.
+    async def parse(*, model, input, store, include, text_format, extra_body=None):
+        calls.append({"input": input, "extra_body": extra_body})
+        return SimpleNamespace(output_parsed=text_format(name="ok"))
+
+    openai_client.responses.parse.side_effect = parse
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    events = await alist(model.structured_output(Output, [{"role": "user", "content": [{"text": "durable"}]}]))
+
+    assert events[-1]["output"].name == "ok"
+    assert calls[0]["extra_body"] == {"prompt_cache_options": {"mode": "explicit"}}
+    assert calls[0]["input"] == _text_input("durable", {"mode": "explicit"})
+
+
+@pytest.mark.parametrize(
+    ("content", "dynamic_trailing_blocks", "output"),
+    [
+        # Durable text outputs join into one checkpointed block.
+        (
+            [{"text": "one"}, {"json": {"n": 2}}],
+            0,
+            [{"type": "input_text", "text": 'one\n{"n": 2}', "prompt_cache_breakpoint": {"mode": "explicit"}}],
+        ),
+        # A temporary tool output uses the same array form, without a checkpoint.
+        ([{"text": "out"}], 1, [{"type": "input_text", "text": "out"}]),
+        # An empty output stays a string: an empty text block would be a meaningless checkpoint.
+        ([], 0, ""),
+    ],
+)
+def test_message_cache_tool_output_form(content, dynamic_trailing_blocks, output):
+    model = OpenAIResponsesModel(model_id="gpt-5.6", cache_config=CacheConfig())
+    result = {"toolUseId": "c1", "status": "success", "content": content}
+    blocks = [{"text": "durable"}, {"toolResult": result}] if dynamic_trailing_blocks else [{"toolResult": result}]
+    request = model._format_request(
+        [{"role": "user", "content": blocks}], dynamic_trailing_blocks=dynamic_trailing_blocks
+    )
+
+    assert request["input"][-1] == {"type": "function_call_output", "call_id": "c1", "output": output}
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"client_args": {"api_key": "k"}}, "Only one of 'client' or 'client_args'"),
+        ({"bedrock_mantle_config": {"region": "us-east-1"}}, "'bedrock_mantle_config' cannot be combined"),
+    ],
+)
+def test_init_rejects_client_with_other_client_options(kwargs, match):
+    with pytest.raises(ValueError, match=match):
+        OpenAIResponsesModel(client=unittest.mock.AsyncMock(), model_id="gpt-4o", **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_injected_client_serves_native_count_tokens():
+    client = unittest.mock.AsyncMock()
+    client.responses.input_tokens.count.return_value = unittest.mock.Mock(input_tokens=42)
+    model = OpenAIResponsesModel(client=client, model_id="gpt-4o", use_native_token_count=True)
+
+    with unittest.mock.patch.object(strands.models.openai_responses.openai, "AsyncOpenAI") as mock_client_cls:
+        result = await model.count_tokens(messages=[{"role": "user", "content": [{"text": "hello"}]}])
+
+    assert result == 42
+    mock_client_cls.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_injected_client_is_reused_and_not_closed(model_id, test_output_model_cls, agenerator, alist):
+    client = unittest.mock.AsyncMock()
+    client.responses.create = unittest.mock.AsyncMock(
+        side_effect=lambda **_: agenerator([unittest.mock.Mock(type="response.output_text.delta", delta="Hi")])
+    )
+    client.responses.parse = unittest.mock.AsyncMock(
+        return_value=unittest.mock.Mock(output_parsed=test_output_model_cls(name="John", age=30))
+    )
+    model = OpenAIResponsesModel(client=client, model_id=model_id)
+    messages = [{"role": "user", "content": [{"text": "test"}]}]
+
+    with unittest.mock.patch.object(strands.models.openai_responses.openai, "AsyncOpenAI") as mock_client_cls:
+        await alist(model.stream(messages))
+        await alist(model.stream(messages))
+        events = await alist(model.structured_output(test_output_model_cls, messages))
+
+    mock_client_cls.assert_not_called()
+    assert client.responses.create.await_count == 2
+    assert client.responses.create.await_args.kwargs["model"] == model_id
+    assert events[-1] == {"output": test_output_model_cls(name="John", age=30)}
+    client.close.assert_not_called()
+    client.__aexit__.assert_not_called()
+
+
+def _reasoning_item(item_id, encrypted="enc", summary=(), content=()):
+    return ResponseReasoningItem(
+        id=item_id,
+        type="reasoning",
+        summary=[{"type": "summary_text", "text": text} for text in summary],
+        content=[{"type": "reasoning_text", "text": text} for text in content],
+        encrypted_content=encrypted,
+    )
+
+
+def _reasoning_block(item_id, model_id="gpt-4o", text=None, **data):
+    block = {"providerData": {"provider": "openai_responses", "modelId": model_id, "data": {"id": item_id, **data}}}
+    if text is not None:
+        block["reasoningText"] = {"text": text}
+    return {"reasoningContent": block}
+
+
+def _completed(output=None):
+    usage = SimpleNamespace(input_tokens=1, output_tokens=1, total_tokens=2, input_tokens_details=None)
+    return SimpleNamespace(type="response.completed", response=SimpleNamespace(usage=usage, output=output or []))
+
+
+async def _stream_message(model, events, agenerator, alist):
+    model_stream = None
+    with unittest.mock.patch.object(model, "_get_client") as get_client:
+        client = unittest.mock.AsyncMock()
+        client.responses.create = unittest.mock.AsyncMock(return_value=agenerator(events))
+        get_client.return_value.__aenter__.return_value = client
+        model_stream = model.stream([{"role": "user", "content": [{"text": "go"}]}])
+        stream_events = await alist(strands.event_loop.streaming.process_stream(model_stream))
+    return stream_events[-1]["stop"][1], client.responses.create.call_args.kwargs
+
+
+@pytest.mark.parametrize(
+    ("params", "include"),
+    [
+        ({}, ["reasoning.encrypted_content"]),
+        ({"include": ["web_search_call.results"]}, ["web_search_call.results", "reasoning.encrypted_content"]),
+        ({"include": ["reasoning.encrypted_content"]}, ["reasoning.encrypted_content"]),
+    ],
+)
+def test_format_request_merges_encrypted_reasoning_into_include(params, include):
+    model = OpenAIResponsesModel(model_id="gpt-4o", params=params)
+    original = copy.deepcopy(params)
+
+    assert model._format_request([{"role": "user", "content": [{"text": "hi"}]}])["include"] == include
+    assert model.config["params"] == original
+
+
+def test_format_request_explicit_null_include_opts_out_of_encrypted_reasoning():
+    model = OpenAIResponsesModel(model_id="gpt-4o", params={"include": None})
+
+    assert "include" not in model._format_request([{"role": "user", "content": [{"text": "hi"}]}])
+
+
+def test_model_info_names_the_reasoning_provider_it_takes_back():
+    assert OpenAIResponsesModel(model_id="gpt-4o").model_info.capabilities.reasoning_provider == "openai_responses"
+
+
+def test_format_request_stateful_neither_includes_nor_replays_reasoning():
+    model = OpenAIResponsesModel(model_id="gpt-4o", stateful=True)
+    messages = [
+        {"role": "user", "content": [{"text": "hi"}]},
+        {"role": "assistant", "content": [_reasoning_block("rs_1", summary=[], encrypted_content="enc")]},
+    ]
+
+    request = model._format_request(messages, model_state={"response_id": "resp_1"})
+
+    assert request["previous_response_id"] == "resp_1"
+    assert "include" not in request
+    assert all(item.get("type") != "reasoning" for item in request["input"])
+
+
+@pytest.mark.asyncio
+async def test_stream_captures_each_reasoning_item_as_its_own_block(agenerator, alist):
+    model = OpenAIResponsesModel(model_id="gpt-4o")
+    events = [
+        SimpleNamespace(type="response.reasoning_summary_text.delta", delta="streamed"),
+        SimpleNamespace(type="response.output_item.done", item=_reasoning_item("rs_1", summary=["streamed"])),
+        SimpleNamespace(type="response.output_item.done", item=_reasoning_item("rs_2", encrypted="enc2")),
+        SimpleNamespace(type="response.output_text.delta", delta="answer"),
+        _completed([_reasoning_item("rs_1"), _reasoning_item("rs_2")]),
+    ]
+
+    message, _ = await _stream_message(model, events, agenerator, alist)
+
+    assert message["content"] == [
+        _reasoning_block(
+            "rs_1", text="streamed", summary=[{"type": "summary_text", "text": "streamed"}], encrypted_content="enc"
+        ),
+        _reasoning_block("rs_2", encrypted_content="enc2"),
+        {"text": "answer"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_captures_reasoning_only_in_the_terminal_output(agenerator, alist):
+    model = OpenAIResponsesModel(model_id="gpt-4o")
+    terminal = _reasoning_item("rs_1", encrypted=None, content=["full reasoning"])
+    events = [SimpleNamespace(type="response.output_text.delta", delta="answer"), _completed([terminal])]
+
+    message, _ = await _stream_message(model, events, agenerator, alist)
+
+    assert message["content"] == [
+        {"text": "answer"},
+        _reasoning_block("rs_1", text="full reasoning", content=[{"type": "reasoning_text", "text": "full reasoning"}]),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_stateful_keeps_reasoning_items_out_of_the_message(agenerator, alist):
+    model = OpenAIResponsesModel(model_id="gpt-4o", stateful=True)
+    events = [
+        SimpleNamespace(type="response.output_item.done", item=_reasoning_item("rs_1", summary=["plan"])),
+        SimpleNamespace(type="response.output_text.delta", delta="answer"),
+        _completed([_reasoning_item("rs_1", summary=["plan"])]),
+    ]
+
+    message, request = await _stream_message(model, events, agenerator, alist)
+
+    assert message["content"] == [{"text": "answer"}]
+    assert "include" not in request
+
+
+def test_format_request_messages_replays_reasoning_ahead_of_its_turn():
+    reasoning = _reasoning_block(
+        "rs_1", text="plan", summary=[{"type": "summary_text", "text": "plan"}], encrypted_content="enc"
+    )
+    messages = [
+        {"role": "user", "content": [{"text": "add"}]},
+        {
+            "role": "assistant",
+            "content": [
+                {"text": "calling"},
+                reasoning,
+                {"toolUse": {"toolUseId": "c1", "name": "add", "input": {"a": 1}}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [{"toolResult": {"toolUseId": "c1", "status": "success", "content": [{"text": "2"}]}}],
+        },
+    ]
+
+    items = OpenAIResponsesModel._format_request_messages(messages, reasoning_model_id="gpt-4o")
+
+    assert items[1:] == [
+        {
+            "type": "reasoning",
+            "summary": [{"type": "summary_text", "text": "plan"}],
+            "id": "rs_1",
+            "encrypted_content": "enc",
+        },
+        {"role": "assistant", "content": "calling"},
+        {"type": "function_call", "call_id": "c1", "name": "add", "arguments": '{"a": 1}'},
+        {"type": "function_call_output", "call_id": "c1", "output": "2"},
+    ]
+    assert list(items[1]) == ["type", "summary", "id", "encrypted_content"]
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        _reasoning_block("rs_1", model_id="gpt-5", summary=[], encrypted_content="enc"),
+        {"reasoningContent": {"providerData": {"provider": "other", "modelId": "gpt-4o", "data": {"id": "rs_1"}}}},
+        {"reasoningContent": {"reasoningText": {"text": "plain", "signature": "sig"}}},
+        {"reasoningContent": {"redactedContent": b"opaque"}},
+    ],
+)
+def test_format_request_messages_drops_reasoning_it_did_not_capture_from_this_model(block, caplog):
+    messages = [{"role": "assistant", "content": [block, {"text": "answer"}]}]
+
+    with caplog.at_level("WARNING"):
+        items = OpenAIResponsesModel._format_request_messages(messages, reasoning_model_id="gpt-4o")
+
+    assert items == [{"role": "assistant", "content": "answer"}]
+    assert "reasoningContent from another provider or model" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_agent_replays_captured_reasoning_on_the_next_tool_turn(openai_client, agenerator):
+    def add(a: int) -> int:
+        """Add one.
+
+        Args:
+            a: The number.
+        """
+        return a + 1
+
+    first = [
+        SimpleNamespace(type="response.output_item.done", item=_reasoning_item("rs_1", summary=["plan"])),
+        SimpleNamespace(
+            type="response.output_item.added",
+            item=SimpleNamespace(type="function_call", call_id="c1", name="add", id="fc_1"),
+        ),
+        SimpleNamespace(type="response.function_call_arguments.done", item_id="fc_1", arguments='{"a": 1}'),
+        _completed(),
+    ]
+    second = [SimpleNamespace(type="response.output_text.delta", delta="2"), _completed()]
+    openai_client.responses.create = unittest.mock.AsyncMock(side_effect=[agenerator(first), agenerator(second)])
+
+    agent = strands.Agent(
+        model=OpenAIResponsesModel(model_id="gpt-4o"), tools=[strands.tool(add)], callback_handler=None
+    )
+    agent("add one to 1")
+
+    replayed = openai_client.responses.create.call_args_list[1].kwargs["input"]
+    assert [item.get("type") for item in replayed[1:]] == ["reasoning", "function_call", "function_call_output"]
+    assert replayed[1] == {
+        "type": "reasoning",
+        "summary": [{"type": "summary_text", "text": "plan"}],
+        "id": "rs_1",
+        "encrypted_content": "enc",
+    }
+
+
+def _bad_request(message):
+    response = httpx.Response(400, request=httpx.Request("POST", "https://api.openai.com/v1/responses"))
+    return openai.BadRequestError(message, response=response, body=None)
+
+
+_REPLAY_HISTORY = [
+    {"role": "user", "content": [{"text": "go"}]},
+    {"role": "assistant", "content": [_reasoning_block("rs_1", summary=[], encrypted_content="enc"), {"text": "ok"}]},
+    {"role": "user", "content": [{"text": "next"}]},
+]
+
+
+@pytest.mark.asyncio
+async def test_stream_retries_once_without_reasoning_the_endpoint_rejects(openai_client, agenerator, alist):
+    rejection = _bad_request("The encrypted content for item rs_1 could not be verified.")
+    openai_client.responses.create = unittest.mock.AsyncMock(
+        side_effect=[rejection, agenerator([_completed()]), agenerator([_completed()])]
+    )
+    model = OpenAIResponsesModel(model_id="gpt-4o")
+
+    await alist(model.stream(_REPLAY_HISTORY))
+    await alist(model.stream(_REPLAY_HISTORY))
+
+    first, second, third = (call.kwargs["input"] for call in openai_client.responses.create.call_args_list)
+    assert [item.get("type") for item in first].count("reasoning") == 1
+    assert all(item.get("type") != "reasoning" for item in second + third)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("history", [_REPLAY_HISTORY[2:], _REPLAY_HISTORY])
+async def test_stream_raises_a_bad_request_that_is_not_about_replayed_reasoning(openai_client, alist, history):
+    message = "Invalid value for temperature." if history is _REPLAY_HISTORY else "Invalid reasoning effort."
+    openai_client.responses.create = unittest.mock.AsyncMock(side_effect=_bad_request(message))
+    model = OpenAIResponsesModel(model_id="gpt-4o")
+
+    with pytest.raises(openai.BadRequestError):
+        await alist(model.stream(history))
+    assert openai_client.responses.create.call_count == 1
+
+
+def test_format_request_messages_drops_reasoning_from_a_turn_with_nothing_after_it(caplog):
+    messages = [
+        {"role": "user", "content": [{"text": "go"}]},
+        {"role": "assistant", "content": [_reasoning_block("rs_1", summary=[], encrypted_content="enc")]},
+        {"role": "user", "content": [{"text": "next"}]},
+    ]
+
+    with caplog.at_level("WARNING"):
+        items = OpenAIResponsesModel._format_request_messages(messages, reasoning_model_id="gpt-4o")
+
+    assert all(item.get("type") != "reasoning" for item in items)
+    assert "reasoningContent without a message or tool call" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_stream_captures_reasoning_from_an_incomplete_response_and_skips_empty_items(agenerator, alist):
+    model = OpenAIResponsesModel(model_id="gpt-4o")
+    output = [ResponseReasoningItem(id="rs_0", type="reasoning", summary=[]), _reasoning_item("rs_1")]
+    incomplete = SimpleNamespace(
+        type="response.incomplete",
+        response=SimpleNamespace(
+            usage=None, incomplete_details=SimpleNamespace(reason="max_output_tokens"), output=output
+        ),
+    )
+
+    message, _ = await _stream_message(model, [incomplete], agenerator, alist)
+
+    assert message["content"] == [_reasoning_block("rs_1", encrypted_content="enc")]

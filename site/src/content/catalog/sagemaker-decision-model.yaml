@@ -1,0 +1,9 @@
+name: SageMaker Decision Model
+description: Answer closed questions for Strands agents with a decision model deployed to an Amazon SageMaker AI real-time endpoint.
+integrationType: decision-model
+maintainedBy: strands
+languages:
+  typescript: {}
+github: https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/decisions/sagemaker.ts
+docsPage: docs/user-guide/sdk/decision-models/models
+addedDate: 2026-11-12

@@ -77,6 +77,25 @@ async function individualCallbackExample() {
   // --8<-- [end:individual_callback]
 }
 
+async function modifyInvocationMessagesExample() {
+  // --8<-- [start:modify_invocation_messages]
+  const agent = new Agent()
+
+  agent.addHook(BeforeInvocationEvent, (event) => {
+    const latestMessage = event.messages.at(-1)
+    if (latestMessage?.role !== 'user') return
+
+    latestMessage.content.splice(
+      0,
+      latestMessage.content.length,
+      new TextBlock('[REDACTED]')
+    )
+  })
+
+  await agent.invoke('Contact me at user@example.com')
+  // --8<-- [end:modify_invocation_messages]
+}
+
 async function hookOrderingExample() {
   // --8<-- [start:hook_ordering]
   const agent = new Agent()

@@ -1,7 +1,9 @@
 import asyncio
 import concurrent
+import copy
 import threading
 import unittest.mock
+from dataclasses import replace
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -27,6 +29,7 @@ from strands.hooks import (
     MessageAddedEvent,
 )
 from strands.interrupt import Interrupt, PendingToolExecution, _InterruptState
+from strands.middleware.stages import InvokeModelStage
 from strands.telemetry.metrics import EventLoopMetrics, Trace
 from strands.telemetry.tracer import Tracer
 from strands.tools.executors import ConcurrentToolExecutor, SequentialToolExecutor
@@ -44,7 +47,12 @@ from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 @pytest.fixture
 def mock_sleep():
-    with patch.object(strands.event_loop._retry.asyncio, "sleep", new_callable=AsyncMock) as mock:
+    mock = AsyncMock()
+
+    async def wait_for_retry_delay(delay, _cancel_signal):
+        await mock(delay)
+
+    with patch.object(strands.event_loop._retry, "_wait_for_retry_delay", wait_for_retry_delay):
         yield mock
 
 
@@ -189,6 +197,56 @@ def mock_tracer():
     tracer.start_event_loop_cycle_span.return_value = MagicMock()
     tracer.start_model_invoke_span.return_value = MagicMock()
     return tracer
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_model_call_tool_order(tool, tool_times_2, tool_times_5, reverse):
+    # Opt-in stable model-facing tool order without changing registration order (#5700).
+    tools = [tool, tool_times_5, tool_times_2]
+    if reverse:
+        tools.reverse()
+    model = MockedModelProvider([{"role": "assistant", "content": [{"text": "OK"}]}])
+    agent = Agent(model=model, tools=tools, sort_tools=True, callback_handler=None)
+
+    with patch.object(model, "stream", wraps=model.stream) as stream:
+        agent("hello")
+
+    tru_specs = stream.call_args.args[1]
+    exp_specs = [tool_times_2.tool_spec, tool_times_5.tool_spec, tool.tool_spec]
+    assert tru_specs == exp_specs
+    tru_tool_names = agent.tool_names
+    exp_tool_names = [registered.tool_name for registered in tools]
+    assert tru_tool_names == exp_tool_names
+
+
+def test_model_call_tool_order_before_middleware(tool, tool_times_2, tool_times_5):
+    # Middleware sees sorted specs, and whatever order it passes on is sent as-is (#5700).
+    model = MockedModelProvider([{"role": "assistant", "content": [{"text": "OK"}]}])
+    agent = Agent(model=model, tools=[tool, tool_times_2], sort_tools=True, callback_handler=None)
+    middleware_specs = [tool.tool_spec, tool_times_5.tool_spec, tool_times_2.tool_spec]
+    original_specs = copy.deepcopy(middleware_specs)
+    choice = {"tool": {"name": tool.tool_name}}
+    seen_specs = []
+
+    async def modify_specs(context, next_fn):
+        seen_specs.append(copy.deepcopy(context.tool_specs))
+        async for event in next_fn(replace(context, tool_specs=middleware_specs, tool_choice=choice)):
+            yield event
+
+    agent.add_middleware(InvokeModelStage, modify_specs)
+    with patch.object(model, "stream", wraps=model.stream) as stream:
+        agent("hello")
+
+    tru_seen_specs = seen_specs
+    exp_seen_specs = [[tool_times_2.tool_spec, tool.tool_spec]]
+    assert tru_seen_specs == exp_seen_specs
+    tru_specs = stream.call_args.args[1]
+    exp_specs = original_specs
+    assert tru_specs == exp_specs
+    tru_choice = stream.call_args.kwargs["tool_choice"]
+    exp_choice = choice
+    assert tru_choice == exp_choice
+    assert middleware_specs == original_specs
 
 
 @pytest.mark.asyncio
@@ -1211,6 +1269,46 @@ async def test_event_loop_cycle_exception_model_hooks(mock_sleep, agent, model, 
 
 
 @pytest.mark.asyncio
+async def test_event_loop_cycle_raises_when_tool_use_names_no_tool_every_attempt(
+    agent, model, messages, agenerator, alist, hook_provider
+):
+    attempts = 3
+    model.stream.side_effect = [
+        agenerator(
+            [
+                {"contentBlockDelta": {"delta": {"text": "<thinking>let me look that up</parameter>"}}},
+                {"contentBlockStop": {}},
+                {"messageStop": {"stopReason": "tool_use"}},
+                {
+                    "metadata": {
+                        "usage": {"inputTokens": 10, "outputTokens": 5, "totalTokens": 15},
+                        "metrics": {"latencyMs": 100},
+                    }
+                },
+            ]
+        )
+        for _ in range(attempts)
+    ]
+
+    stream = strands.event_loop.event_loop.event_loop_cycle(agent=agent, invocation_state={})
+    with pytest.raises(ValueError, match="no toolUse block"):
+        await alist(stream)
+
+    assert model.stream.call_count == attempts
+    assert agent.messages == messages
+    assert agent.event_loop_metrics.accumulated_usage == {
+        "inputTokens": 10 * attempts,
+        "outputTokens": 5 * attempts,
+        "totalTokens": 15 * attempts,
+    }
+    assert agent.event_loop_metrics.accumulated_metrics["latencyMs"] == 100 * attempts
+
+    _, events = hook_provider.get_events()
+    after_events = [event for event in events if isinstance(event, AfterModelCallEvent)]
+    assert [event.stop_response.stop_reason for event in after_events] == ["tool_use"] * attempts
+
+
+@pytest.mark.asyncio
 async def test_event_loop_cycle_before_tools_payload_order_and_result(agent, model, tool_stream, agenerator, alist):
     callback_order = []
     before_tools_events = []
@@ -2138,6 +2236,47 @@ async def test_event_loop_cycle_interrupt_resume(agent, model, tool, tool_times_
 
 
 @pytest.mark.asyncio
+async def test_event_loop_cycle_ignores_pending_tool_execution_when_interrupt_state_not_activated(
+    agent, model, tool_registry, agenerator, alist
+):
+    tool_calls = []
+
+    @strands.tool
+    def record_tool() -> str:
+        tool_calls.append("record_tool")
+        return "recorded"
+
+    tool_registry.register_tool(record_tool)
+
+    agent._interrupt_state.pending_tool_execution = PendingToolExecution(
+        assistant_message={
+            "role": "assistant",
+            "content": [{"toolUse": {"toolUseId": "t1", "name": "record_tool", "input": {}}}],
+        },
+        completed_tool_results=[],
+    )
+
+    model.stream.return_value = agenerator(
+        [
+            {"contentBlockDelta": {"delta": {"text": "test text"}}},
+            {"contentBlockStop": {}},
+        ]
+    )
+
+    stream = strands.event_loop.event_loop.event_loop_cycle(agent=agent, invocation_state={})
+    events = await alist(stream)
+    tru_stop_reason, tru_message, _, _, _, _, _ = events[-1]["stop"]
+
+    exp_stop_reason = "end_turn"
+    exp_message = {"role": "assistant", "content": [{"text": "test text"}], "metadata": ANY, "tracking_id": ANY}
+    assert tru_stop_reason == exp_stop_reason and tru_message == exp_message
+
+    tru_tool_calls = tool_calls
+    exp_tool_calls = []
+    assert tru_tool_calls == exp_tool_calls
+
+
+@pytest.mark.asyncio
 async def test_invalid_tool_names_adds_tool_uses(agent, model, alist):
     model.stream = MockedModelProvider(
         [
@@ -2244,7 +2383,7 @@ class TestEstimateInputTokens:
         agent = unittest.mock.AsyncMock()
         agent.messages = [{"role": "user", "content": [{"text": "Hi"}]}]
         agent.system_prompt = "You are helpful"
-        agent._system_prompt_content = None
+        agent.system_prompt_content = None
         agent.tool_registry = unittest.mock.MagicMock()
         agent.tool_registry.get_all_tool_specs.return_value = [{"name": "tool1"}]
         agent.model.count_tokens = AsyncMock(return_value=42)

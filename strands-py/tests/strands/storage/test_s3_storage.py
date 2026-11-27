@@ -1,10 +1,11 @@
 """Tests for S3Storage."""
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from strands.storage import S3Storage
+from strands.storage.search import S3VectorSearchStrategy
 from strands.storage.storage import _NAMESPACED, StorageSearchResult
 from strands.types.exceptions import StorageError
 
@@ -277,6 +278,104 @@ class TestS3Storage:
         storage = S3Storage("test-bucket", boto_session=s3_bucket, search_strategy=strategy)
         await storage.search("query")
         strategy.search.assert_awaited_once_with(storage, "query")
+
+
+class TestS3StorageVectorSearch:
+    @pytest.fixture
+    def vector_strategy(self):
+        strategy = S3VectorSearchStrategy(vector_bucket_name="v", index_name="i")
+        strategy.index = AsyncMock()
+        strategy.remove = AsyncMock()
+        strategy.search = AsyncMock(return_value=[])
+        return strategy
+
+    @pytest.mark.asyncio
+    async def test_removes_the_vector_on_delete(self, s3_bucket, vector_strategy):
+        storage = S3Storage("test-bucket", boto_session=s3_bucket, search_strategy=vector_strategy)
+        await storage.write("notes/a.md", b"data")
+
+        await storage.delete("notes/a.md")
+
+        vector_strategy.remove.assert_awaited_once_with(storage, "notes/a.md")
+        assert await storage.read("notes/a.md") is None
+
+    @pytest.mark.asyncio
+    async def test_does_not_remove_the_vector_when_the_object_delete_fails(self, vector_strategy):
+        client = MagicMock()
+        client.delete_object.side_effect = RuntimeError("access denied")
+        storage = S3Storage("test-bucket", search_strategy=vector_strategy)
+        storage._client = client
+
+        with pytest.raises(StorageError, match="Failed to delete"):
+            await storage.delete("a.md")
+        vector_strategy.remove.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_does_not_call_remove_on_other_strategies(self, s3_bucket):
+        strategy = AsyncMock()
+        storage = S3Storage("test-bucket", boto_session=s3_bucket, search_strategy=strategy)
+
+        await storage.delete("a.md")
+
+        strategy.remove.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_wraps_a_vector_removal_failure_after_the_object_is_deleted(self, s3_bucket, vector_strategy):
+        vector_strategy.remove.side_effect = RuntimeError("vector index gone")
+        storage = S3Storage("test-bucket", boto_session=s3_bucket, search_strategy=vector_strategy)
+        await storage.write("a.md", b"data")
+
+        with pytest.raises(StorageError, match="removing its search index entry failed") as excinfo:
+            await storage.delete("a.md")
+        assert isinstance(excinfo.value.__cause__, RuntimeError)
+        assert await storage.read("a.md") is None
+
+    @pytest.mark.asyncio
+    async def test_wraps_an_index_failure_after_the_object_is_stored(self, s3_bucket, vector_strategy):
+        vector_strategy.index.side_effect = RuntimeError("throttled")
+        storage = S3Storage("test-bucket", boto_session=s3_bucket, search_strategy=vector_strategy)
+
+        with pytest.raises(StorageError, match="indexing failed") as excinfo:
+            await storage.write("a.md", b"data")
+        assert isinstance(excinfo.value.__cause__, RuntimeError)
+        assert await storage.read("a.md") == b"data"
+
+    @pytest.mark.asyncio
+    async def test_wraps_a_search_strategy_failure(self, s3_bucket, vector_strategy):
+        vector_strategy.search.side_effect = RuntimeError("index not found")
+        storage = S3Storage("test-bucket", boto_session=s3_bucket, search_strategy=vector_strategy)
+
+        with pytest.raises(StorageError, match="Failed to search S3 bucket 'test-bucket'") as excinfo:
+            await storage.search("query")
+        assert isinstance(excinfo.value.__cause__, RuntimeError)
+
+
+class TestS3StorageProperties:
+    def test_region_name_is_the_configured_region(self):
+        assert S3Storage("b", region_name="eu-west-1").region_name == "eu-west-1"
+
+    def test_region_name_falls_back_to_the_session_region(self):
+        session = MagicMock()
+        session.region_name = "ap-south-1"
+        assert S3Storage("b", boto_session=session).region_name == "ap-south-1"
+
+    def test_region_name_is_none_when_unset(self):
+        assert S3Storage("b").region_name is None
+
+    def test_boto_session_is_the_configured_session(self):
+        session = MagicMock()
+        assert S3Storage("b", boto_session=session).boto_session is session
+        assert S3Storage("b").boto_session is None
+
+    @pytest.mark.parametrize(
+        ("prefix", "expected"),
+        [("", ""), ("agents", "agents/"), ("/agents//data", "agents/data/")],
+    )
+    def test_prefix_is_normalized(self, prefix, expected):
+        assert S3Storage("b", prefix=prefix).prefix == expected
+
+    def test_namespace_prefix_extends_the_parent_prefix(self):
+        assert S3Storage("b", prefix="agents").namespace("memory/a").prefix == "agents/memory/a/"
 
 
 class TestS3StorageWithPrefix:

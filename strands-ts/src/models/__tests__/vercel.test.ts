@@ -7,13 +7,25 @@ import type {
 } from '@ai-sdk/provider'
 import { APICallError } from '@ai-sdk/provider'
 import { VercelModel } from '../vercel.js'
-import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../../errors.js'
+import { ModelProxy } from '../model-proxy.js'
+import { ContextWindowOverflowError, ModelError, ModelThrottledError, ModelNetworkError } from '../../errors.js'
 import { logger } from '../../logging/logger.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { collectIterator } from '../../__fixtures__/model-test-helpers.js'
-import { Message, TextBlock, ToolUseBlock, ToolResultBlock, ReasoningBlock, JsonBlock } from '../../types/messages.js'
+import {
+  Message,
+  TextBlock,
+  ToolUseBlock,
+  ToolResultBlock,
+  ReasoningBlock,
+  JsonBlock,
+  OffloadedBlock,
+  UnknownBlock,
+  InjectedBlock,
+} from '../../types/messages.js'
 import { DocumentBlock, ImageBlock, VideoBlock } from '../../types/media.js'
 import type { ToolSpec } from '../../tools/types.js'
+import type { ContentBlock } from '../../types/messages.js'
 
 vi.mock('../../logging/warn-once.js', () => ({
   warnOnce: vi.fn(),
@@ -470,6 +482,48 @@ describe('VercelModel', () => {
         await expect(collectIterator(model.stream([]))).rejects.toThrow(ModelThrottledError)
       })
 
+      it('throws ModelNetworkError when doStream fails with a fetch network error', async () => {
+        const { mock, model } = setupCaptureTest()
+        const networkError = new TypeError('Failed to fetch')
+        ;(mock.doStream as ReturnType<typeof vi.fn>).mockRejectedValue(networkError)
+
+        const error = await collectIterator(model.stream([])).catch((caught: unknown) => caught)
+
+        expect(error).toBeInstanceOf(ModelNetworkError)
+        expect(error).toMatchObject({ message: 'Language model stream error: Failed to fetch', cause: networkError })
+      })
+
+      it('throws ModelNetworkError for the APICallError ai-sdk raises when it cannot connect', async () => {
+        const { mock, model } = setupCaptureTest()
+        ;(mock.doStream as ReturnType<typeof vi.fn>).mockRejectedValue(
+          new APICallError({
+            message: 'Cannot connect to API: other side closed',
+            url: 'https://api.example.com',
+            requestBodyValues: {},
+            isRetryable: true,
+          })
+        )
+
+        await expect(collectIterator(model.stream([]))).rejects.toThrow(ModelNetworkError)
+      })
+
+      it('throws a plain ModelError for a server error response', async () => {
+        const { mock, model } = setupCaptureTest()
+        ;(mock.doStream as ReturnType<typeof vi.fn>).mockRejectedValue(
+          new APICallError({
+            message: 'Service Unavailable',
+            url: 'https://api.example.com',
+            requestBodyValues: {},
+            statusCode: 503,
+          })
+        )
+
+        const error = await collectIterator(model.stream([])).catch((caught: unknown) => caught)
+
+        expect(error).toBeInstanceOf(ModelError)
+        expect(error).not.toBeInstanceOf(ModelNetworkError)
+      })
+
       it('throws ContextWindowOverflowError for APICallError with context overflow in responseBody', async () => {
         const { mock, model } = setupCaptureTest()
         ;(mock.doStream as ReturnType<typeof vi.fn>).mockRejectedValue(
@@ -514,6 +568,21 @@ describe('VercelModel', () => {
         const model = new VercelModel({ provider: mock })
 
         await expect(collectIterator(model.stream([]))).rejects.toThrow(ModelThrottledError)
+      })
+
+      it('throws ModelNetworkError when the connection drops while reading the stream', async () => {
+        const mock = createMockModel([])
+        ;(mock.doStream as ReturnType<typeof vi.fn>).mockResolvedValue({
+          stream: new ReadableStream({
+            start(controller) {
+              controller.enqueue({ type: 'stream-start', warnings: [] })
+              controller.error(new TypeError('network error'))
+            },
+          }),
+        })
+        const model = new VercelModel({ provider: mock })
+
+        await expect(collectIterator(model.stream([]))).rejects.toThrow(ModelNetworkError)
       })
     })
 
@@ -636,6 +705,27 @@ describe('VercelModel', () => {
         const userMsg = callArgs().prompt[0] as any
         expect(userMsg.role).toBe('user')
         expect(userMsg.content[0]).toEqual({ type: 'text', text: 'Hello' })
+      })
+
+      it('sends an offloaded block as the text the model receives, in user, assistant, and tool-result content', async () => {
+        const { collect, callArgs } = setupCaptureTest()
+        const placeholder = new OffloadedBlock({ text: '[Dropped] [ref: tu-1]', method: 'drop', ref: 'tu-1' })
+        await collect([
+          new Message({ role: 'user', content: [placeholder] }),
+          new Message({ role: 'assistant', content: [placeholder] }),
+          new Message({
+            role: 'user',
+            content: [new ToolResultBlock({ toolUseId: 'tu-1', status: 'success', content: [placeholder] })],
+          }),
+        ])
+
+        const [user, assistant, tool] = callArgs().prompt as any[]
+        expect(user.content).toEqual([{ type: 'text', text: '[Dropped] [ref: tu-1]' }])
+        expect(assistant.content).toEqual([{ type: 'text', text: '[Dropped] [ref: tu-1]' }])
+        expect(tool.content[0].output).toEqual({
+          type: 'content',
+          value: [{ type: 'text', text: '[Dropped] [ref: tu-1]' }],
+        })
       })
 
       it('formats image blocks with bytes and URL sources', async () => {
@@ -825,6 +915,52 @@ describe('VercelModel', () => {
         expect((prompt[0] as any).role).toBe('assistant')
       })
     })
+
+    it('skips unknown blocks in user and assistant messages and tool results, without a warning', async () => {
+      using warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const { collect, callArgs } = setupCaptureTest()
+      const unknownBlock = new UnknownBlock({ futureBlock: { value: 1 } })
+      await collect([
+        new Message({ role: 'user', content: [new TextBlock('Hello'), unknownBlock] }),
+        new Message({
+          role: 'assistant',
+          content: [new TextBlock('Hi'), unknownBlock, new ToolUseBlock({ name: 'tool', toolUseId: 'tu1', input: {} })],
+        }),
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 'tu1',
+              status: 'success',
+              content: [new TextBlock('done'), unknownBlock],
+            }),
+          ],
+        }),
+      ])
+      expect(callArgs().prompt).toEqual([
+        { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'Hi' },
+            { type: 'tool-call', toolCallId: 'tu1', toolName: 'tool', input: {} },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'tu1',
+              toolName: 'tool',
+              output: { type: 'content', value: [{ type: 'text', text: 'done' }] },
+            },
+          ],
+        },
+      ])
+      expect(warnSpy).not.toHaveBeenCalled()
+    })
+
     describe('tool result output formatting', () => {
       function toolResultMessages(
         content: ToolResultBlock['content'],
@@ -1315,6 +1451,101 @@ describe('VercelModel', () => {
         expect(bedrockMessageCachePoint(args)).toEqual({ type: 'default', ttl: '1h' })
       })
 
+      it('caches system and messages on Nova without a ttl, warning that the ttl is dropped', async () => {
+        const modelId = 'us.amazon.nova-pro-v1:0'
+        const { collect, callArgs } = setupCaptureTest(
+          minimalParts,
+          { cacheConfig: { ttl: '1h' } },
+          'amazon-bedrock',
+          modelId
+        )
+        await collect(userMessages, { systemPrompt: 'be helpful' })
+
+        const args = callArgs()
+        expect(bedrockSystemCachePoint(args)).toEqual({ type: 'default' })
+        expect(bedrockMessageCachePoint(args)).toEqual({ type: 'default' })
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.anything(),
+          `model_id=<${modelId}> | ttl is not supported by this model, using the default cache duration`
+        )
+        expect(warnOnce).not.toHaveBeenCalledWith(
+          expect.anything(),
+          expect.stringContaining('is not known to support automatic caching')
+        )
+      })
+
+      it('keeps the Nova conversation cache point on the prompt that started a tool loop', async () => {
+        const messages = [
+          new Message({ role: 'user', content: [new TextBlock('What is 6 x 7?')] }),
+          new Message({
+            role: 'assistant',
+            content: [new ToolUseBlock({ name: 'calculator', toolUseId: 'tu1', input: {} })],
+          }),
+          new Message({
+            role: 'user',
+            content: [new ToolResultBlock({ toolUseId: 'tu1', status: 'success', content: [new TextBlock('42')] })],
+          }),
+        ]
+        const { collect, callArgs } = setupCaptureTest(
+          minimalParts,
+          { cacheConfig: {} },
+          'amazon-bedrock',
+          'us.amazon.nova-pro-v1:0'
+        )
+        await collect(messages, { toolSpecs })
+
+        const prompt = callArgs().prompt
+        const tool = prompt.filter((message) => message.role === 'tool')
+        expect(tool).toHaveLength(1)
+        expect(tool[0]?.providerOptions?.bedrock).toBeUndefined()
+        expect(tool[0]?.content.map((part) => part.providerOptions?.bedrock)).toStrictEqual([undefined])
+        expect(bedrockMessageCachePoint(callArgs())).toEqual({ type: 'default' })
+      })
+
+      describe('Nova with media at the end of the last user message', () => {
+        const bytes = new Uint8Array([1])
+        const image = new ImageBlock({ format: 'png', source: { bytes } })
+        const pdf = new DocumentBlock({ format: 'pdf', name: 'order', source: { bytes } })
+        const txt = new DocumentBlock({ format: 'txt', name: 'notes', source: { bytes } })
+        const video = new VideoBlock({ format: 'mp4', source: { bytes } })
+        const cachePoints = (args: LanguageModelV3CallOptions): unknown[] => {
+          const lastUser = [...args.prompt].reverse().find((message) => message.role === 'user')
+          if (lastUser?.role !== 'user') return []
+          return lastUser.content.map((part) => part.providerOptions?.bedrock?.cachePoint)
+        }
+
+        it.each([
+          ['an image', [image]],
+          ['a PDF', [pdf]],
+          ['an image then a txt document', [image, txt]],
+          ['a video', [video]],
+        ])('marks the text part, not %s', async (_name, media) => {
+          const messages = [new Message({ role: 'user', content: [new TextBlock('Describe'), ...media] })]
+          const { collect, callArgs } = setupCaptureTest(
+            minimalParts,
+            { cacheConfig: {} },
+            'amazon-bedrock',
+            'us.amazon.nova-lite-v1:0'
+          )
+          await collect(messages)
+
+          expect(cachePoints(callArgs())).toStrictEqual([{ type: 'default' }, ...media.map(() => undefined)])
+        })
+
+        it('marks the trailing image on Claude', async () => {
+          const messages = [new Message({ role: 'user', content: [new TextBlock('Describe'), image] })]
+          const { collect, callArgs } = setupCaptureTest(
+            minimalParts,
+            { cacheConfig: {} },
+            'amazon-bedrock',
+            CACHING_MODEL_ID
+          )
+          await collect(messages)
+
+          expect(cachePoints(callArgs())).toStrictEqual([undefined, { type: 'default' }])
+        })
+      })
+
       it('never marks tool definitions, since bedrock caches them as part of the prefix', async () => {
         const config = { cacheConfig: { toolsTTL: '1h' as const } }
         const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', CACHING_MODEL_ID)
@@ -1429,7 +1660,7 @@ describe('VercelModel', () => {
         expect(lastUser.content.every((part) => part.providerOptions?.bedrock?.cachePoint === undefined)).toBe(true)
       })
 
-      it('rides the conversation cache point onto an earlier user turn when the final turn is tool results only', async () => {
+      it('places the conversation cache point on the tool result when the final turn is tool results only', async () => {
         const toolResultsOnly = [
           new Message({ role: 'user', content: [new TextBlock('durable prefix')] }),
           new Message({
@@ -1446,9 +1677,9 @@ describe('VercelModel', () => {
         await collect(toolResultsOnly)
 
         const args = callArgs()
-        // The tool-results turn emits no user message, so the breakpoint rides the earlier user turn.
-        expect(args.prompt.filter((message) => message.role === 'user')).toHaveLength(1)
-        expect(bedrockMessageCachePoint(args)).toEqual({ type: 'default', ttl: '1h' })
+        const tool = args.prompt.find((message) => message.role === 'tool')
+        expect(tool?.content[0]?.providerOptions?.bedrock?.cachePoint).toEqual({ type: 'default', ttl: '1h' })
+        expect(bedrockMessageCachePoint(args)).toBeUndefined()
       })
 
       it('keeps the cache point ahead of the trailing blocks a context injector rebuilds each call', async () => {
@@ -1542,6 +1773,85 @@ describe('VercelModel', () => {
         )
       })
 
+      it.each([
+        'anthropic.claude-future-9',
+        'arn:aws:bedrock:us-east-1:123456789012:default-prompt-router/anthropic.claude:1',
+        'US.ANTHROPIC.CLAUDE-SONNET-4-6',
+      ])('under the default auto strategy, caches an unlisted Claude id by name: %s', async (modelId) => {
+        const { collect, callArgs, model } = setupCaptureTest(
+          minimalParts,
+          { cacheConfig: {} },
+          'amazon-bedrock',
+          modelId
+        )
+        await collect(userMessages, { systemPrompt: 'be helpful' })
+
+        expect(model.modelInfo.capabilities?.promptCaching).toBeUndefined()
+        const args = callArgs()
+        expect(bedrockSystemCachePoint(args)).toEqual({ type: 'default' })
+        expect(bedrockMessageCachePoint(args)).toEqual({ type: 'default' })
+        expect(warnOnce).not.toHaveBeenCalledWith(
+          expect.objectContaining({ warn: expect.any(Function) }),
+          expect.stringContaining('is not known to support automatic caching')
+        )
+      })
+
+      it('under the default auto strategy, skips an unlisted id that is not Claude', async () => {
+        const modelId = 'arn:aws:bedrock:us-east-1:123456789012:custom-model/acme.foo/abc'
+        const { collect, callArgs } = setupCaptureTest(minimalParts, { cacheConfig: {} }, 'amazon-bedrock', modelId)
+        await collect(userMessages, { systemPrompt: 'be helpful' })
+
+        expect(bedrockSystemCachePoint(callArgs())).toBeUndefined()
+      })
+
+      it('under the default auto strategy, reports an OpenAI model as implicitly cached and skips it', async () => {
+        const modelId = 'us.openai.gpt-6-luna'
+        const { collect, callArgs, model } = setupCaptureTest(
+          minimalParts,
+          { cacheConfig: {} },
+          'amazon-bedrock',
+          modelId
+        )
+        await collect(userMessages, { systemPrompt: 'be helpful' })
+
+        expect(model.modelInfo.capabilities?.promptCaching).toBe('auto')
+        expect(bedrockSystemCachePoint(callArgs())).toBeUndefined()
+        expect(bedrockMessageCachePoint(callArgs())).toBeUndefined()
+        expect(warnOnce).not.toHaveBeenCalledWith(
+          expect.anything(),
+          expect.stringContaining('is not known to support automatic caching')
+        )
+      })
+
+      it('under the default auto strategy, warns that gpt-oss has no automatic caching and skips it', async () => {
+        const modelId = 'openai.gpt-oss-120b-1:0'
+        const { collect, callArgs, model } = setupCaptureTest(
+          minimalParts,
+          { cacheConfig: {} },
+          'amazon-bedrock',
+          modelId
+        )
+        await collect(userMessages, { systemPrompt: 'be helpful' })
+
+        expect(model.modelInfo.capabilities?.promptCaching).toBeUndefined()
+        expect(bedrockSystemCachePoint(callArgs())).toBeUndefined()
+        expect(bedrockMessageCachePoint(callArgs())).toBeUndefined()
+        expect(warnOnce).toHaveBeenCalledWith(
+          expect.anything(),
+          `model_id=<${modelId}> | cacheConfig is enabled but this bedrock model is not known to support automatic caching, ignoring`
+        )
+      })
+
+      it('lets a modelInfo override win over implicit caching for an OpenAI model', () => {
+        const { model } = setupCaptureTest(
+          minimalParts,
+          { modelInfo: { capabilities: { promptCaching: 'cachePoints' } } },
+          'amazon-bedrock',
+          'us.openai.gpt-6-luna'
+        )
+        expect(model.modelInfo.capabilities?.promptCaching).toBe('cachePoints')
+      })
+
       it('under the default auto strategy, caches a model the modelInfo override says takes cache points', async () => {
         const config = { cacheConfig: {}, modelInfo: { capabilities: { promptCaching: 'cachePoints' as const } } }
         const { collect, callArgs } = setupCaptureTest(minimalParts, config, 'amazon-bedrock', UNSUPPORTED_MODEL_ID)
@@ -1626,6 +1936,189 @@ describe('VercelModel', () => {
           expect.objectContaining({ warn: expect.any(Function) }),
           expect.stringContaining('not supported for this vercel provider')
         )
+      })
+    })
+
+    describe('tool loop through ModelProxy', () => {
+      const PROMPT = 'Plan the work.'
+      const REMINDER = '<todos>1. read the file</todos>'
+      const NOVA = 'us.amazon.nova-pro-v1:0'
+      const CLAUDE_ON_BEDROCK = 'global.anthropic.claude-sonnet-4-6'
+      const PROFILE_ARN = 'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/a1b2c3'
+
+      /** Where a conversation cache marker sits: a text part by its text, or a tool result by call id. */
+      type Marker = { text: string } | { toolCallId: string }
+      type MarkerWithOptions = Marker & { options: unknown }
+
+      /** Every part across the user and tool messages that carries a conversation cache marker, with its options. */
+      const conversationMarkers = (args: LanguageModelV3CallOptions): MarkerWithOptions[] =>
+        args.prompt.flatMap((message): MarkerWithOptions[] => {
+          if (message.role !== 'user' && message.role !== 'tool') return []
+          return message.content.flatMap((part): MarkerWithOptions[] => {
+            const options = part.providerOptions?.anthropic?.cacheControl ?? part.providerOptions?.bedrock?.cachePoint
+            if (options === undefined) return []
+            if (part.type === 'tool-result') return [{ toolCallId: part.toolCallId, options }]
+            return [{ text: part.type === 'text' ? part.text : `<${part.type}>`, options }]
+          })
+        })
+
+      /** One tool round: the assistant's parallel tool calls and the user turn answering them. */
+      const toolRound = (toolUseIds: string[], trailing: ContentBlock[]): Message[] => [
+        new Message({
+          role: 'assistant',
+          content: toolUseIds.map((toolUseId) => new ToolUseBlock({ name: 'calculator', toolUseId, input: {} })),
+        }),
+        new Message({
+          role: 'user',
+          content: [
+            ...toolUseIds.map(
+              (toolUseId) =>
+                new ToolResultBlock({ toolUseId, status: 'success', content: [new TextBlock(`result ${toolUseId}`)] })
+            ),
+            ...trailing,
+          ],
+        }),
+      ]
+
+      /**
+       * The conversation an agent sends on each call of a loop with the given tool rounds, with a reminder on every
+       * user turn or none. Each round lists its parallel call ids and any durable text the user turn carries.
+       */
+      const toolLoopCalls = (withReminder: boolean, rounds: Array<{ ids: string[]; text?: string }>): Message[][] => {
+        const reminder = withReminder ? [new InjectedBlock({ text: REMINDER, source: 'todos' })] : []
+        const calls = [[new Message({ role: 'user', content: [new TextBlock(PROMPT), ...reminder] })]]
+        for (const { ids, text } of rounds) {
+          const trailing = [...(text === undefined ? [] : [new TextBlock(text)]), ...reminder]
+          calls.push([...calls[calls.length - 1]!, ...toolRound(ids, trailing)])
+        }
+        return calls
+      }
+
+      const SINGLE_ROUNDS = [{ ids: ['tu1'] }, { ids: ['tu2'] }]
+      const PARALLEL_ROUNDS = [{ ids: ['tu1', 'tu2'] }, { ids: ['tu3', 'tu4'], text: 'note' }]
+
+      /** Runs each call through a ModelProxy and returns the markers each call sent, with their options. */
+      const markersWithOptions = async (
+        provider: string,
+        providerModelId: string,
+        calls: Message[][],
+        config: Omit<ConstructorParameters<typeof VercelModel>[0], 'provider'> = { cacheConfig: {} }
+      ): Promise<MarkerWithOptions[][]> => {
+        const mock = createMockModel(minimalParts, provider, providerModelId)
+        const proxy = new ModelProxy(new VercelModel({ provider: mock, ...config }))
+        for (const messages of calls) {
+          await collectIterator(proxy.streamAggregated(messages, { toolSpecs }))
+        }
+        return (mock.doStream as ReturnType<typeof vi.fn>).mock.calls.map(([args]) =>
+          conversationMarkers(args as LanguageModelV3CallOptions)
+        )
+      }
+
+      /** The markers each call sent, without their options. */
+      const markersPerCall = async (...args: Parameters<typeof markersWithOptions>): Promise<Marker[][]> =>
+        (await markersWithOptions(...args)).map((markers) => markers.map(({ options: _, ...marker }) => marker))
+
+      const REMINDER_CASES = [
+        ['without a reminder', false],
+        ['with a reminder on every user turn', true],
+      ] as const
+
+      describe.each([
+        ['anthropic', 'anthropic.messages', 'claude-sonnet-4-6'],
+        ['amazon-bedrock Claude', 'amazon-bedrock', CLAUDE_ON_BEDROCK],
+      ])('%s', (_name, provider, modelId) => {
+        it.each(REMINDER_CASES)(
+          'moves the marker onto the newest tool result each call, %s',
+          async (_case, reminder) => {
+            expect(await markersPerCall(provider, modelId, toolLoopCalls(reminder, SINGLE_ROUNDS))).toStrictEqual([
+              [{ text: PROMPT }],
+              [{ toolCallId: 'tu1' }],
+              [{ toolCallId: 'tu2' }],
+            ])
+          }
+        )
+
+        it.each(REMINDER_CASES)(
+          'marks the last parallel tool result, then durable text after the results, %s',
+          async (_case, reminder) => {
+            expect(await markersPerCall(provider, modelId, toolLoopCalls(reminder, PARALLEL_ROUNDS))).toStrictEqual([
+              [{ text: PROMPT }],
+              [{ toolCallId: 'tu2' }],
+              [{ text: 'note' }],
+            ])
+          }
+        )
+
+        it('carries the messages ttl onto a tool-result marker', async () => {
+          const config = { cacheConfig: { messagesTTL: '1h' as const } }
+          const markers = await markersWithOptions(provider, modelId, toolLoopCalls(false, SINGLE_ROUNDS), config)
+          const ttl = provider === 'amazon-bedrock' ? { type: 'default', ttl: '1h' } : { type: 'ephemeral', ttl: '1h' }
+          expect(markers[2]).toStrictEqual([{ toolCallId: 'tu2', options: ttl }])
+        })
+      })
+
+      describe('amazon-bedrock Nova', () => {
+        it.each(REMINDER_CASES)(
+          'keeps the marker on the prompt that started the loop every call, %s',
+          async (_case, reminder) => {
+            expect(await markersPerCall('amazon-bedrock', NOVA, toolLoopCalls(reminder, SINGLE_ROUNDS))).toStrictEqual([
+              [{ text: PROMPT }],
+              [{ text: PROMPT }],
+              [{ text: PROMPT }],
+            ])
+          }
+        )
+
+        it.each(REMINDER_CASES)(
+          'moves the marker onto durable text that follows tool results, as BedrockModel does, %s',
+          async (_case, reminder) => {
+            expect(
+              await markersPerCall('amazon-bedrock', NOVA, toolLoopCalls(reminder, PARALLEL_ROUNDS))
+            ).toStrictEqual([[{ text: PROMPT }], [{ text: PROMPT }], [{ text: 'note' }]])
+          }
+        )
+
+        it('falls back to an earlier user turn when the latest has no text', async () => {
+          const image = new ImageBlock({ format: 'png', source: { bytes: new Uint8Array([1, 2, 3]) } })
+          const messages = [
+            new Message({ role: 'user', content: [new TextBlock(PROMPT)] }),
+            new Message({ role: 'assistant', content: [new TextBlock('Send a picture.')] }),
+            new Message({ role: 'user', content: [image, new InjectedBlock({ text: REMINDER, source: 'todos' })] }),
+          ]
+          expect(await markersPerCall('amazon-bedrock', NOVA, [messages])).toStrictEqual([[{ text: PROMPT }]])
+        })
+
+        it('follows the modelId override behind an inference profile ARN, dropping the ttl Nova rejects', async () => {
+          const config = { modelId: NOVA, cacheConfig: { ttl: '1h' as const } }
+          const calls = toolLoopCalls(true, SINGLE_ROUNDS)
+          expect(await markersWithOptions('amazon-bedrock', PROFILE_ARN, calls, config)).toStrictEqual([
+            [{ text: PROMPT, options: { type: 'default' } }],
+            [{ text: PROMPT, options: { type: 'default' } }],
+            [{ text: PROMPT, options: { type: 'default' } }],
+          ])
+        })
+      })
+
+      it('falls back to an earlier user turn on amazon-bedrock Claude when the latest has nothing it takes a marker after', async () => {
+        const csv = new DocumentBlock({ format: 'csv', name: 'data', source: { bytes: new Uint8Array([1, 2, 3]) } })
+        const messages = [
+          new Message({ role: 'user', content: [new TextBlock(PROMPT)] }),
+          new Message({ role: 'assistant', content: [new TextBlock('Send the data.')] }),
+          new Message({ role: 'user', content: [csv, new InjectedBlock({ text: REMINDER, source: 'todos' })] }),
+        ]
+        expect(await markersPerCall('amazon-bedrock', CLAUDE_ON_BEDROCK, [messages])).toStrictEqual([
+          [{ text: PROMPT }],
+        ])
+      })
+
+      it('treats an id that names no model as Claude under an explicit strategy, as BedrockModel does', async () => {
+        const config = { cacheConfig: { strategy: 'anthropic' as const } }
+        const calls = toolLoopCalls(false, PARALLEL_ROUNDS)
+        expect(await markersPerCall('amazon-bedrock', PROFILE_ARN, calls, config)).toStrictEqual([
+          [{ text: PROMPT }],
+          [{ toolCallId: 'tu2' }],
+          [{ text: 'note' }],
+        ])
       })
     })
   })

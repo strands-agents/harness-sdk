@@ -1,0 +1,10 @@
+name: LLM Decision Model
+description: Answer closed questions for Strands agents with any model provider, one structured output call per ask.
+integrationType: decision-model
+maintainedBy: strands
+languages:
+  python: {}
+  typescript: {}
+github: https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/decisions/llm_decision_model.py
+docsPage: docs/user-guide/sdk/decision-models/models/llm
+addedDate: 2026-10-14

@@ -532,52 +532,93 @@ describe('CedarAuthorization', () => {
   })
 
   describe('session management', () => {
-    it('resetCallCounts clears counts and re-enables rate-limited tools', async () => {
-      let callCount = 0
+    // Builds an agent whose model attempts `send_email` the given number of times on each successive invoke.
+    function createSender(cedar: CedarAuthorization, ...attemptsPerInvoke: number[]) {
+      const model = new MockMessageModel()
+      let toolUseId = 0
+      for (const attempts of attemptsPerInvoke) {
+        for (let i = 0; i < attempts; i++) {
+          model.addTurn({ type: 'toolUseBlock', name: 'send_email', toolUseId: `tool-${toolUseId++}`, input: {} })
+        }
+        model.addTurn({ type: 'textBlock', text: 'Done' })
+      }
+      const sent = { count: 0 }
+      const tool = createMockTool('send_email', () => {
+        sent.count++
+        return 'sent'
+      })
+      const agent = new Agent({ model, tools: [tool], interventions: [cedar], printer: false })
+      return { agent, sent }
+    }
 
-      // Rate limit: < 2 calls allowed
-      const cedar = new CedarAuthorization({
-        policies: 'permit(principal, action, resource) when { context.session.call_count < 2 };',
+    function createRateLimit(limit: number): CedarAuthorization {
+      return new CedarAuthorization({
+        policies: `permit(principal, action, resource) when { context.session.call_count < ${limit} };`,
         principalResolver: () => ({ type: 'User', id: 'alice' }),
       })
+    }
 
-      // First call succeeds (count = 1)
-      const model1 = new MockMessageModel()
-        .addTurn({ type: 'toolUseBlock', name: 'send_email', toolUseId: 'tool-1', input: {} })
-        .addTurn({ type: 'textBlock', text: 'Done' })
-      const tool1 = createMockTool('send_email', () => {
-        callCount++
-        return 'sent'
+    it('resetCallCounts clears counts and re-enables rate-limited tools', async () => {
+      const cedar = createRateLimit(2)
+      const { agent, sent } = createSender(cedar, 2, 1)
+
+      await agent.invoke('Send twice', { invocationState: {} })
+      expect(sent.count).toBe(1)
+
+      cedar.resetCallCounts(agent)
+      expect(agent.appState.get('cedar-authorization')).toStrictEqual({})
+
+      await agent.invoke('Send again', { invocationState: {} })
+      expect(sent.count).toBe(2)
+    })
+
+    // One handler instance shared by a parent and a child agent keeps a separate budget for each (#6278)
+    describe('when agents share one instance', () => {
+      it('counts calls per agent', async () => {
+        const cedar = createRateLimit(3)
+        const child = createSender(cedar, 3)
+        const parent = createSender(cedar, 1, 1)
+
+        await parent.agent.invoke('Send', { invocationState: {} })
+        await child.agent.invoke('Send', { invocationState: {} })
+        expect(child.sent.count).toBe(2)
+        expect(child.agent.appState.get('cedar-authorization')).toStrictEqual({ send_email: 2 })
+        expect(parent.agent.appState.get('cedar-authorization')).toStrictEqual({ send_email: 1 })
+
+        await parent.agent.invoke('Send again', { invocationState: {} })
+        expect(parent.sent.count).toBe(2)
+        expect(parent.agent.appState.get('cedar-authorization')).toStrictEqual({ send_email: 2 })
       })
-      const agent1 = new Agent({ model: model1, tools: [tool1], interventions: [cedar], printer: false })
-      await agent1.invoke('Send', { invocationState: {} })
-      expect(callCount).toBe(1)
 
-      // Second call succeeds (count = 2, but < 2 check passes for count at time of eval which is 2... denied)
-      const model2 = new MockMessageModel()
-        .addTurn({ type: 'toolUseBlock', name: 'send_email', toolUseId: 'tool-2', input: {} })
-        .addTurn({ type: 'textBlock', text: 'Denied' })
-      const tool2 = createMockTool('send_email', () => {
-        callCount++
-        return 'sent'
+      it("restores counts from each agent's own appState", async () => {
+        const cedar = createRateLimit(3)
+        const child = createSender(cedar, 1)
+        const parent = createSender(cedar, 1)
+        child.agent.appState.set('cedar-authorization', { send_email: 2 })
+
+        await parent.agent.invoke('Send', { invocationState: {} })
+        await child.agent.invoke('Send', { invocationState: {} })
+
+        expect(parent.sent.count).toBe(1)
+        expect(child.sent.count).toBe(0)
       })
-      const agent2 = new Agent({ model: model2, tools: [tool2], interventions: [cedar], printer: false })
-      await agent2.invoke('Send', { invocationState: {} })
-      expect(callCount).toBe(1) // still 1 — second was denied
 
-      // Reset and try again — should succeed
-      cedar.resetCallCounts(agent2)
+      it('resetCallCounts clears only the given agent', async () => {
+        const cedar = createRateLimit(3)
+        const child = createSender(cedar, 2, 1)
+        const parent = createSender(cedar, 2, 1)
+        await child.agent.invoke('Send', { invocationState: {} })
+        await parent.agent.invoke('Send', { invocationState: {} })
 
-      const model3 = new MockMessageModel()
-        .addTurn({ type: 'toolUseBlock', name: 'send_email', toolUseId: 'tool-3', input: {} })
-        .addTurn({ type: 'textBlock', text: 'Done' })
-      const tool3 = createMockTool('send_email', () => {
-        callCount++
-        return 'sent'
+        cedar.resetCallCounts(child.agent)
+        await child.agent.invoke('Send again', { invocationState: {} })
+        await parent.agent.invoke('Send again', { invocationState: {} })
+
+        expect(child.sent.count).toBe(3)
+        expect(parent.sent.count).toBe(2)
+        expect(child.agent.appState.get('cedar-authorization')).toStrictEqual({ send_email: 1 })
+        expect(parent.agent.appState.get('cedar-authorization')).toStrictEqual({ send_email: 2 })
       })
-      const agent3 = new Agent({ model: model3, tools: [tool3], interventions: [cedar], printer: false })
-      await agent3.invoke('Send again', { invocationState: {} })
-      expect(callCount).toBe(2) // succeeded after reset
     })
   })
 

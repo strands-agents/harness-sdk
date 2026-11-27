@@ -1,0 +1,10 @@
+name: Swarm
+description: Spin up a team of specialized sub-agents that collaborate through handoffs, with configurable policies and limits.
+integrationType: tool
+maintainedBy: strands
+languages:
+  python: {}
+  typescript: {}
+github: https://github.com/strands-agents/harness-sdk/tree/main/strands-py/src/strands/vended_tools/swarm
+docsPage: docs/user-guide/sdk/tools/vended-tools/swarm
+addedDate: 2026-10-21

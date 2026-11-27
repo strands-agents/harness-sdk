@@ -18,8 +18,7 @@ import base64
 import re
 import shlex
 import time
-import weakref
-from typing import Any, Literal
+from typing import Any
 from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -29,6 +28,7 @@ from strands.sandbox import Sandbox
 from strands.tools.decorator import tool
 from strands.types.tools import ToolContext
 
+from strands_harness.sandbox import _shell_of
 from strands_harness.types.agent import WebFetchTransport
 
 _USER_AGENT = "strands-harness/1.0"
@@ -114,19 +114,6 @@ def _powershell_curl_command(url: str) -> str:
     )
 
 
-# The Sandbox contract names no shell dialect, so the only check that holds for every sandbox is to ask: PowerShell
-# prints its edition (``Desktop`` or ``Core``), ``sh`` expands the unset variable to an empty line.
-_SHELL_PROBE = 'echo "${PSEdition}"'
-_shells: weakref.WeakKeyDictionary[Sandbox, Literal["sh", "powershell"]] = weakref.WeakKeyDictionary()
-
-
-async def _shell(sandbox: Sandbox) -> Literal["sh", "powershell"]:
-    if sandbox not in _shells:
-        result = await sandbox.execute(_SHELL_PROBE, timeout=10)
-        _shells[sandbox] = "powershell" if result.stdout.strip() in ("Desktop", "Core") else "sh"
-    return _shells[sandbox]
-
-
 def _decode(data: bytes, content_type: str) -> str:
     match = re.search(r"charset=[\"']?([\w.-]+)", content_type, re.IGNORECASE)
     try:
@@ -143,7 +130,7 @@ def _to_text(data: bytes, content_type: str, resolved_url: str, url: str) -> tup
 
 async def _fetch_curl(sandbox: Sandbox, url: str) -> tuple[str, str]:
     """Fetch a validated ``url`` with ``curl`` inside ``sandbox``; raises ``RuntimeError`` when curl fails."""
-    command = _powershell_curl_command(url) if await _shell(sandbox) == "powershell" else _curl_command(url)
+    command = _powershell_curl_command(url) if await _shell_of(sandbox) == "powershell" else _curl_command(url)
     result = await sandbox.execute(command, timeout=_TIMEOUT + 5)
     if result.exit_code != 0:
         raise RuntimeError(result.stderr.strip() or f"curl exited with code {result.exit_code}")

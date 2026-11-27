@@ -193,7 +193,10 @@ await agent.invoke('Fetch https://strandsagents.com and save a one-paragraph sum
 | --- | --- | --- |
 | Shell | `makeShell` | Run shell commands |
 | Bash | `bash` | Run commands in a persistent bash session on the host (Node.js only) |
-| File editor | `fileEditor`, `makeFileEditor` | View, create, and edit files |
+| Edit | `edit`, `makeEdit` | Replace an exact, unique string in a text file |
+| Write | `write`, `makeWrite` | Create or overwrite a text file with the full provided content |
+| File editor *(deprecated)* | `fileEditor`, `makeFileEditor` | View, create, and edit files. Use `edit` instead |
+| Read | `read`, `makeRead` | Read a file as numbered text, or an image/document as a media block |
 | HTTP request | `httpRequest` | Make HTTP requests to external APIs |
 | Web fetch | `webFetch`, `makeWebFetch` | Fetch a web page for the model to read. Requires the `turndown` package |
 | Notebook | `notebook`, `makeNotebook` | Keep persistent text notes |
@@ -206,7 +209,7 @@ await agent.invoke('Fetch https://strandsagents.com and save a one-paragraph sum
 | MCP router | `makeMcpRouter` | Connect to MCP servers on an allowlist you set |
 | A2A client | `makeA2AClient` | Discover and message remote A2A agents. Requires the `@a2a-js/sdk` package |
 
-Use the `make*` factories to customize a tool, for example to bind a sandbox or change its name. The shell, `fileEditor`, and `pythonRepl` run on the host unless you pass a `sandbox` to `Agent`. See [Vended tools](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/) for details on each tool.
+Use the `make*` factories to customize a tool, for example to bind a sandbox or change its name. The shell, `edit`, `fileEditor`, and `pythonRepl` run on the host unless you pass a `sandbox` to `Agent`. See [Vended tools](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/) for details on each tool.
 
 ### Structured Output
 

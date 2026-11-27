@@ -53,6 +53,19 @@ export default [
     rules: {
       '@typescript-eslint/explicit-function-return-type': 'error',
       '@typescript-eslint/explicit-module-boundary-types': 'error',
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'ink',
+              importNames: ['useInput'],
+              message:
+                'Use useInput from src/ui/input.ts, or its useTerminalInput for a screen that follows the mouse. Ink hands the mouse reports of the terminal to every handler as typed text.',
+            },
+          ],
+        },
+      ],
     },
   },
   {
@@ -65,6 +78,23 @@ export default [
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/explicit-function-return-type': 'off',
+    },
+  },
+  {
+    files: ['test/**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'ink',
+              importNames: ['render'],
+              message: 'Use render from test/fixtures/terminal.ts for complete frames and automatic teardown.',
+            },
+          ],
+        },
+      ],
     },
   },
   {

@@ -175,6 +175,7 @@ def _default_resume_prompt(feedback: str | None) -> str:
 
 def _last_assistant_message(messages: Messages) -> Message | None:
     """Find the last assistant message, or None if the model never replied."""
+    message: Message
     for message in reversed(messages):
         if message["role"] == "assistant":
             return message

@@ -26,7 +26,15 @@ from ..event_loop import streaming
 from ..tools import convert_pydantic_to_tool_spec
 from ..tools._tool_helpers import noop_tool
 from ..tools.structured_output._structured_output_context import json_object_from_message
-from ..types.content import CachePoint, ContentBlock, Messages, ReasoningContentBlock, SystemContentBlock
+from ..types.content import (
+    CachePoint,
+    ContentBlock,
+    Message,
+    Messages,
+    ReasoningContentBlock,
+    ReasoningProviderData,
+    SystemContentBlock,
+)
 from ..types.exceptions import (
     ContextWindowOverflowException,
     ModelThrottledException,
@@ -34,7 +42,9 @@ from ..types.exceptions import (
 )
 from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceAuto, ToolSpec
-from ._defaults import resolve_config_metadata
+from ._cache_points import MAX_CACHE_POINTS, cache_point, section_ttl, step_back_over_documents
+from ._defaults import resolve_config_metadata, resolve_max_tokens
+from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelCapabilities, ModelInfo
 from ._native_output import (
     StructuredOutputMechanism,
     handle_rejected_mechanism,
@@ -45,7 +55,7 @@ from ._native_output import (
 from ._strict_schema import ensure_strict_json_schema
 from ._thinking_binding import THINKING_BINDING_BETA, is_thinking_binding_error, thinking_with_drop_block
 from ._validation import _warn_on_deprecated_cache_tools, validate_config_keys
-from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model
+from .model import BaseModelConfig, CacheConfig, CacheToolsConfig, Model, _messages_cache_ttl
 
 logger = logging.getLogger(__name__)
 
@@ -66,13 +76,17 @@ BEDROCK_CONTEXT_WINDOW_OVERFLOW_MESSAGES = [
     "too many total text bytes",
     "prompt is too long",
     "This model's maximum context length is",
+    "Input Tokens Exceeded",
 ]
 
 # Bedrock reports this exact substring for the Converse incompatibility tracked in #1223.
 _TOOL_RESULT_TURN_VALIDATION_MESSAGE = "Conversation blocks and tool result blocks cannot be provided in the same turn."
 
-# Models that should include tool result status (include_tool_result_status = True)
+# Models Bedrock documents as supporting the toolResult status field. Deliberately an allow-list: undocumented
+# models may accept it (Llama 4) or reject it with a ValidationException (Writer).
+# https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolResultBlock.html
 _MODELS_INCLUDE_STATUS = [
+    "amazon.nova",
     "anthropic.claude",
 ]
 
@@ -94,6 +108,7 @@ _MODELS_REJECT_REASONING_TEXT = [
     "nvidia.nemotron-super",
     "openai.gpt-5",
     "openai.gpt-6",
+    "openai.gpt-daybreak",
     "qwen.qwen3-235b",
     "qwen.qwen3-coder",
     "writer.palmyra",
@@ -102,6 +117,97 @@ _MODELS_REJECT_REASONING_TEXT = [
 
 # Cache of model IDs for which CountTokens API calls should be skipped.
 _SKIP_COUNT_TOKENS_MODELS: set[str] = set()
+
+# The regions Converse refused cache points in, by OpenAI GPT model ID. Requests to a model in one of its regions go
+# without cache points for the lifetime of the process.
+_CACHE_POINTS_REFUSED: dict[str, set[str]] = {}
+
+# The AccessDeniedException message Converse refuses every cache point for a model with.
+_CACHE_POINTS_REFUSED_MESSAGE = "did not allow prompt caching"
+
+# The Nova models Converse caches at cache points (measured on Converse). Nova Premier is end-of-life and Nova 2 Pro
+# is not in the Bedrock prompt-caching docs, so neither is listed.
+_NOVA_CACHE_POINT_MODELS = (
+    "amazon.nova-pro-v1",
+    "amazon.nova-lite-v1",
+    "amazon.nova-micro-v1",
+    "amazon.nova-2-lite-v1",
+)
+
+# With one point on the system prompt, that is the four Converse accepts.
+_NOVA_CONVERSATION_CACHE_POINTS = 3
+
+_IMPLICIT_CACHE = ModelInfo(capabilities=ModelCapabilities(prompt_caching="auto"))
+_CACHE_POINTS = ModelInfo(capabilities=ModelCapabilities(prompt_caching="cache_points"))
+
+
+def _converse_limits_cache_points(model_id: str) -> bool:
+    """Whether Converse limits where this model takes cache points.
+
+    Nova takes a cache point only directly after text: it rejects one after the tool definitions or directly after
+    an image, PDF, video, ``toolResult`` or ``toolUse`` block, and rejects any ``ttl`` (measured on Converse).
+    """
+    model_id = model_id.lower()
+    return any(nova in model_id for nova in _NOVA_CACHE_POINT_MODELS)
+
+
+def _converse_cache_model_info(model_id: str) -> ModelInfo | None:
+    """How Converse caches this model, where it differs from the shared model info.
+
+    The shared info lists cache points for the OpenAI models' own APIs, but Converse caches OpenAI GPT (not gpt-oss,
+    which it does not cache) and xAI implicitly. The shared info lists no caching for Nova, which takes cache points.
+    """
+    model_id = model_id.lower()
+    if _is_openai_gpt(model_id) or "xai." in model_id:
+        return _IMPLICIT_CACHE
+    return _CACHE_POINTS if _converse_limits_cache_points(model_id) else None
+
+
+def _converse_takes_gpt_cache_points(model_id: str, model_info: ModelInfo) -> bool:
+    """Whether BedrockModel places cache points on Converse for this OpenAI GPT model (GPT-5.6 and later).
+
+    These are the GPT models the model info, before the Converse caching override, lists with cache points. Converse
+    takes them under the Nova limits (measured on Converse) but documents no support, so BedrockModel falls back to
+    implicit caching when Converse refuses them.
+    """
+    return _is_openai_gpt(model_id.lower()) and model_info.capabilities.prompt_caching == "cache_points"
+
+
+def _is_openai_gpt(lowercase_model_id: str) -> bool:
+    return "openai." in lowercase_model_id and "gpt-oss" not in lowercase_model_id
+
+
+def _step_back_to_text(content: list[dict[str, Any]], idx: int) -> int:
+    """Step a cache point index back to directly after the nearest text block ahead of it, or 0 when there is none."""
+    while idx > 0 and "text" not in content[idx - 1]:
+        idx -= 1
+    return idx
+
+
+def _nova_cache_point_positions(
+    messages: list[dict[str, Any]], last_user_idx: int, dynamic_trailing_blocks: int, count: int
+) -> list[tuple[int, int]]:
+    """Where the Nova conversation cache points go, newest first, as ``(msg_idx, block_idx)``.
+
+    Directly after the last text block of each of the last ``count`` user messages that have one, ahead of the
+    final message's per-call blocks. Nova takes a cache point only directly after text and reads an entry only at
+    a position an earlier call marked too, so the points on earlier turns are what let a new turn read. More than
+    one of them helps on a cross-region inference profile, where a call only finds entries written in the region
+    that serves it. In a tool loop, whose user messages hold tool results, the points stay where they are.
+    """
+    positions: list[tuple[int, int]] = []
+    for msg_idx in range(last_user_idx, -1, -1):
+        if len(positions) >= count:
+            break
+        message = messages[msg_idx]
+        if message.get("role") != "user":
+            continue
+        content = message.get("content", [])
+        end = max(0, len(content) - dynamic_trailing_blocks) if msg_idx == last_user_idx else len(content)
+        block_idx = _step_back_to_text(content, end)
+        if block_idx > 0:
+            positions.append((msg_idx, block_idx))
+    return positions
 
 
 def _clear_skip_count_tokens_cache() -> None:
@@ -190,15 +296,51 @@ DEFAULT_READ_TIMEOUT = 120
 _CANCEL_POLL_INTERVAL = 0.05
 
 
-def _fields_with_drop_block(fields: dict[str, Any]) -> dict[str, Any] | None:
-    """Return additional request fields that drop stale thinking blocks, or None if they cannot change."""
-    thinking = thinking_with_drop_block(fields.get("thinking"))
+def _request_with_drop_block(request: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the request with stale thinking blocks dropped, or None if it cannot change."""
+    fields = request.get("additionalModelRequestFields") or {}
+    tool_choice = request.get("toolConfig", {}).get("toolChoice", {})
+    thinking = thinking_with_drop_block(fields.get("thinking"), "any" in tool_choice or "tool" in tool_choice)
     if thinking is None:
         return None
     betas = list(fields.get("anthropic_beta") or [])
     if THINKING_BINDING_BETA not in betas:
         betas.append(THINKING_BINDING_BETA)
-    return {**fields, "anthropic_beta": betas, "thinking": thinking}
+    return {**request, "additionalModelRequestFields": {**fields, "anthropic_beta": betas, "thinking": thinking}}
+
+
+def _is_cache_points_refusal(error: ClientError) -> bool:
+    """Whether Converse refused the request because the model takes no cache points at all."""
+    details = error.response.get("Error", {})
+    return details.get("Code") == "AccessDeniedException" and _CACHE_POINTS_REFUSED_MESSAGE in details.get(
+        "Message", ""
+    )
+
+
+def _request_without_cache_points(request: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the request with every cache point removed from the system prompt, messages and tools, or None."""
+    system = request.get("system")
+    messages = request.get("messages")
+    tool_config = request.get("toolConfig") or {}
+    tools = tool_config.get("tools")
+    blocks = [
+        *(system or []),
+        *(tools or []),
+        *(block for message in messages or [] for block in message.get("content", [])),
+    ]
+    if not any("cachePoint" in block for block in blocks):
+        return None
+    stripped = {**request}
+    if system is not None:
+        stripped["system"] = [block for block in system if "cachePoint" not in block]
+    if messages is not None:
+        stripped["messages"] = [
+            {**message, "content": [block for block in message.get("content", []) if "cachePoint" not in block]}
+            for message in messages
+        ]
+    if tools is not None:
+        stripped["toolConfig"] = {**tool_config, "tools": [tool for tool in tools if "cachePoint" not in tool]}
+    return stripped
 
 
 class BedrockModel(Model):
@@ -228,9 +370,9 @@ class BedrockModel(Model):
                 (e.g. "default") to cache the tools with no explicit TTL, or a CacheToolsConfig instance to set
                 both type and TTL (e.g. "1h"). Inherits cache_config.ttl if specified, otherwise it takes the
                 Bedrock default. Superseded by an explicitly set cache_config.tools_ttl.
-            guardrail_id: ID of the guardrail to apply
+            guardrail_id: ID of the guardrail to apply. Must be set together with guardrail_version.
             guardrail_trace: Guardrail trace mode. Defaults to enabled.
-            guardrail_version: Version of the guardrail to apply
+            guardrail_version: Version of the guardrail to apply. Must be set together with guardrail_id.
             guardrail_stream_processing_mode: The guardrail processing mode
             guardrail_redact_input: Flag to redact input if a guardrail is triggered. Defaults to True.
             guardrail_redact_input_message: If a Bedrock Input guardrail triggers, replace the input with this message.
@@ -238,7 +380,10 @@ class BedrockModel(Model):
             guardrail_redact_output_message: If a Bedrock Output guardrail triggers, replace output with this message.
             guardrail_latest_message: Flag to send only the lastest user message to guardrails.
                 Defaults to False.
-            max_tokens: Maximum number of tokens to generate in the response
+            max_tokens: Maximum number of tokens to generate in the response. Defaults to the model's
+                output limit from the model info (``model_info.limits.max_output_tokens``) when known;
+                otherwise ``maxTokens`` is not sent and Bedrock's per-model default applies. Pass ``None`` to
+                opt out of the default and leave ``maxTokens`` unset.
             model_id: The Bedrock model ID (e.g., "global.anthropic.claude-sonnet-4-6")
             include_tool_result_status: Flag to include status field in tool results.
                 True includes status, False removes status, "auto" determines based on model_id. Defaults to "auto".
@@ -367,22 +512,86 @@ class BedrockModel(Model):
         logger.debug("region=<%s> | bedrock client created", self.client.meta.region_name)
 
     @property
+    @override
+    def model_info(self) -> ModelInfo:
+        """Reports server-side summary as off, how Converse caches the model, and the reasoning it takes back.
+
+        Claude-signed reasoning is taken back on a Claude model id, and on a model id that names no vendor, such as an
+        application inference profile ARN. Reasoning produced through such an id is not tagged, so it is not kept from
+        other vendors. A ``model_info`` override still wins over all of these.
+        """
+        # A foundation-model or system profile ARN ends in a vendor-qualified id; an application profile's does not.
+        model_id = self.config.get("model_id")
+        names_no_vendor = isinstance(model_id, str) and "." not in model_id.rsplit("/", 1)[-1]
+        reasoning = ModelCapabilities(
+            reasoning_provider="anthropic" if self._names_anthropic() or names_no_vendor else None
+        )
+        info = super().model_info
+        return ModelInfo.merge(
+            info,
+            SERVER_SIDE_SUMMARY_OFF,
+            None
+            if self._takes_gpt_cache_points(info)
+            else _converse_cache_model_info(str(self.config.get("model_id", ""))),
+            ModelInfo(capabilities=reasoning),
+            self.config.get("model_info"),
+        )
+
+    @property
+    def _limits_cache_points(self) -> bool:
+        """Whether Converse limits where this model takes cache points.
+
+        Nova and GPT-5.6+ take no tools point and no TTL, and a point only directly after text.
+        """
+        model_id = str(self.config.get("model_id", ""))
+        return _converse_limits_cache_points(model_id) or self._takes_gpt_cache_points(super().model_info)
+
+    def _takes_gpt_cache_points(self, info: ModelInfo) -> bool:
+        """Whether this is an OpenAI GPT model that takes cache points, unless Converse refused them in this region.
+
+        Args:
+            info: The model info before the Converse caching override.
+        """
+        model_id = str(self.config.get("model_id", ""))
+        return _converse_takes_gpt_cache_points(model_id, info) and not self._cache_points_refused()
+
+    def _cache_points_refused(self) -> bool:
+        """Whether Converse has refused cache points for this model ID in the client's region."""
+        return self.client.meta.region_name in _CACHE_POINTS_REFUSED.get(str(self.config.get("model_id", "")), ())
+
+    def _supported_ttl(self, ttl: str | None) -> str | None:
+        """Return the TTL to send, dropping it with a one-time warning when the model rejects any TTL."""
+        if not ttl or not self._limits_cache_points:
+            return ttl
+        # Caller depth varies, so stacklevel=1 pins dedup to this line (once per model id).
+        warnings.warn(
+            f"model_id=<{self.config.get('model_id')}> | ttl is not supported by this model,"
+            " using the default cache duration",
+            stacklevel=1,
+        )
+        return None
+
+    @property
     def _cache_strategy(self) -> str | None:
         """The effective cache strategy for this request, or None when caching is off or unsupported.
 
         Resolves ``cache_config.strategy``: an explicit strategy is returned as written, while ``"auto"``
-        maps to ``"anthropic"`` for Claude/Anthropic model IDs and None for models without automatic
-        caching support.
+        maps to ``"anthropic"`` for models the model info says take cache points, and None for models
+        without automatic caching support. For an id the model info does not list at all, Claude/Anthropic
+        ids still map to ``"anthropic"``.
         """
         cache_config = self.config.get("cache_config")
         if not cache_config:
             return None
         if cache_config.strategy != "auto":
             return cache_config.strategy
-        model_id = self.config.get("model_id", "").lower()
-        if "claude" in model_id or "anthropic" in model_id:
-            return "anthropic"
-        return None
+        prompt_caching = self.model_info.capabilities.prompt_caching
+        if prompt_caching is None:
+            # Unlisted ids (a Claude release newer than the data, a prompt-router or custom-model ARN)
+            # keep the historical name test so caching does not turn off until the data catches up.
+            model_id = str(self.config.get("model_id", "")).lower()
+            return "anthropic" if "claude" in model_id or "anthropic" in model_id else None
+        return "anthropic" if prompt_caching == "cache_points" else None
 
     @override
     def update_config(self, **model_config: Unpack[BedrockConfig]) -> None:  # type: ignore
@@ -394,6 +603,12 @@ class BedrockModel(Model):
         validate_config_keys(model_config, self.BedrockConfig)
         # __init__ delegates here, so the caller sits at stacklevel 4 on the constructor path.
         _warn_on_deprecated_cache_tools(model_config, stacklevel=4)
+
+        guardrail_id = model_config.get("guardrail_id", self.config.get("guardrail_id"))
+        guardrail_version = model_config.get("guardrail_version", self.config.get("guardrail_version"))
+        if bool(guardrail_id) != bool(guardrail_version):
+            raise ValueError("guardrail_id and guardrail_version must be set together")
+
         self.config.update(model_config)
 
     @override
@@ -403,7 +618,12 @@ class BedrockModel(Model):
         Returns:
             The Bedrock model configuration.
         """
-        return resolve_config_metadata(self.config, self.config.get("model_id", ""))
+        model_id = self.config.get("model_id", "")
+        config = resolve_config_metadata(self.config, model_id)
+        max_tokens = resolve_max_tokens(self.config, model_id)
+        if max_tokens is None or "max_tokens" in config:
+            return config
+        return {**config, "max_tokens": max_tokens}
 
     def format_request(
         self,
@@ -451,7 +671,9 @@ class BedrockModel(Model):
         if self._should_cache_system(system_blocks):
             system_blocks.append({"cachePoint": {"type": "default"}})
 
-        formatted_messages = self._format_bedrock_messages(messages, dynamic_trailing_blocks)
+        formatted_messages = self._format_bedrock_messages(
+            messages, dynamic_trailing_blocks, sum("cachePoint" in block for block in system_blocks)
+        )
         if self._tool_result_turn_separation_model_id == self.config["model_id"]:
             formatted_messages = self._separate_tool_result_turns(formatted_messages)
 
@@ -512,7 +734,7 @@ class BedrockModel(Model):
             "inferenceConfig": {
                 key: value
                 for key, value in [
-                    ("maxTokens", self.config.get("max_tokens")),
+                    ("maxTokens", self.get_config().get("max_tokens")),
                     ("temperature", self.config.get("temperature")),
                     ("topP", self.config.get("top_p")),
                     ("stopSequences", self.config.get("stop_sequences")),
@@ -552,9 +774,6 @@ class BedrockModel(Model):
                 return {"additionalModelRequestFields": fields_without_thinking}
             return {}
 
-        if self._drop_stale_thinking_model_id == self.config["model_id"]:
-            additional_fields = _fields_with_drop_block(additional_fields) or additional_fields
-
         return {"additionalModelRequestFields": additional_fields}
 
     def _converse(self, converse_method: Callable[..., Any], request: dict[str, Any]) -> Any:
@@ -562,22 +781,56 @@ class BedrockModel(Model):
 
         The retry turns drop_block on for every later request to this model, since the stale blocks stay in history.
         """
+        if self._drop_stale_thinking_model_id == request["modelId"] and (latched := _request_with_drop_block(request)):
+            logger.debug("model_id=<%s> | sending drop_block for stale thinking", request["modelId"])
+            request = latched
         try:
-            return converse_method(**request)
+            return self._send_with_cache_point_fallback(converse_method, request)
         except ClientError as error:
-            fields = request.get("additionalModelRequestFields") or {}
             error_code = error.response.get("Error", {}).get("Code")
             is_binding_error = error_code == "ValidationException" and is_thinking_binding_error(error)
-            retry_fields = _fields_with_drop_block(fields) if is_binding_error else None
-            if retry_fields is None:
+            retry_request = _request_with_drop_block(request) if is_binding_error else None
+            if retry_request is None:
                 raise
 
         logger.warning(
             "model_id=<%s> | history edit invalidated replayed thinking blocks, retrying with drop_block",
             request["modelId"],
         )
+        response = self._send_with_cache_point_fallback(converse_method, retry_request)
+        # Latched only once the retry is accepted, so a rejected retry does not alter later requests.
         self._drop_stale_thinking_model_id = request["modelId"]
-        return converse_method(**{**request, "additionalModelRequestFields": retry_fields})
+        return response
+
+    def _send_with_cache_point_fallback(self, converse_method: Callable[..., Any], request: dict[str, Any]) -> Any:
+        """Send the request, resending it once without cache points when Converse refuses every cache point.
+
+        Converse takes cache points for some OpenAI GPT models and refuses them for others with an
+        ``AccessDeniedException``. Once the resend is accepted, every later request to this model ID in the client's
+        region goes without cache points for the process, caller-placed ones included. Any other error, including a
+        ``ValidationException`` for one misplaced cache point, and any error for another model, is raised.
+        """
+        model_id = str(self.config.get("model_id", ""))
+        if not _converse_takes_gpt_cache_points(model_id, super().model_info):
+            return converse_method(**request)
+        if self._cache_points_refused():
+            return converse_method(**(_request_without_cache_points(request) or request))
+        try:
+            return converse_method(**request)
+        except ClientError as error:
+            retry_request = _request_without_cache_points(request) if _is_cache_points_refusal(error) else None
+            if retry_request is None:
+                raise
+
+        response = converse_method(**retry_request)
+        region = self.client.meta.region_name
+        _CACHE_POINTS_REFUSED.setdefault(model_id, set()).add(region)
+        logger.warning(
+            "model_id=<%s>, region=<%s> | converse rejected cache points for this model, sending none",
+            model_id,
+            region,
+        )
+        return response
 
     def _apply_system_cache_ttl(
         self, system_blocks: list[SystemContentBlock], tools_cache_point: list[dict[str, Any]]
@@ -598,21 +851,25 @@ class BedrockModel(Model):
         """
         ttl: str | None = None
         cache_config = self.config.get("cache_config")
-        if cache_config and self._cache_strategy == "anthropic":
+        caching = cache_config is not None and self._cache_strategy == "anthropic"
+        if caching and cache_config is not None:
             system_prompt_ttl = cache_config.system_prompt_ttl
-            section_ttl = system_prompt_ttl if isinstance(system_prompt_ttl, str) else cache_config.ttl
-            if section_ttl:
+            system_ttl = self._supported_ttl(section_ttl(system_prompt_ttl, cache_config.ttl))
+            if system_ttl:
                 tools_ttl_differs = bool(tools_cache_point) and (
-                    tools_cache_point[0]["cachePoint"].get("ttl") != section_ttl
+                    tools_cache_point[0]["cachePoint"].get("ttl") != system_ttl
                 )
                 if isinstance(system_prompt_ttl, str) or not tools_ttl_differs:
-                    ttl = section_ttl
+                    ttl = system_ttl
 
         normalized: list[SystemContentBlock] = []
         for block in system_blocks:
             cache_point = block.get("cachePoint")
+            caller_ttl = cache_point.get("ttl") if cache_point else None
+            if caching:
+                caller_ttl = self._supported_ttl(caller_ttl)
             # A TTL the caller wrote is theirs, so only a falsy one is rewritten.
-            if cache_point is None or cache_point.get("ttl"):
+            if cache_point is None or caller_ttl:
                 normalized.append(block)
                 continue
 
@@ -660,6 +917,20 @@ class BedrockModel(Model):
             A single-element list containing the cache point block, or an empty list when tool caching is off.
         """
         cache_config = self.config.get("cache_config")
+        if cache_config is not None and self._limits_cache_points and self._cache_strategy == "anthropic":
+            tools_setting = (
+                cache_config.tools_ttl if cache_config.tools_ttl is not None else self.config.get("cache_tools")
+            )
+            if tools_setting not in (None, False):
+                # Caller depth varies, so stacklevel=1 pins dedup to this line (once per model id).
+                warnings.warn(
+                    f"model_id=<{self.config.get('model_id')}>, tools_ttl=<{tools_setting}> | this model accepts no"
+                    " tool-level cache point,"
+                    " tool definitions are cached only as part of the system prompt prefix",
+                    stacklevel=1,
+                )
+            return []
+
         if cache_config is None or cache_config.tools_ttl is None:
             return self._build_deprecated_cache_tools_point(cache_config)
 
@@ -667,12 +938,7 @@ class BedrockModel(Model):
         if tools_ttl is False or self._cache_strategy != "anthropic":
             return []
 
-        ttl = tools_ttl if isinstance(tools_ttl, str) else cache_config.ttl
-        cache_point: dict[str, Any] = {"type": "default"}
-        if ttl:
-            cache_point["ttl"] = ttl
-
-        return [{"cachePoint": cache_point}]
+        return [{"cachePoint": cache_point(section_ttl(tools_ttl, cache_config.ttl))}]
 
     def _build_deprecated_cache_tools_point(self, cache_config: CacheConfig | None) -> list[dict[str, Any]]:
         """Build the tools cache point from the deprecated model-level ``cache_tools`` option.
@@ -703,34 +969,28 @@ class BedrockModel(Model):
 
         return [{"cachePoint": cache_point}]
 
-    def _honor_placed_cache_point(
-        self,
-        content: list[dict[str, Any]],
-        placed_idx: int,
-        msg_idx: int,
-        cache_config: CacheConfig | None,
-    ) -> bool:
+    def _honor_placed_cache_point(self, content: list[dict[str, Any]], placed_idx: int, msg_idx: int) -> bool:
         """Keep a caller-placed cache point, taking the configured TTL and the document rule.
 
         The caller's *position* is honored; their TTL is not. Bedrock processes cache points in the
         order toolConfig, system, messages and rejects a longer TTL that follows a shorter one, so a
         TTL written here can turn a working configuration into a rejected request - verified against
         the API: tools at 5m with a hand-placed 1h on the message is rejected, the same shape at 5m is
-        accepted. Normalizing to ``cache_config.ttl`` is what makes the honored path TTL-identical to
-        the automatic one, which is the only behaviour this method should be changing.
+        accepted. Normalizing to the configured messages TTL is what makes the honored path TTL-identical
+        to the automatic one, which is the only behaviour this method should be changing.
 
         Args:
             content: Content blocks of the last user message (modified in place).
             placed_idx: Index of the caller-placed cache point.
             msg_idx: Index of the message, for logging.
-            cache_config: The configured cache settings, if any.
 
         Returns:
             True when the point was kept, possibly relocated. False when nothing cacheable precedes it,
-            so the point was removed: Bedrock rejects a cache point with no content ahead of it ("There
-            is nothing available to cache"). The caller then retries automatic placement, which lands a
-            point only if the remaining content allows one - for a leading document it declines too, so
-            the message ends up with no cache point at all.
+            or, on a model that takes a cache point only after text, no text precedes it, so the point was
+            removed: Bedrock rejects a cache point with no content ahead of it ("There
+            is nothing available to cache"). The caller then retries automatic placement, except after a
+            leading document, where the blocks after the point are per-call content and no position ahead
+            of them is legal, so the message ends up with no cache point at all.
         """
         placed = content[placed_idx]
 
@@ -747,24 +1007,27 @@ class BedrockModel(Model):
         # Bedrock respectively reject before the request can even be judged on placement. The
         # non-increasing rule itself is documented on CacheConfig.
         cache_point.pop("ttl", None)
-        if cache_config and cache_config.ttl:
-            cache_point["ttl"] = cache_config.ttl
+        if ttl := self._supported_ttl(_messages_cache_ttl(self.config.get("cache_config"))):
+            cache_point["ttl"] = ttl
 
-        # Bedrock only rejects a cache point *directly* preceded by a non-PDF document, so step back
-        # over the adjacent run of them. Moving further would evict durable content - usually the
-        # document itself, the expensive part - from the cached prefix for no reason.
-        target_idx = placed_idx
-        while target_idx > 0:
-            previous = content[target_idx - 1]
-            if "document" not in previous or previous["document"].get("format", "") == "pdf":
-                break
-            target_idx -= 1
+        nova_rules = self._limits_cache_points
+        if nova_rules:
+            target_idx = _step_back_to_text(content, placed_idx)
+        else:
+            target_idx = step_back_over_documents(content, placed_idx)
 
         if target_idx != placed_idx:
             del content[placed_idx]
+            if target_idx == 0 and nova_rules:
+                # Caller depth varies, so stacklevel=1 pins dedup to this line (once per model id).
+                warnings.warn(
+                    f"model_id=<{self.config.get('model_id')}> | dropped a caller-placed cache point with no text"
+                    " ahead of it, this model takes one only directly after text, placing it automatically instead",
+                    stacklevel=1,
+                )
+                return False
             if target_idx == 0:
-                # Nothing precedes the documents, so there is no prefix to cache. Automatic placement
-                # declines for the same reason, leaving the message with no cache point.
+                # Nothing precedes the documents, so the point has nowhere legal to go ahead of the caller's boundary.
                 logger.warning("msg_idx=<%s> | dropped cache point ahead of a leading document", msg_idx)
                 return False
             content.insert(target_idx, placed)
@@ -774,8 +1037,10 @@ class BedrockModel(Model):
         logger.debug("msg_idx=<%s>, block_idx=<%s> | honored caller-placed cache point", msg_idx, placed_idx)
         return True
 
-    def _inject_cache_point(self, messages: list[dict[str, Any]], dynamic_trailing_blocks: int = 0) -> None:
-        """Ensure the last user message carries exactly one cache point.
+    def _inject_cache_point(
+        self, messages: list[dict[str, Any]], dynamic_trailing_blocks: int = 0, system_cache_points: int = 0
+    ) -> None:
+        """Place the conversation cache points: one in the last user message, several across recent ones on Nova.
 
         A cache point already present in the last user message is honored where it sits rather than
         replaced: a caller places one to mark where its reusable prefix ends, ahead of content that is
@@ -783,12 +1048,15 @@ class BedrockModel(Model):
         the cached prefix, so every request would write a new entry and none would ever read one.
 
         Cache points in earlier messages are still removed, so they cannot accumulate one per turn
-        against the provider's cache-point budget.
+        against the provider's cache-point budget. Nova is the exception: it gets a point on each of its last
+        few user messages with text (see ``_nova_cache_point_positions``).
 
         Args:
             messages: List of messages to inject cache point into (modified in place).
             dynamic_trailing_blocks: How many trailing blocks of the last user message are rebuilt on every call.
                 The point goes ahead of them, for the same reason a caller-placed one is honored.
+            system_cache_points: How many cache points the system prompt carries. Nova gets fewer conversation
+                points when the full set would take the request past the cache points Converse accepts.
         """
         if not messages:
             return
@@ -812,13 +1080,13 @@ class BedrockModel(Model):
                     )
 
         if last_user_idx is not None and messages[last_user_idx].get("content"):
-            cache_point: dict[str, Any] = {"type": "default"}
-            cache_config = self.config.get("cache_config")
-            if cache_config and cache_config.ttl:
-                cache_point["ttl"] = cache_config.ttl
+            point = cache_point(self._supported_ttl(_messages_cache_ttl(self.config.get("cache_config"))))
 
             content = messages[last_user_idx]["content"]
 
+            # Blocks after the caller's boundary are per-call content, so a fallback point never lands among them.
+            trailing_blocks = dynamic_trailing_blocks
+            nova_points = min(_NOVA_CONVERSATION_CACHE_POINTS, MAX_CACHE_POINTS - system_cache_points)
             placed_idxs = [idx for idx, block in enumerate(content) if "cachePoint" in block]
             if placed_idxs:
                 # One boundary per message, so this message contributes a single cache point to the budget.
@@ -834,15 +1102,36 @@ class BedrockModel(Model):
                         last_user_idx,
                         extra_idx,
                     )
-                if self._honor_placed_cache_point(content, placed_idxs[0], last_user_idx, cache_config):
+                if self._limits_cache_points and nova_points <= 0:
+                    del content[placed_idxs[0]]
+                    logger.warning(
+                        "msg_idx=<%s>, block_idx=<%s> | no cache point left after the system prompt"
+                        " | dropped caller-placed cache point",
+                        last_user_idx,
+                        placed_idxs[0],
+                    )
                     return
+                if self._honor_placed_cache_point(content, placed_idxs[0], last_user_idx):
+                    if self._limits_cache_points:
+                        # The caller's point is the newest one, so the rest go on the user messages before it.
+                        self._inject_nova_cache_points(messages, last_user_idx - 1, 0, nova_points - 1)
+                    return
+                trailing_blocks = max(trailing_blocks, len(content) - placed_idxs[0])
                 if not content:
                     # Removing the point emptied the message, so there is nothing left to cache and
                     # re-adding one would rebuild the request Bedrock just refused. Bedrock rejects an
                     # empty message too, exactly as the pre-existing strip path already did.
                     logger.debug("msg_idx=<%s> | no content left to cache", last_user_idx)
                     return
+                if placed_idxs[0] > 0 and not self._limits_cache_points:
+                    # Only leading documents preceded the point, and the blocks after it are per-call content.
+                    logger.debug("msg_idx=<%s> | no position ahead of the caller's boundary", last_user_idx)
+                    return
                 # The point could not legally stay, so fall through to automatic placement below.
+
+            if self._limits_cache_points:
+                self._inject_nova_cache_points(messages, last_user_idx, trailing_blocks, nova_points)
+                return
 
             if dynamic_trailing_blocks:
                 # Routed through the honor path so the document rule and configured TTL still apply.
@@ -850,31 +1139,29 @@ class BedrockModel(Model):
                 if boundary_idx == 0:
                     logger.debug("msg_idx=<%s> | skipped cache point, no durable prefix", last_user_idx)
                     return
-                content.insert(boundary_idx, {"cachePoint": cache_point})
-                # A False here means a leading document left no prefix to cache; automatic placement
-                # declines for the same reason, so there is nothing to fall back to.
-                self._honor_placed_cache_point(content, boundary_idx, last_user_idx, cache_config)
+                content.insert(boundary_idx, {"cachePoint": point})
+                # A False here means a leading document left no legal position ahead of the per-call blocks.
+                self._honor_placed_cache_point(content, boundary_idx, last_user_idx)
                 return
 
-            # Insert before non-PDF document blocks to avoid Bedrock ValidationException
-            first_non_pdf_doc_idx: int | None = None
-            for i, block in enumerate(content):
-                if "document" in block and block["document"].get("format", "") != "pdf":
-                    first_non_pdf_doc_idx = i
-                    break
-
-            # Insert the cache point before the first non-PDF document so it is not directly
-            # preceded by that block, which Bedrock rejects with a ValidationException
-            if first_non_pdf_doc_idx is None:
-                content.append({"cachePoint": cache_point})
-            elif first_non_pdf_doc_idx > 0:
-                content.insert(first_non_pdf_doc_idx, {"cachePoint": cache_point})
-            else:
-                # A leading non-PDF document leaves no prefix to cache and Bedrock rejects it
-                logger.debug("msg_idx=<%s> | skipped cache point for leading non-PDF document", last_user_idx)
+            insert_idx = step_back_over_documents(content, len(content))
+            if insert_idx == 0:
+                logger.debug("msg_idx=<%s> | skipped cache point, message holds only non-PDF documents", last_user_idx)
                 return
+            content.insert(insert_idx, {"cachePoint": point})
 
             logger.debug("msg_idx=<%s> | added cache point to last user message", last_user_idx)
+
+    def _inject_nova_cache_points(
+        self, messages: list[dict[str, Any]], last_user_idx: int, dynamic_trailing_blocks: int, count: int
+    ) -> None:
+        """Place up to ``count`` Nova conversation cache points, which take no TTL."""
+        positions = _nova_cache_point_positions(messages, last_user_idx, dynamic_trailing_blocks, count)
+        if not positions:
+            logger.debug("no user text to follow or no cache point left, skipped conversation cache point")
+        for msg_idx, block_idx in positions:
+            messages[msg_idx]["content"].insert(block_idx, {"cachePoint": {"type": "default"}})
+            logger.debug("msg_idx=<%s>, block_idx=<%s> | added cache point after text", msg_idx, block_idx)
 
     def _find_last_user_text_message_index(self, messages: Messages) -> int | None:
         """Find the index of the last user message containing text or image content.
@@ -888,10 +1175,28 @@ class BedrockModel(Model):
         Returns:
             Index of the last user message with text/image content, or None if not found
         """
+        idx: int
+        msg: Message
         for idx, msg in reversed(list(enumerate(messages))):
             if msg["role"] == "user" and any("text" in cb or "image" in cb for cb in msg.get("content", [])):
                 return idx
         return None
+
+    def _names_anthropic(self) -> bool:
+        model_id = str(self.config.get("model_id", "")).lower()
+        return "anthropic" in model_id or "claude" in model_id
+
+    def _tag_reasoning(self, event: StreamEvent) -> StreamEvent:
+        """Tag a Claude model's signed or redacted reasoning; a model id that names no vendor stays untagged."""
+        if not self._names_anthropic() or not isinstance(event, dict):
+            return event
+        reasoning = event.get("contentBlockDelta", {}).get("delta", {}).get("reasoningContent", {})
+        if not (reasoning.get("signature") or reasoning.get("redactedContent")):
+            return event
+        provider_data: ReasoningProviderData = {"provider": "anthropic", "modelId": self.config["model_id"], "data": {}}
+        block_delta = event["contentBlockDelta"]
+        delta = {**block_delta["delta"], "reasoningContent": {**reasoning, "providerData": provider_data}}
+        return cast(StreamEvent, {**event, "contentBlockDelta": {**block_delta, "delta": delta}})
 
     def _rejects_reasoning_block(self, reasoning: ReasoningContentBlock) -> bool:
         """Whether the configured model would reject this ``reasoningContent`` block if it were replayed.
@@ -916,7 +1221,9 @@ class BedrockModel(Model):
             return True
         return signed
 
-    def _format_bedrock_messages(self, messages: Messages, dynamic_trailing_blocks: int = 0) -> list[dict[str, Any]]:
+    def _format_bedrock_messages(
+        self, messages: Messages, dynamic_trailing_blocks: int = 0, system_cache_points: int = 0
+    ) -> list[dict[str, Any]]:
         """Format messages for Bedrock API compatibility.
 
         This function ensures messages conform to Bedrock's expected format by:
@@ -930,6 +1237,7 @@ class BedrockModel(Model):
             messages: List of messages to format
             dynamic_trailing_blocks: How many trailing blocks of the last user message are rebuilt on every
                 call, so the cache point goes ahead of them.
+            system_cache_points: How many cache points the system prompt carries.
 
         Returns:
             Messages formatted for Bedrock API compatibility
@@ -945,6 +1253,7 @@ class BedrockModel(Model):
 
         filtered_unknown_members = False
         dropped_reasoning_content = False
+        skipped_injected = False
 
         # Pre-compute the index of the last user message containing text or image content.
         # This ensures guardContent wrapping is maintained across tool execution cycles, where
@@ -960,6 +1269,11 @@ class BedrockModel(Model):
                 # Filter out SDK_UNKNOWN_MEMBER content blocks
                 if "SDK_UNKNOWN_MEMBER" in content_block:
                     filtered_unknown_members = True
+                    continue
+
+                # Only a direct model call or a model_info override that turns temporary_messages on gets here.
+                if "injected" in content_block:
+                    skipped_injected = True
                     continue
 
                 if "reasoningContent" in content_block and self._rejects_reasoning_block(
@@ -1009,6 +1323,8 @@ class BedrockModel(Model):
             logger.warning(
                 "Filtered out SDK_UNKNOWN_MEMBER content blocks from messages, consider upgrading boto3 version"
             )
+        if skipped_injected:
+            logger.warning("block_type=<injected> | bedrock does not send injected blocks | skipping it")
         if dropped_reasoning_content:
             logger.debug(
                 "model_id=<%s> | dropped reasoningContent blocks the model does not accept", self.config["model_id"]
@@ -1018,13 +1334,15 @@ class BedrockModel(Model):
         cache_config = self.config.get("cache_config")
         if cache_config:
             cache_strategy = self._cache_strategy
-            if cache_config.strategy == "auto" and not cache_strategy:
+            # A model Converse caches implicitly needs no cache points, so it gets no warning.
+            implicit = self.model_info.capabilities.prompt_caching == "auto"
+            if cache_config.strategy == "auto" and not cache_strategy and not implicit:
                 logger.warning(
                     "model_id=<%s> | cache_config is enabled but this model does not support automatic caching",
                     self.config.get("model_id"),
                 )
-            if cache_strategy == "anthropic":
-                self._inject_cache_point(cleaned_messages, dynamic_trailing_blocks)
+            if cache_strategy == "anthropic" and cache_config.messages_ttl is not False:
+                self._inject_cache_point(cleaned_messages, dynamic_trailing_blocks, system_cache_points)
 
         return cleaned_messages
 
@@ -1045,6 +1363,7 @@ class BedrockModel(Model):
             unsupported_mechanisms("bedrock", model_id, structured_output_model),
             request.get("toolConfig", {}).get("toolChoice"),
             structured_output_model,
+            self.model_info,
         )
         if "native" in mechanisms and not self._client_supports_native_output():
             warnings.warn(
@@ -1692,7 +2011,7 @@ class BedrockModel(Model):
                                 callback(event)
                             redaction_emitted = True
 
-                    callback(chunk)
+                    callback(self._tag_reasoning(chunk))
 
                 # Safety net: guardrail_intervened but no metadata chunk arrived.
                 if not redaction_emitted and not saw_guardrail_trace and last_stop_reason == "guardrail_intervened":
@@ -1701,7 +2020,7 @@ class BedrockModel(Model):
 
             else:
                 for event in self.convert_non_streaming_to_streaming(response):
-                    callback(event)
+                    callback(self._tag_reasoning(event))
 
                 guardrail_data = response.get("trace", {}).get("guardrail")
                 if self._should_redact_guardrail_content(guardrail_data, response.get("stopReason")):

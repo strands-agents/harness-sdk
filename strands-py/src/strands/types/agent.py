@@ -104,13 +104,17 @@ class LocalAgent(Protocol):
         """The cancellation signal for the current invocation."""
         ...
 
-    def cancel(self, *, message: str | None = None, after_current_tools: bool = False) -> None:
+    def cancel(
+        self, *, message: str | None = None, after_current_tools: bool = False, cancel_background_tasks: bool = False
+    ) -> None:
         """Request cancellation at the agent's next supported checkpoint.
 
         Args:
             message: Optional terminal assistant message appended to history on exit.
             after_current_tools: If True, defer cancellation until the current tool
                 batch finishes; the loop exits before the next model call.
+            cancel_background_tasks: If True, also cancel the agent's outstanding background tasks (on an
+                idle agent, only those).
         """
         ...
 
@@ -170,8 +174,8 @@ class Limits(TypedDict, total=False):
     omit a field (or pass ``limits=None``) for no limit on that dimension.
 
     Priority when several are reached at once (highest first): ``turns``, ``total_tokens``,
-    ``output_tokens``, with ``stop_reason`` ``"limit_turns"``, ``"limit_total_tokens"``, or
-    ``"limit_output_tokens"``.
+    ``output_tokens``, ``structured_output_attempts``, with ``stop_reason`` ``"limit_turns"``,
+    ``"limit_total_tokens"``, ``"limit_output_tokens"``, or ``"limit_structured_output_attempts"``.
 
     Attributes:
         turns: Maximum number of turns. One turn is one model call plus any tool execution
@@ -182,11 +186,17 @@ class Limits(TypedDict, total=False):
         total_tokens: Maximum cumulative input + output tokens across every model call in the
             request. Each model call's input includes prior turns, so this compounds across the
             run and approximates total token spend. Soft limit, same caveat as ``output_tokens``.
+        structured_output_attempts: Maximum failed structured output attempts across the request.
+            A model response counts as one failed attempt when it calls the structured output tool
+            with invalid input, or doesn't return valid structured output while the tool is forced.
+            When omitted, retries are unbounded and a failed forced response raises
+            ``StructuredOutputException``.
     """
 
     turns: int
     output_tokens: int
     total_tokens: int
+    structured_output_attempts: int
 
 
 _LIMITS_KEYS = tuple(Limits.__annotations__)

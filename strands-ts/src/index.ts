@@ -18,7 +18,14 @@ export type { AgentConfig, ToolList, ToolExecutorStrategy } from './agent/agent.
 export type { BackgroundTasksConfig } from './background-tasks/types.js'
 export type { AgentAsToolOptions } from './agent/agent-as-tool.js'
 export type { ToolCaller, ToolCallerProxy, ToolHandle, DirectToolCallOptions } from './agent/tool-caller.js'
-export type { InvocationState, InvokeArgs, InvokeLimits, InvokeOptions, LocalAgent } from './types/agent.js'
+export type {
+  CancelOptions,
+  InvocationState,
+  InvokeArgs,
+  InvokeLimits,
+  InvokeOptions,
+  LocalAgent,
+} from './types/agent.js'
 export type { InvocationContext, InvocationContextUsage } from './agent/invocation-context.js'
 export type { LifecycleObserver } from './types/lifecycle-observer.js'
 
@@ -37,6 +44,7 @@ export {
   JsonValidationError,
   ConcurrentInvocationError,
   ModelThrottledError,
+  ModelNetworkError,
   ToolValidationError,
   StructuredOutputError,
   ToolNotFoundError,
@@ -60,16 +68,21 @@ export type {
   Role,
   StopReason,
   TextBlockData,
+  OffloadedBlockData,
   ToolUseBlockData,
   ToolResultBlockData,
   ReasoningBlockData,
+  ReasoningProviderData,
   CachePointBlockData,
   GuardContentBlockData,
+  SummaryBlockData,
   GuardContentText,
   GuardContentImage,
   GuardQualifier,
   GuardImageFormat,
   GuardImageSource,
+  InjectedBlockData,
+  ToolReferenceBlockData,
   ContentBlock,
   ContentBlockData,
   MessageData,
@@ -82,11 +95,16 @@ export type {
 // Message classes
 export {
   TextBlock,
+  OffloadedBlock,
   ToolUseBlock,
   ToolResultBlock,
   ReasoningBlock,
   CachePointBlock,
   GuardContentBlock,
+  InjectedBlock,
+  SummaryBlock,
+  ToolReferenceBlock,
+  UnknownBlock,
   Message,
   JsonBlock,
   contentBlockFromData,
@@ -191,8 +209,16 @@ export {
 } from './models/streaming.js'
 
 // Model provider types
-export type { BaseModelConfig, CountTokensOptions, StreamOptions, CacheConfig } from './models/model.js'
-export type { ModelInfo, ModelCapabilities, ModelLimits, PromptCaching } from './models/model-info.js'
+export type {
+  BaseModelConfig,
+  CountTokensOptions,
+  StreamOptions,
+  SummarizeOptions,
+  CacheConfig,
+} from './models/model.js'
+export type { SummarizeResult } from './models/summarize.js'
+export type { ModelCapabilities, ModelLimits, PromptCaching, DeferredToolLoading } from './models/model-info.js'
+export { ModelInfo } from './models/model-info.js'
 
 export { Model } from './models/model.js'
 
@@ -208,6 +234,7 @@ export {
 export type {
   AnswerOf,
   AskOptions,
+  DecisionCallOptions,
   DecisionInput,
   DecisionResult,
   DecisionsAPIDecisionModelOptions,
@@ -300,18 +327,10 @@ export {
   type RetryDecision,
 } from './retry/index.js'
 
-// Context Manager (experimental)
-export type { ContextManagerStrategy } from './context-manager/context-manager.js'
-export type { ContextManagerConfig, ContextStrategy, ContextState, StashConfig } from './context-manager/types.js'
-export { Offload } from './context-manager/strategies/offload/index.js'
-export type {
-  OffloadTarget,
-  OffloadConditions,
-  OffloadStrategyBuilder,
-} from './context-manager/strategies/offload/index.js'
-export type { TruncateConfig } from './context-manager/methods/truncate.js'
-export type { SummarizeConfig } from './context-manager/methods/summarize.js'
-export type { StrategyPresetName } from './context-manager/presets.js'
+// Context Manager
+// Note: the context manager is intentionally not exported here — its surface lives at
+// '@strands-agents/sdk/context-manager'. Python keeps it in a submodule too, currently
+// `strands.experimental.context_manager`.
 
 // Conversation Manager
 export {
@@ -382,7 +401,13 @@ export type { Storage } from './storage/storage.js'
 // Sandbox
 export { Sandbox, type ExecuteOptions } from './sandbox/base.js'
 export { PosixShellSandbox } from './sandbox/posix-shell.js'
-export { SandboxTimeoutError, SandboxAbortError, SandboxPathNotFoundError } from './sandbox/errors.js'
+export {
+  SandboxTimeoutError,
+  SandboxAbortError,
+  SandboxPathNotFoundError,
+  SandboxIsADirectoryError,
+  SandboxPermissionError,
+} from './sandbox/errors.js'
 export type { StreamType, StreamChunk, FileInfo, OutputFile, ExecutionResult } from './sandbox/types.js'
 
 // Middleware system

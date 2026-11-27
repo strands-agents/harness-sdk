@@ -17,14 +17,29 @@ import { Model, resolveConfigMetadata } from '../model.js'
 import type { CountTokensOptions, StreamOptions } from '../model.js'
 import type { Message } from '../../types/messages.js'
 import type { ModelStreamEvent, Usage } from '../streaming.js'
-import { ContextWindowOverflowError, ModelThrottledError, ProviderTokenCountError } from '../../errors.js'
+import {
+  ContextWindowOverflowError,
+  ModelThrottledError,
+  ModelNetworkError,
+  ProviderTokenCountError,
+} from '../../errors.js'
 import type { GoogleModelConfig, GoogleModelOptions, GoogleStreamState } from './types.js'
 export type { GoogleModelConfig, GoogleModelOptions }
-import { classifyGoogleError } from './errors.js'
+import { classifyGoogleError, type GoogleErrorType } from './errors.js'
 import { formatMessages, mapChunkToEvents } from './adapters.js'
 import { MODEL_DEFAULTS, defaultModelWarningMessage } from '../defaults.js'
+import { SERVER_SIDE_SUMMARY_OFF, ModelInfo } from '../model-info.js'
 import { warnOnce } from '../../logging/warn-once.js'
 import { logger } from '../../logging/logger.js'
+
+/**
+ * Builds the Strands error for each recognized Google error type.
+ */
+const GOOGLE_ERROR_FACTORIES: Record<GoogleErrorType, (error: Error) => Error> = {
+  contextOverflow: (error) => new ContextWindowOverflowError(error.message),
+  throttling: (error) => new ModelThrottledError(error.message, { cause: error }),
+  network: (error) => new ModelNetworkError(error.message, { cause: error }),
+}
 
 /**
  * Google model provider implementation.
@@ -152,6 +167,12 @@ export class GoogleModel extends Model<GoogleModelConfig> {
     return this._config.modelId ?? MODEL_DEFAULTS.gemini.modelId
   }
 
+  /** Turns `serverSideSummary` off and reports Gemini-signed reasoning as taken back; a `modelInfo` override wins. */
+  override get modelInfo(): ModelInfo {
+    const reasoning = { capabilities: { reasoningProvider: 'google' } }
+    return ModelInfo.merge(super.modelInfo, SERVER_SIDE_SUMMARY_OFF, reasoning, this._config.modelInfo)
+  }
+
   /**
    * Count tokens using Gemini's native countTokens API.
    *
@@ -235,6 +256,7 @@ export class GoogleModel extends Model<GoogleModelConfig> {
       const stream = await this._client.models.generateContentStream(params)
 
       const streamState: GoogleStreamState = {
+        modelId: this.modelId,
         messageStarted: false,
         textContentBlockStarted: false,
         reasoningContentBlockStarted: false,
@@ -264,16 +286,7 @@ export class GoogleModel extends Model<GoogleModelConfig> {
         throw error
       }
       const errorType = classifyGoogleError(error)
-
-      if (errorType === 'contextOverflow') {
-        throw new ContextWindowOverflowError(error.message)
-      }
-
-      if (errorType === 'throttling') {
-        throw new ModelThrottledError(error.message, { cause: error })
-      }
-
-      throw error
+      throw errorType ? GOOGLE_ERROR_FACTORIES[errorType](error) : error
     }
   }
 

@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
 import { TestModelProvider } from '../../__fixtures__/model-test-helpers.js'
+import { BedrockModel } from '../../models/bedrock.js'
 import { Model } from '../../models/model.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME } from '../../tools/structured-output-tool.js'
-import { Message, TextBlock } from '../../types/messages.js'
+import { InjectedBlock, Message, TextBlock } from '../../types/messages.js'
 import { LLMDecisionModel } from '../llm-decision-model.js'
 import { Uncertain } from '../types.js'
 import type { StreamOptions } from '../../models/model.js'
@@ -34,10 +35,9 @@ function toolUseModel(
   input: Record<string, string | { answer: string; reason?: string }>,
   options: { usage?: Usage | null; latencyMs?: number | null } = {}
 ): RecordingModel {
-  const normalized: Record<string, { answer: string; reason?: string }> = {}
-  for (const [id, value] of Object.entries(input)) {
-    normalized[id] = typeof value === 'string' ? { answer: value } : value
-  }
+  const normalized = Object.fromEntries(
+    Object.entries(input).map(([id, value]) => [id, typeof value === 'string' ? { answer: value } : value])
+  )
   const usage = options.usage === undefined ? DEFAULT_USAGE : options.usage
   const latencyMs = options.latencyMs === undefined ? 42 : options.latencyMs
 
@@ -132,7 +132,7 @@ describe('LLMDecisionModel', () => {
       expect((answer as Uncertain).reason).toBe('the input mentioned no color')
     })
 
-    it('omits uncertain from the enum when a question opts out', async () => {
+    it('omits uncertain from the enum and offers no reason when a question opts out', async () => {
       const model = toolUseModel({ q: 'yes' })
       const decision = new LLMDecisionModel({ model })
 
@@ -144,10 +144,14 @@ describe('LLMDecisionModel', () => {
       const schema = toolSpec?.inputSchema as {
         properties?: Record<string, { properties?: { answer?: { enum?: string[] } } }>
       }
-      expect(schema.properties?.['q']?.properties?.answer?.enum).toEqual(['yes', 'no'])
+      const answerSchema = schema.properties?.['q']?.properties
+      expect({ fields: Object.keys(answerSchema ?? {}), choices: answerSchema?.answer?.enum }).toEqual({
+        fields: ['answer'],
+        choices: ['yes', 'no'],
+      })
     })
 
-    it('appends uncertain to the enum by default', async () => {
+    it('appends uncertain to the enum and offers a reason by default', async () => {
       const model = toolUseModel({ q: 'uncertain' })
       const decision = new LLMDecisionModel({ model })
 
@@ -157,7 +161,11 @@ describe('LLMDecisionModel', () => {
       const schema = toolSpec?.inputSchema as {
         properties?: Record<string, { properties?: { answer?: { enum?: string[] } } }>
       }
-      expect(schema.properties?.['q']?.properties?.answer?.enum).toEqual(['yes', 'no', 'uncertain'])
+      const answerSchema = schema.properties?.['q']?.properties
+      expect({ fields: Object.keys(answerSchema ?? {}), choices: answerSchema?.answer?.enum }).toEqual({
+        fields: ['answer', 'reason'],
+        choices: ['yes', 'no', 'uncertain'],
+      })
     })
 
     it('forces the structured-output tool', async () => {
@@ -167,6 +175,17 @@ describe('LLMDecisionModel', () => {
       await decision.ask('x', { q: { question: 'ok?', choices: 'boolean' } })
 
       expect(model.options[0]?.toolChoice).toEqual({ tool: { name: STRUCTURED_OUTPUT_TOOL_NAME } })
+      expect(model.options[0]).not.toHaveProperty('cancelSignal')
+    })
+
+    it('forwards the cancel signal to the model call', async () => {
+      const model = toolUseModel({ q: 'true' })
+      const decision = new LLMDecisionModel({ model })
+      const controller = new AbortController()
+
+      await decision.ask('x', { q: { question: 'ok?', choices: 'boolean' } }, { cancelSignal: controller.signal })
+
+      expect(model.options[0]?.cancelSignal).toBe(controller.signal)
     })
 
     it('wraps a plain string state as a single user message', async () => {
@@ -205,6 +224,27 @@ describe('LLMDecisionModel', () => {
       await decision.ask(history, { q: { question: 'conversation?', choices: 'boolean' } })
 
       expect(model.requests[0]).toBe(history)
+    })
+
+    it('sends injected blocks in a message history the way the agent does', async () => {
+      const model = toolUseModel({ q: 'true' })
+      const history = [
+        new Message({
+          role: 'user',
+          content: [new TextBlock('earlier'), new InjectedBlock({ text: 'cwd: /repo', source: 'env' })],
+          trackingId: 'msg-1',
+        }),
+      ]
+
+      await new LLMDecisionModel({ model }).ask(history, { q: { question: 'in a repo?', choices: 'boolean' } })
+
+      expect(model.requests[0]).toEqual([
+        new Message({
+          role: 'user',
+          content: [new TextBlock('earlier'), new TextBlock('\n\ncwd: /repo')],
+          trackingId: 'msg-1',
+        }),
+      ])
     })
 
     it('includes the untrusted-state defense in the system prompt', async () => {
@@ -303,6 +343,32 @@ describe('LLMDecisionModel', () => {
       expect(result.metadata.latencyMs).toBeGreaterThanOrEqual(0)
     })
 
+    it('preserves prototype-named question ids', async () => {
+      const ids = ['__proto__', 'constructor', 'toString']
+      const model = toolUseModel(Object.fromEntries(ids.map((id) => [id, 'true'])))
+      const decision = new LLMDecisionModel({ model })
+      const questions = Object.fromEntries(
+        ids.map((id) => [id, { question: 'ok?', choices: 'boolean' } satisfies Question])
+      )
+
+      const result = await decision.ask('x', questions)
+
+      expect(result.answers).toEqual(Object.fromEntries(ids.map((id) => [id, true])))
+      expect(Object.keys(result.answers)).toEqual(ids)
+      expect(Object.getPrototypeOf(result.answers)).toBe(Object.prototype)
+      const inputSchema = model.options[0]?.toolSpecs?.[0]?.inputSchema as { properties: object; required: string[] }
+      expect(Object.keys(inputSchema.properties)).toEqual(ids)
+      expect(inputSchema.required).toEqual(ids)
+    })
+
+    it.each(['__proto__', 'constructor', 'toString'])('rejects a missing own answer for %s', async (id) => {
+      const model = toolUseModel({ other: 'true' })
+      const decision = new LLMDecisionModel({ model })
+      const questions = Object.fromEntries([[id, { question: 'ok?', choices: 'boolean' } satisfies Question]])
+
+      await expect(decision.ask('x', questions)).rejects.toThrow(`omitted answer for question id=<${id}>`)
+    })
+
     it('throws when the model returns an unknown option', async () => {
       const model = toolUseModel({ color: 'purple' })
       const decision = new LLMDecisionModel({ model })
@@ -316,6 +382,12 @@ describe('LLMDecisionModel', () => {
   describe('construction', () => {
     it('rejects a non-Model argument', () => {
       expect(() => new LLMDecisionModel({ model: {} as unknown as Model })).toThrow(TypeError)
+    })
+
+    it('defaults to a strict BedrockModel', () => {
+      const model = (new LLMDecisionModel() as unknown as { _model: BedrockModel })._model
+      expect(model).toBeInstanceOf(BedrockModel)
+      expect(model.getConfig().strictTools).toBe(true)
     })
   })
 })

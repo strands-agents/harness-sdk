@@ -1,6 +1,7 @@
 import {
   AgentResult,
   type AgentStreamEvent,
+  type CancelOptions,
   type InvocationState,
   type InvokableAgent,
   type InvokeArgs,
@@ -25,14 +26,16 @@ import {
 import { deepCopy } from '../types/json.js'
 import type { JSONValue } from '../types/json.js'
 import { McpClient } from '../mcp/index.js'
+import type { McpTool } from '../tools/mcp-tool.js'
 import { isValidToolName, type Tool } from '../tools/tool.js'
 import type { ToolChoice, ToolSpec } from '../tools/types.js'
 import { cloneSystemPrompt, systemPromptFromData } from '../types/messages.js'
 import { normalizeError, ConcurrentInvocationError } from '../errors.js'
 import { Model } from '../models/model.js'
-import { ModelProxy } from '../models/model-proxy.js'
+import { countRequestTokens, ModelProxy } from '../models/model-proxy.js'
 import { ModelRouter } from '../models/routing/router.js'
 import type { BaseModelConfig, StreamAggregatedResult, StreamOptions } from '../models/model.js'
+import type { AgentMetadata } from './agent-metadata.js'
 import { ModelPlugin } from '../plugins/model-plugin.js'
 import { totalPromptTokens, isModelStreamEvent } from '../models/streaming.js'
 import { InvocationContextImpl, reachedLimit, resolveInvocationContext } from './invocation-context.js'
@@ -106,7 +109,7 @@ import { AgentMetrics, Meter } from '../telemetry/meter.js'
 import { context as otelContext, propagation } from '@opentelemetry/api'
 import type { AttributeValue } from '@opentelemetry/api'
 import { logger } from '../logging/logger.js'
-import { CancelledError, CheckpointError } from '../errors.js'
+import { CancelledError, CheckpointError, StructuredOutputError } from '../errors.js'
 import { DefaultModelRetryStrategy } from '../retry/default-model-retry-strategy.js'
 import type { RetryStrategy } from '../retry/retry-strategy.js'
 import { warnOnDuplicateRetryStrategyTypes } from '../retry/retry-strategy.js'
@@ -182,9 +185,10 @@ export type AgentConfig = {
    */
   model?: Model<BaseModelConfig> | ModelRouter | string
   /**
-   * Model for the auxiliary side calls the SDK makes outside the main agent loop: context
-   * summarization, memory extraction, the HITL risk classifier, LLM steering, the goal judge, and
-   * the `web_fetch` analyst. Defaults to `model`, so leaving it unset changes nothing; set it
+   * Model for the auxiliary side calls the SDK makes outside the main agent loop:
+   * conversation-manager summarization, memory extraction, the HITL risk classifier, LLM steering,
+   * the goal judge, and the `web_fetch` analyst. The context manager's summarize strategy does
+   * not use it; it resolves `this model > model`. Defaults to `model`, so leaving it unset changes nothing; set it
    * (typically to a smaller, cheaper model) to move every side call off the main model at once.
    * Each side call resolves its model as `component's own model > auxModel > model`.
    * Accepts a Model or a string representing a Bedrock model ID, like `model`; a ModelRouter is
@@ -199,6 +203,13 @@ export type AgentConfig = {
    * {@link Agent} instances are automatically wrapped as tools via {@link Agent.asTool}.
    */
   tools?: ToolList
+  /**
+   * Send tool specs to the model sorted by name, on every request (model calls, context summaries, token
+   * counts), to keep prompt-cache prefixes stable when the same tools are registered in a different order,
+   * e.g. from MCP servers. Sorting happens before middleware, which can still reorder them. Defaults to
+   * false, which keeps registration order.
+   */
+  sortTools?: boolean
   /**
    * A system prompt which guides model behavior.
    */
@@ -228,7 +239,7 @@ export type AgentConfig = {
    * - `"agentic"`: (Experimental) Lets the model drive context management via injected tools,
    *   with a higher truncation threshold and summarization only on overflow.
    *   This mode may change in future versions.
-   * - `ContextManagerConfig` object: Custom strategy pipeline and stash configuration.
+   * - `ContextManagerConfig` object: Custom strategy pipeline and archive configuration.
    * - `ContextManager` instance: Used as-is. An instance binds to one agent; construct one per `Agent`.
    * - `false`: Explicitly disable context management (no compression, no offloading).
    *
@@ -396,6 +407,9 @@ type ToolsExecutionResult = { message: Message; afterToolsEvent: AfterToolsEvent
 /** Model reached by the middleware terminal; empty when the chain short-circuits or fails before reaching it. */
 type InvokedModelRef = { model?: Model }
 
+/** How a turn that ended without a tool call continues: retry with the structured output tool forced, or end. */
+type TextTurnOutcome = { retry: true } | { retry: false; stopReason: StopReason; structuredOutput?: JSONValue }
+
 /** Resolves `auxModel` like `model`: a string is a Bedrock model ID; a ModelRouter is rejected. */
 function resolveAuxModel(auxModel: Model | string | undefined): Model | undefined {
   if (typeof auxModel === 'string') return new BedrockModel({ modelId: auxModel })
@@ -527,6 +541,15 @@ export class Agent implements LocalAgent, InvokableAgent {
     return this._sessionId
   }
 
+  /**
+   * Metadata the agent passes to its model on `stream()`; the session id only when a session manager is attached.
+   *
+   * @internal
+   */
+  get agentMetadata(): AgentMetadata | undefined {
+    return this.sessionManager ? { sessionId: this.sessionId } : undefined
+  }
+
   private readonly _hooksRegistry: HookRegistryImplementation
   private readonly _middlewareRegistry: MiddlewareRegistry
   private readonly _pluginRegistry: PluginRegistry
@@ -537,6 +560,8 @@ export class Agent implements LocalAgent, InvokableAgent {
   private _isInvoking: boolean = false
   private _abortController = new AbortController()
   private _abortSignal: AbortSignal = this._abortController.signal
+  private _deferredCancel: boolean = false
+  private _cancelMessage?: string | undefined
   private _printer?: Printer
   private _structuredOutputSchema?: z.ZodSchema | undefined
   /** Tracer instance for creating and managing OpenTelemetry spans. */
@@ -608,7 +633,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     if (config?.contextManager === 'agentic') {
       tools.push(summarizeContextTool, truncateContextTool, pinContextTool)
     }
-    this._toolRegistry = new ToolRegistry(tools)
+    this._toolRegistry = new ToolRegistry(tools, { sortToolSpecs: config?.sortTools ?? false })
     this._mcpClients = mcpClients
 
     // Initialize hooks registry
@@ -861,17 +886,45 @@ export class Agent implements LocalAgent, InvokableAgent {
       return
     }
 
-    // Initialize MCP clients and register their tools
-    await Promise.all(
-      this._mcpClients.map(async (client) => {
-        const tools = await client.listTools()
-        this._toolRegistry.add(tools)
-        client.onToolsChanged = (oldTools, newTools): void => {
-          oldTools.forEach((name) => this._toolRegistry.remove(name))
-          this._toolRegistry.addOrReplace(newTools)
+    const preMcpToolNames = new Set(this._toolRegistry.list().map((tool) => tool.name))
+    // The client's own list of old names includes tools this agent skipped, so track what was registered.
+    const registeredByClient = this._mcpClients.map(() => [] as McpTool[])
+    const initializationByClient = this._mcpClients.map(() => ({
+      pending: undefined as McpTool[] | undefined,
+      refreshVersion: 0,
+      listingVersion: 0,
+      committed: false,
+    }))
+
+    // Start every listing concurrently, but buffer refreshes until registration commits in configured client order.
+    const initialToolsByClient = await Promise.all(
+      this._mcpClients.map((client, index) => {
+        const initialization = initializationByClient[index]!
+        client.onToolsChanged = (_oldTools, newTools): void => {
+          if (!initialization.committed) {
+            initialization.pending = newTools
+            initialization.refreshVersion += 1
+            return
+          }
+          registeredByClient[index] = this._replaceMcpTools(
+            client,
+            registeredByClient[index]!,
+            newTools,
+            this._findMcpInsertAnchor(index, registeredByClient, preMcpToolNames)
+          )
         }
+        initialization.listingVersion = initialization.refreshVersion
+        return client.listTools()
       })
     )
+    for (const [index, initialTools] of initialToolsByClient.entries()) {
+      const initialization = initializationByClient[index]!
+      const registered =
+        initialization.refreshVersion === initialization.listingVersion ? initialTools : initialization.pending!
+      this._toolRegistry.add(registered)
+      registeredByClient[index] = registered
+      initialization.committed = true
+    }
 
     // Register tools vended by the sandbox. The host default vends nothing. A tool
     // is skipped if the user already registered one with that name.
@@ -902,6 +955,53 @@ export class Agent implements LocalAgent, InvokableAgent {
   }
 
   /**
+   * Finds the first registered tool that should follow an MCP client's configured slot.
+   *
+   * @param clientIndex - The client's position in the configured MCP client list
+   * @param registeredByClient - The tools currently owned by each MCP client
+   * @param preMcpToolNames - Tool names registered before MCP initialization
+   * @returns The tool to insert before, or undefined to append
+   */
+  private _findMcpInsertAnchor(
+    clientIndex: number,
+    registeredByClient: readonly McpTool[][],
+    preMcpToolNames: ReadonlySet<string>
+  ): Tool | undefined {
+    const mcpTools = new Set<Tool>(registeredByClient.flat())
+    const precedingMcpTools = new Set<Tool>(registeredByClient.slice(0, clientIndex).flat())
+    return this._toolRegistry.list().find((tool) => {
+      if (precedingMcpTools.has(tool)) return false
+      return mcpTools.has(tool) || !preMcpToolNames.has(tool.name)
+    })
+  }
+  /**
+   * Swaps an MCP client's registered tools for its refreshed list. A refreshed tool that is invalid, or that takes the
+   * name of a tool from another source such as `retrieve_context`, is skipped with a warning; the rest of the refresh
+   * applies. A skipped tool comes back only on this client's next refresh, even if the other source drops the name first.
+   *
+   * @param client - The MCP client whose tools changed
+   * @param current - The tools the client has registered
+   * @param refreshed - The client's refreshed tools
+   * @param insertBefore - Where to insert when the client currently has no registered tools
+   * @returns The tools the client has registered afterwards
+   */
+  private _replaceMcpTools(
+    client: McpClient,
+    current: McpTool[],
+    refreshed: McpTool[],
+    insertBefore?: Tool
+  ): McpTool[] {
+    const skipped = this._toolRegistry.swap(current, refreshed, insertBefore)
+    for (const { tool, error } of skipped) {
+      logger.warn(
+        `client=<${client.clientName}>, tool_name=<${tool.name}>, error=<${error.message}> | skipping refreshed mcp tool`
+      )
+    }
+    const skippedTools = new Set(skipped.map(({ tool }) => tool))
+    return refreshed.filter((tool) => !skippedTools.has(tool))
+  }
+
+  /**
    * Acquires the invocation lock. Throws if an invocation is already in progress.
    * Callers must release via try/finally with `this._isInvoking = false`.
    */
@@ -919,7 +1019,7 @@ export class Agent implements LocalAgent, InvokableAgent {
    * Called at cancellation checkpoints within the agent loop.
    */
   private _throwIfCancelled(): void {
-    if (this.isCancelled) {
+    if (this.isAborted) {
       throw new CancelledError()
     }
   }
@@ -1047,45 +1147,90 @@ export class Agent implements LocalAgent, InvokableAgent {
   }
 
   /**
-   * Cancels the current agent invocation cooperatively.
+   * Cancels the current agent invocation cooperatively. Idempotent; no-op for the
+   * invocation when the agent is not invoking (`cancelBackgroundTasks` still applies).
+   * The pending `invoke`/`stream` resolves with `stopReason: 'cancelled'`, or with its natural
+   * `stopReason` if it had already finished its turn and was only waiting for background tasks.
    *
-   * The agent will stop at the next cancellation-safe point:
-   * - During model response streaming
-   * - Before tool execution
-   * - Between sequential tool executions
-   * - At the top of each agent loop cycle
+   * The agent stops at the next cancellation-safe point (model streaming, before
+   * tools, between sequential tool calls, or the top of a loop cycle). A tool
+   * already executing runs to completion unless it checks `context.cancelSignal`.
+   * Hook callbacks can read `event.agent.cancelSignal.aborted` for the same.
    *
-   * If a tool is already executing, it will run to completion unless
-   * the tool checks `context.cancelSignal` internally.
+   * For cancellation driven from outside the agent, prefer the `cancelSignal`
+   * option on `invoke` / `stream`.
    *
-   * Hook callbacks can check `event.agent.cancelSignal.aborted` to detect
-   * cancellation and adjust their behavior accordingly.
-   *
-   * The stream/invoke call will return an AgentResult with `stopReason: 'cancelled'`.
-   * If the agent is not currently invoking, this is a no-op.
+   * @param options - See {@link CancelOptions} for `message`, `afterCurrentTools`, and `cancelBackgroundTasks`.
    *
    * @example
    * ```typescript
-   * const agent = new Agent({ model, tools })
-   *
-   * // Cancel after 5 seconds
    * setTimeout(() => agent.cancel(), 5000)
    * const result = await agent.invoke('Do something')
    * console.log(result.stopReason) // 'cancelled'
    * ```
+   *
+   * @example
+   * ```typescript
+   * // From inside a tool: let the rest of the batch finish, then stop.
+   * context.agent.cancel({ message: 'Task complete', afterCurrentTools: true })
+   * ```
    */
-  public cancel(): void {
-    if (this._isInvoking) {
+  public cancel(options?: CancelOptions): void {
+    if (options?.cancelBackgroundTasks && this._initialized) {
+      this._backgroundTasks?.cancelAll()
+    }
+    if (!this._isInvoking) {
+      return
+    }
+    if (options?.message !== undefined) {
+      this._cancelMessage = options.message
+    }
+    if (options?.afterCurrentTools) {
+      this._deferredCancel = true
+    } else {
       this._abortController.abort()
     }
   }
 
   /**
-   * Whether the current invocation has been cancelled.
-   * Returns `false` when the agent is idle.
+   * Whether the invocation's abort signal has fired. A deferred cancel
+   * (`afterCurrentTools: true`) does not flip this until it escalates to an
+   * immediate cancel; use together with `_deferredCancel` when the question is
+   * "has cancellation been requested in any form". Returns `false` when the
+   * agent is idle.
    */
-  private get isCancelled(): boolean {
+  private get isAborted(): boolean {
     return this._abortSignal.aborted
+  }
+
+  /**
+   * Whether cancellation has been requested in any form, including a deferred cancel.
+   *
+   * @internal
+   */
+  get _cancelRequested(): boolean {
+    return this._deferredCancel || this.isAborted
+  }
+
+  /**
+   * Assistant message carrying the message passed to {@link Agent.cancel},
+   * or undefined when the cancellation carried none.
+   */
+  private get cancelResultMessage(): Message | undefined {
+    if (this._cancelMessage === undefined || this._cancelMessage.length === 0) {
+      return undefined
+    }
+    return new Message({ role: 'assistant', content: [new TextBlock(this._cancelMessage)] })
+  }
+
+  /**
+   * Clears cancellation state so it cannot leak into the next invocation.
+   */
+  private resetCancelState(): void {
+    this._abortController = new AbortController()
+    this._abortSignal = this._abortController.signal
+    this._deferredCancel = false
+    this._cancelMessage = undefined
   }
 
   /**
@@ -1221,10 +1366,10 @@ export class Agent implements LocalAgent, InvokableAgent {
 
       while (true) {
         // Fresh AbortController per iteration, composed with any external signal.
-        this._abortController = new AbortController()
-        this._abortSignal = resolvedOptions?.cancelSignal
-          ? AbortSignal.any([this._abortController.signal, resolvedOptions.cancelSignal])
-          : this._abortController.signal
+        this.resetCancelState()
+        if (resolvedOptions?.cancelSignal) {
+          this._abortSignal = AbortSignal.any([this._abortController.signal, resolvedOptions.cancelSignal])
+        }
 
         // Process interrupt responses before middleware runs so context.interrupt() can find them
         const interruptResponses = this._extractInterruptResponses(currentArgs)
@@ -1232,8 +1377,15 @@ export class Agent implements LocalAgent, InvokableAgent {
           this._interruptState.resume(interruptResponses)
         }
 
+        const inputMessages = this._normalizeInput(currentArgs)
+
         // Hooks fire outside middleware — always, even on short-circuit.
-        const beforeInvocationEvent = new BeforeInvocationEvent({ agent: this, invocationContext, invocationState })
+        const beforeInvocationEvent = new BeforeInvocationEvent({
+          agent: this,
+          invocationContext,
+          invocationState,
+          messages: [...inputMessages],
+        })
         yield await this._invokeCallbacks(beforeInvocationEvent)
 
         if (beforeInvocationEvent.cancel) {
@@ -1270,6 +1422,7 @@ export class Agent implements LocalAgent, InvokableAgent {
             resolvedOptions,
             invocationState,
             invocationContext,
+            beforeInvocationEvent.messages,
             continuationEvent
           )
         } catch (error) {
@@ -1331,6 +1484,8 @@ export class Agent implements LocalAgent, InvokableAgent {
         continuationEvent,
         new Error('Agent stream closed before continuation input was incorporated into agent history')
       )
+      // Reset here, after AgentResultEvent, so consumers can still read cancelSignal on it.
+      this.resetCancelState()
       this._isInvoking = false
     }
   }
@@ -1344,6 +1499,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     options: InvokeOptions,
     invocationState: InvocationState,
     invocationContext: InvocationContextImpl,
+    inputMessages: Message[],
     continuationEvent?: AfterInvocationEvent
   ): AsyncGenerator<AgentStreamEvent, AgentResult, undefined> {
     // Snapshot so a gate that re-reads its response after next() still resolves even if a tool cycle called deactivate().
@@ -1363,14 +1519,24 @@ export class Agent implements LocalAgent, InvokableAgent {
         AgentStreamStage,
         context,
         async function* (ctx: AgentStreamContext): AsyncGenerator<AgentStreamEvent, AgentStreamResult, undefined> {
-          const streamArgs = continuations.combine(continuationEvent, ctx.args, (continuationArgs) =>
-            self._normalizeInput(continuationArgs)
-          )
+          const combineWith = (base: InvokeArgs): InvokeArgs =>
+            continuations.combine(continuationEvent, base, (continuationArgs) => self._normalizeInput(continuationArgs))
+
+          // Middleware replacements provide the continuation base. Otherwise, continuations apply to
+          // post-hook messages; without either, post-hook messages are appended separately.
+          const middlewareReplacedArgs = ctx.args !== args
+          const combinedArgs = combineWith(ctx.args)
+          const continuationApplied = combinedArgs !== ctx.args
+
+          const streamArgs = continuationApplied && !middlewareReplacedArgs ? combineWith(inputMessages) : combinedArgs
+          const historyMessages = !continuationApplied && !middlewareReplacedArgs ? inputMessages : undefined
+
           const result = yield* self._streamCore(
             streamArgs,
             ctx.options,
             invocationContext,
-            streamArgs === ctx.args ? undefined : continuationEvent
+            continuationApplied ? continuationEvent : undefined,
+            historyMessages
           )
           return { result }
         }
@@ -1417,9 +1583,10 @@ export class Agent implements LocalAgent, InvokableAgent {
     args: InvokeArgs,
     options: InvokeOptions | undefined,
     invocationContext: InvocationContextImpl,
-    continuationEvent?: AfterInvocationEvent
+    continuationEvent?: AfterInvocationEvent,
+    inputMessages?: Message[]
   ): AsyncGenerator<AgentStreamEvent, AgentResult, undefined> {
-    const streamGenerator = this._stream(args, options, invocationContext, continuationEvent)
+    const streamGenerator = this._stream(args, options, invocationContext, continuationEvent, inputMessages)
     let caughtError: Error | undefined
     let iterationResult: IteratorResult<AgentStreamEvent, AgentResult>
     try {
@@ -1462,10 +1629,6 @@ export class Agent implements LocalAgent, InvokableAgent {
         }
         drainResult = await streamGenerator.next()
       }
-
-      // Reset controller and signal for next iteration / invocation
-      this._abortController = new AbortController()
-      this._abortSignal = this._abortController.signal
     }
 
     return iterationResult.value
@@ -1591,9 +1754,11 @@ export class Agent implements LocalAgent, InvokableAgent {
     args: InvokeArgs,
     options: InvokeOptions | undefined,
     invocationContext: InvocationContextImpl,
-    continuationEvent?: AfterInvocationEvent
+    continuationEvent?: AfterInvocationEvent,
+    inputMessages?: Message[]
   ): AsyncGenerator<AgentStreamEvent, AgentResult, undefined> {
     let currentArgs: InvokeArgs | undefined = args
+    let pendingInputMessages = inputMessages
     let result: AgentResult | undefined
     const messageCountAtStart = this.messages.length
 
@@ -1634,20 +1799,28 @@ export class Agent implements LocalAgent, InvokableAgent {
       throw new TypeError('Agent is in an interrupted state. Resume by invoking with interruptResponse content blocks.')
     }
 
+    // Control-only resumes continue an existing cycle and must not append new hook input.
+    if (resumeCheckpoint || interruptResponses.length > 0) {
+      pendingInputMessages = undefined
+    }
+
     // Normalize input to get the user messages for telemetry
-    const inputMessages = this._normalizeInput(args)
+    const traceInputMessages = pendingInputMessages ?? this._normalizeInput(args)
 
     // Start agent trace span
     this._meter.startNewInvocation()
     const agentModelId = this.model.modelId
     const agentSpanOptions: Parameters<Tracer['startAgentSpan']>[0] = {
-      messages: inputMessages,
+      messages: traceInputMessages,
       agentName: this.name,
       agentId: this.id,
       tools: this.tools,
     }
     if (agentModelId) agentSpanOptions.modelId = agentModelId
     if (this.systemPrompt !== undefined) agentSpanOptions.systemPrompt = this.systemPrompt
+    if (this.tools.length > 0) {
+      agentSpanOptions.toolsConfig = Object.fromEntries(this.tools.map((tool) => [tool.name, tool.toolSpec]))
+    }
     const agentSpan = this._tracer.startAgentSpan(agentSpanOptions)
 
     let caughtError: Error | undefined
@@ -1699,8 +1872,8 @@ export class Agent implements LocalAgent, InvokableAgent {
 
         try {
           // Normalize input and append user messages on first invocation only
-          if (currentArgs !== undefined) {
-            const messagesToAppend = this._normalizeInput(currentArgs)
+          if (currentArgs !== undefined || pendingInputMessages !== undefined) {
+            const messagesToAppend = pendingInputMessages ?? this._normalizeInput(currentArgs)
             if (continuationEvent) {
               yield* await this._appendContinuationMessages(
                 messagesToAppend,
@@ -1714,6 +1887,7 @@ export class Agent implements LocalAgent, InvokableAgent {
               }
             }
             currentArgs = undefined
+            pendingInputMessages = undefined
           }
 
           // Check if we're resuming from a tool interrupt
@@ -1735,18 +1909,19 @@ export class Agent implements LocalAgent, InvokableAgent {
 
             if (modelResult.stopReason !== 'toolUse') {
               // Validate before closing the span so the cycle span records a failure.
-              const structuredOutput = this._structuredOutputFromText(
-                modelResult.message,
+              const textTurn = this._resolveTextTurn(
+                modelResult,
                 structuredOutputTool,
-                structuredOutputChoice
+                structuredOutputChoice,
+                invocationContext
               )
 
               closeCycle()
 
-              // Schema set, model ignored the tool — drop the response and force the tool next cycle.
+              // Schema set, no structured output yet — drop the response and force the tool next cycle.
               // Appending the plain-text turn here would leave the conversation ending on an
               // assistant message, which providers like Bedrock reject as assistant prefill.
-              if (structuredOutputTool && !structuredOutputChoice) {
+              if (textTurn.retry) {
                 structuredOutputChoice = { tool: { name: STRUCTURED_OUTPUT_TOOL_NAME } }
                 logger.debug(
                   'structured output schema set but model responded with plain text; forcing tool use on next cycle'
@@ -1754,22 +1929,24 @@ export class Agent implements LocalAgent, InvokableAgent {
                 continue
               }
 
-              // Normal end of turn, carrying any structured output the retry returned as text.
+              // End of turn, carrying any structured output the retry returned as text.
               yield this._appendMessage(modelResult.message, invocationState, invocationContext)
               result = new AgentResult({
                 invocationContext,
-                stopReason: modelResult.stopReason,
+                stopReason: textTurn.stopReason,
                 lastMessage: modelResult.message,
                 traces: this._tracer.localTraces,
-                ...(structuredOutput !== undefined && { structuredOutput }),
+                ...(textTurn.structuredOutput !== undefined && { structuredOutput: textTurn.structuredOutput }),
                 metrics: this._meter.metrics,
                 invocationState,
               })
               return result
             }
 
+            this._recordForcedToolUseFailure(modelResult.message, structuredOutputChoice, invocationContext)
+
             // Cancel before tool execution: create error results for all pending tools
-            if (this.isCancelled) {
+            if (this.isAborted) {
               const toolUseBlocks = modelResult.message.content.filter(
                 (block): block is ToolUseBlock => block.type === 'toolUseBlock'
               )
@@ -1788,10 +1965,16 @@ export class Agent implements LocalAgent, InvokableAgent {
 
               closeCycle()
 
+              // Always close with an assistant message so history stays reinvokable (no two user turns in a row).
+              const cancelMessage =
+                this.cancelResultMessage ??
+                new Message({ role: 'assistant', content: [new TextBlock('Cancelled by user')] })
+              yield this._appendMessage(cancelMessage, invocationState, invocationContext)
+
               result = new AgentResult({
                 invocationContext,
                 stopReason: 'cancelled',
-                lastMessage: modelResult.message,
+                lastMessage: cancelMessage,
                 traces: this._tracer.localTraces,
                 metrics: this._meter.metrics,
                 invocationState,
@@ -1803,7 +1986,7 @@ export class Agent implements LocalAgent, InvokableAgent {
             // yet. Skipped when resuming from an afterModel checkpoint: the
             // assistant tool-use message was not persisted (deferred append), so
             // this cycle re-invoked the model to regenerate it — now fall through
-            // to run the tools. Cancel wins — the isCancelled branch above returns
+            // to run the tools. Cancel wins — the isAborted branch above returns
             // before we reach here.
             if (this._checkpointing) {
               const priorResumePosition = resumePosition
@@ -1846,9 +2029,14 @@ export class Agent implements LocalAgent, InvokableAgent {
 
           // Tools were skipped (not executed) — preserve pending state so the next resume
           // can run them.
-          if (this.isCancelled && toolsResult.toolsSkipped && this._interruptState.pendingToolExecution) {
+          if (this.isAborted && toolsResult.toolsSkipped && this._interruptState.pendingToolExecution) {
             continue
           }
+
+          // Message-added hooks may offload the JSON block needed for structured output.
+          const structuredOutput = structuredOutputTool
+            ? this._extractStructuredOutput(assistantMessage, toolResultMessage)
+            : undefined
 
           /**
            * Deferred append: both messages are added AFTER tool execution completes.
@@ -1869,6 +2057,13 @@ export class Agent implements LocalAgent, InvokableAgent {
           }
 
           closeCycle()
+
+          this._recordStructuredOutputToolFailure(
+            assistantMessage,
+            structuredOutput,
+            structuredOutputTool,
+            invocationContext
+          )
 
           // Hook requested halt with content: exit without calling the model again.
           const { afterToolsEvent } = toolsResult
@@ -1895,10 +2090,29 @@ export class Agent implements LocalAgent, InvokableAgent {
             return result
           }
 
+          // Cancel observed after the batch: siblings have finished, so stop here
+          // instead of calling the model again. Wins over a structured-output stop
+          // so the cancel's terminal message is honored.
+          if (this._deferredCancel || this.isAborted) {
+            // Always close with an assistant message so history stays reinvokable (no two user turns in a row).
+            const cancelMessage =
+              this.cancelResultMessage ??
+              new Message({ role: 'assistant', content: [new TextBlock('Cancelled by user')] })
+            yield this._appendMessage(cancelMessage, invocationState, invocationContext)
+
+            result = new AgentResult({
+              invocationContext,
+              stopReason: 'cancelled',
+              lastMessage: cancelMessage,
+              traces: this._tracer.localTraces,
+              structuredOutput,
+              metrics: this._meter.metrics,
+              invocationState,
+            })
+            return result
+          }
+
           // Structured output captured: exit
-          const structuredOutput = structuredOutputTool
-            ? this._extractStructuredOutput(assistantMessage, toolResultMessage)
-            : undefined
           if (structuredOutput !== undefined) {
             result = new AgentResult({
               invocationContext,
@@ -1914,9 +2128,8 @@ export class Agent implements LocalAgent, InvokableAgent {
 
           // afterTools checkpoint: tools finished, next model call pending. Placed
           // after the endTurn / structured-output returns so it only fires when the
-          // loop would continue. Cancel wins: skip when cancelled and let the next
-          // iteration's cancellation check return `cancelled`.
-          if (this._checkpointing && !this.isCancelled) {
+          // loop would continue.
+          if (this._checkpointing) {
             result = new AgentResult({
               invocationContext,
               stopReason: 'checkpoint',
@@ -1939,10 +2152,8 @@ export class Agent implements LocalAgent, InvokableAgent {
       if (error instanceof CancelledError) {
         // Cancelled during model streaming or at the top of a cycle.
         // No partial messages have been appended (deferred append pattern).
-        const cancelMessage = new Message({
-          role: 'assistant',
-          content: [new TextBlock('Cancelled by user')],
-        })
+        const cancelMessage =
+          this.cancelResultMessage ?? new Message({ role: 'assistant', content: [new TextBlock('Cancelled by user')] })
         if (this._hasOpenUserTurn()) {
           yield this._appendMessage(cancelMessage, invocationState, invocationContext)
         }
@@ -1963,6 +2174,8 @@ export class Agent implements LocalAgent, InvokableAgent {
         for (const interrupt of error.interrupts) {
           this._interruptState.registerInterrupt(interrupt)
         }
+        // Activate before yielding so a consumer that stops at an InterruptEvent can still resume.
+        this._interruptState.activate()
         // Fan out one event per interrupt. Each event exposes `interrupt.source` so
         // consumers can filter by origin (tool callback vs hook callback) without
         // subscribing to separate event types.
@@ -1978,11 +2191,9 @@ export class Agent implements LocalAgent, InvokableAgent {
       // If cancelled but the catch block was bypassed (generator terminated
       // via .return() when the consumer breaks out of for-await), close an
       // existing user turn so the agent can be reinvoked.
-      if (!caughtError && !result && this.isCancelled) {
-        const cancelMessage = new Message({
-          role: 'assistant',
-          content: [new TextBlock('Cancelled by user')],
-        })
+      if (!caughtError && !result && this.isAborted) {
+        const cancelMessage =
+          this.cancelResultMessage ?? new Message({ role: 'assistant', content: [new TextBlock('Cancelled by user')] })
         if (this._hasOpenUserTurn()) {
           yield this._appendMessage(cancelMessage, invocationState, invocationContext)
         }
@@ -2003,22 +2214,97 @@ export class Agent implements LocalAgent, InvokableAgent {
   }
 
   /**
+   * Decides how a turn that ended without a tool call continues. With a schema set and no structured output yet,
+   * the turn is retried with the structured output tool forced, unless a limit is reached: the turn then ends with
+   * that limit's stop reason, keeping the model's reply as the result's last message.
+   *
+   * @param modelResult - The model call that ended the turn
+   * @param structuredOutputTool - The structured output tool, if a schema is set
+   * @param structuredOutputChoice - The tool choice the turn was forced with, if it was the retry
+   * @param invocationContext - The state of the request the turn ran in
+   * @returns Whether to retry, or the stop reason and any structured output to end the turn with
+   * @throws StructuredOutputError if the retry produced no valid structured output and no
+   *   `structuredOutputAttempts` limit applies
+   */
+  private _resolveTextTurn(
+    modelResult: StreamAggregatedResult,
+    structuredOutputTool: StructuredOutputTool | undefined,
+    structuredOutputChoice: ToolChoice | undefined,
+    invocationContext: InvocationContextImpl
+  ): TextTurnOutcome {
+    if (!structuredOutputTool) return { retry: false, stopReason: modelResult.stopReason }
+    const structuredOutput =
+      structuredOutputChoice &&
+      this._structuredOutputFromForcedText(modelResult.message, structuredOutputTool, invocationContext)
+    if (structuredOutput !== undefined) return { retry: false, stopReason: modelResult.stopReason, structuredOutput }
+    const limitStopReason = reachedLimit(invocationContext)
+    return limitStopReason ? { retry: false, stopReason: limitStopReason } : { retry: true }
+  }
+
+  /**
    * Validates the text that ended the structured output retry, which may be JSON when the provider could not force
    * the tool.
    *
-   * @param message - The assistant message that ended the turn without a tool call
-   * @param structuredOutputTool - The structured output tool, if a schema is set
-   * @param structuredOutputChoice - The tool choice the turn was forced with, if it was the retry
-   * @returns The validated structured output, or undefined if the turn was not the structured output retry
-   * @throws StructuredOutputError if the retry produced no valid structured output
+   * @param message - The assistant message that ended the retry without a tool call
+   * @param structuredOutputTool - The structured output tool
+   * @param invocationContext - The state of the request the retry ran in
+   * @returns The validated structured output, or undefined if the retry failed under a `structuredOutputAttempts`
+   *   limit, which then counts the failure
+   * @throws StructuredOutputError if the retry produced no valid structured output and no
+   *   `structuredOutputAttempts` limit applies
    */
-  private _structuredOutputFromText(
+  private _structuredOutputFromForcedText(
     message: Message,
-    structuredOutputTool: StructuredOutputTool | undefined,
-    structuredOutputChoice: ToolChoice | undefined
+    structuredOutputTool: StructuredOutputTool,
+    invocationContext: InvocationContextImpl
   ): JSONValue | undefined {
-    if (!structuredOutputTool || !structuredOutputChoice) return undefined
-    return structuredOutputTool.resultFromText(message)
+    try {
+      return structuredOutputTool.resultFromText(message)
+    } catch (error) {
+      if (!(error instanceof StructuredOutputError) || !invocationContext.hasLimit('structuredOutputAttempts')) {
+        throw error
+      }
+      invocationContext.recordStructuredOutputFailure()
+      logger.debug('structured output retry failed | counted toward the structured output attempt limit')
+      return undefined
+    }
+  }
+
+  /**
+   * Counts a failed structured output attempt for a forced model response that calls only other tools. Counted when
+   * the response arrives, so an interrupt or checkpoint before its tools run can't lose the count.
+   *
+   * @param message - The assistant message the model returned
+   * @param structuredOutputChoice - The tool choice the turn was forced with, if any
+   * @param invocationContext - The state of the request the turn ran in
+   */
+  private _recordForcedToolUseFailure(
+    message: Message,
+    structuredOutputChoice: ToolChoice | undefined,
+    invocationContext: InvocationContextImpl
+  ): void {
+    if (structuredOutputChoice && structuredOutputToolUseIds(message).size === 0) {
+      invocationContext.recordStructuredOutputFailure()
+    }
+  }
+
+  /**
+   * Counts a failed structured output attempt for a tool turn whose structured output tool calls all failed.
+   *
+   * @param toolUseMessage - The assistant message whose tool calls ran
+   * @param structuredOutput - The structured output extracted from every result of the turn, including results
+   *   completed before an interrupt, if any
+   * @param structuredOutputTool - The structured output tool, if a schema is set
+   * @param invocationContext - The state of the request the turn ran in
+   */
+  private _recordStructuredOutputToolFailure(
+    toolUseMessage: Message,
+    structuredOutput: unknown,
+    structuredOutputTool: StructuredOutputTool | undefined,
+    invocationContext: InvocationContextImpl
+  ): void {
+    if (!structuredOutputTool || structuredOutput !== undefined) return
+    if (structuredOutputToolUseIds(toolUseMessage).size > 0) invocationContext.recordStructuredOutputFailure()
   }
 
   /**
@@ -2029,14 +2315,10 @@ export class Agent implements LocalAgent, InvokableAgent {
    * @returns The parsed structured output, or undefined if not found
    */
   private _extractStructuredOutput(toolUseMessage: Message, toolResultMessage: Message): unknown | undefined {
-    const toolUse = toolUseMessage.content.find(
-      (block): block is ToolUseBlock => block.type === 'toolUseBlock' && block.name === STRUCTURED_OUTPUT_TOOL_NAME
-    )
-    if (!toolUse) return undefined
-
+    const outputToolUseIds = structuredOutputToolUseIds(toolUseMessage)
     const toolResult = toolResultMessage.content.find(
       (block): block is ToolResultBlock =>
-        block.type === 'toolResultBlock' && block.toolUseId === toolUse.toolUseId && block.status === 'success'
+        block.type === 'toolResultBlock' && outputToolUseIds.has(block.toolUseId) && block.status === 'success'
     )
     if (!toolResult) return undefined
 
@@ -2055,7 +2337,6 @@ export class Agent implements LocalAgent, InvokableAgent {
     invocationState: InvocationState,
     invocationContext: InvocationContextImpl
   ): AgentResult {
-    this._interruptState.activate()
     return new AgentResult({
       invocationContext,
       stopReason: 'interrupt',
@@ -2213,15 +2494,6 @@ export class Agent implements LocalAgent, InvokableAgent {
     toolChoice?: ToolChoice,
     structuredOutputSchema?: z.ZodSchema
   ): AsyncGenerator<AgentStreamEvent, StreamAggregatedResult, undefined> {
-    const toolSpecs = this._toolRegistry.list().map((tool) => tool.toolSpec)
-    const streamOptions: StreamOptions = { toolSpecs, modelState: this.modelState }
-    if (this.systemPrompt !== undefined) {
-      streamOptions.systemPrompt = this.systemPrompt
-    }
-    if (toolChoice) {
-      streamOptions.toolChoice = toolChoice
-    }
-
     let attemptCount = 1
     while (true) {
       // An abort during retry backoff must stop before another model attempt begins.
@@ -2230,7 +2502,7 @@ export class Agent implements LocalAgent, InvokableAgent {
       let projectedInputTokens: number | undefined
       try {
         // Context management continues to size against the agent's default model.
-        projectedInputTokens = await this._estimateInputTokens(streamOptions)
+        projectedInputTokens = await this._estimateInputTokens()
       } catch (error) {
         logger.debug(`error=<${error}> | token estimation failed, proceeding without estimate`)
       }
@@ -2290,7 +2562,7 @@ export class Agent implements LocalAgent, InvokableAgent {
 
       if (modelContinuation !== undefined) {
         try {
-          projectedInputTokens = await this._estimateInputTokens(streamOptions)
+          projectedInputTokens = await this._estimateInputTokens()
         } catch (error) {
           projectedInputTokens = undefined
           logger.debug(
@@ -2324,7 +2596,7 @@ export class Agent implements LocalAgent, InvokableAgent {
         })
 
         if (result.redaction?.userMessage) {
-          this._redactLastMessage(result.redaction.userMessage)
+          this._redactLastUserMessage(result.redaction.userMessage)
         }
 
         const stopData: ModelStopData = {
@@ -2416,7 +2688,7 @@ export class Agent implements LocalAgent, InvokableAgent {
       model: selectedModel,
       messages: this.messages.map((msg) => msg.clone()),
       ...(this.systemPrompt !== undefined && { systemPrompt: cloneSystemPrompt(this.systemPrompt) }),
-      toolSpecs: deepCopy(this._toolRegistry.list().map((tool) => tool.toolSpec)) as unknown as ToolSpec[],
+      toolSpecs: deepCopy(this._toolRegistry.toolSpecs()) as unknown as ToolSpec[],
       ...(toolChoice !== undefined && { toolChoice: deepCopy(toolChoice) as unknown as ToolChoice }),
       invocationState,
       ...(projectedInputTokens !== undefined && { projectedInputTokens }),
@@ -2458,8 +2730,9 @@ export class Agent implements LocalAgent, InvokableAgent {
             ...(ctx.toolChoice && { toolChoice: ctx.toolChoice }),
             // Omitted when zero, so an ordinary call's options are unchanged.
             ...(ctx.dynamicTrailingBlocks ? { dynamicTrailingBlocks: ctx.dynamicTrailingBlocks } : {}),
-            ...(self.sessionManager ? { agentMetadata: { sessionId: self.sessionId } } : {}),
+            ...(self.agentMetadata && { agentMetadata: self.agentMetadata }),
             ...(ctx.structuredOutputSchema && { structuredOutputSchema: ctx.structuredOutputSchema }),
+            ...(ctx.deferredTools?.size ? { deferredTools: ctx.deferredTools } : {}),
           }
           const gen = self._streamFromModel(
             ctx.model,
@@ -2533,8 +2806,8 @@ export class Agent implements LocalAgent, InvokableAgent {
     invocationState: InvocationState,
     invocationContext: InvocationContextImpl
   ): AsyncGenerator<AgentStreamEvent, StreamAggregatedResult, undefined> {
-    messages = normalizeToolUseNames(messages)
-    const proxy = new ModelProxy(model)
+    messages = fillEmptyAssistantMessages(normalizeToolUseNames(messages))
+    const proxy = new ModelProxy(model, this)
     const streamGenerator = proxy.streamAggregated(messages, streamOptions, invocationContext)
     try {
       let result = await streamGenerator.next()
@@ -2617,7 +2890,7 @@ export class Agent implements LocalAgent, InvokableAgent {
         ? typeof beforeToolsEvent.cancel === 'string'
           ? beforeToolsEvent.cancel
           : 'Tool cancelled by hook'
-        : this.isCancelled
+        : this.isAborted
           ? 'Tool execution cancelled'
           : undefined
 
@@ -2680,7 +2953,7 @@ export class Agent implements LocalAgent, InvokableAgent {
   }
 
   /**
-   * Redacts the last message in the conversation history.
+   * Redacts the last user message in the conversation history.
    * Called when guardrails block user input and redaction is enabled.
    *
    * Follows the redaction strategy:
@@ -2691,45 +2964,44 @@ export class Agent implements LocalAgent, InvokableAgent {
    *
    * @param redactMessage - The redaction message to replace the content with
    */
-  private _redactLastMessage(redactMessage: string): void {
-    // Find and redact the last message
-    const lastIndex = this.messages.length - 1
-    if (lastIndex >= 0) {
-      const lastMessage = this.messages[lastIndex]
-      if (lastMessage && lastMessage.role === 'user') {
-        // Collect only tool result blocks with redacted content
-        const redactedContent: ContentBlock[] = []
-        for (const block of lastMessage.content) {
-          if (block.type === 'toolResultBlock') {
-            // Preserve tool result block structure, only redact its content
-            redactedContent.push(
-              new ToolResultBlock({
-                toolUseId: block.toolUseId,
-                status: block.status,
-                content: [new TextBlock(redactMessage)],
-              })
-            )
-          }
-        }
+  private _redactLastUserMessage(redactMessage: string): void {
+    // Session managers and hooks may append non-user messages after the user turn.
+    let lastUserIndex = this.messages.length - 1
+    while (lastUserIndex >= 0 && this.messages[lastUserIndex]!.role !== 'user') {
+      lastUserIndex--
+    }
+    if (lastUserIndex < 0) {
+      logger.warn('received input redaction but no user message found | redaction skipped')
+      return
+    }
+    const lastUserMessage = this.messages[lastUserIndex]!
 
-        // If no tool result blocks were found, replace entire content with redaction message
-        if (redactedContent.length === 0) {
-          redactedContent.push(new TextBlock(redactMessage))
-        }
-
-        this.messages[lastIndex] = new Message({
-          role: 'user',
-          content: redactedContent,
-          // Redaction rewrites content but it's the same logical message, so keep its tracking id.
-          trackingId: lastMessage.trackingId,
-        })
-      } else if (lastMessage) {
-        // Unexpected state: redaction requested but last message is not from user
-        logger.warn(
-          `role=<${lastMessage.role}> | received input redaction but last message is not from user | redaction skipped`
+    // Collect only tool result blocks with redacted content
+    const redactedContent: ContentBlock[] = []
+    for (const block of lastUserMessage.content) {
+      if (block.type === 'toolResultBlock') {
+        // Preserve tool result block structure, only redact its content
+        redactedContent.push(
+          new ToolResultBlock({
+            toolUseId: block.toolUseId,
+            status: block.status,
+            content: [new TextBlock(redactMessage)],
+          })
         )
       }
     }
+
+    // If no tool result blocks were found, replace entire content with redaction message
+    if (redactedContent.length === 0) {
+      redactedContent.push(new TextBlock(redactMessage))
+    }
+
+    this.messages[lastUserIndex] = new Message({
+      role: 'user',
+      content: redactedContent,
+      // Redaction rewrites content but it's the same logical message, so keep its tracking id.
+      trackingId: lastUserMessage.trackingId,
+    })
   }
 
   /**
@@ -2740,10 +3012,9 @@ export class Agent implements LocalAgent, InvokableAgent {
    * estimates only new messages added after it. Falls back to full estimation when no metadata is
    * available (cold start or first call).
    *
-   * @param streamOptions - The stream options containing system prompt and tool specs
    * @returns Estimated input token count
    */
-  private async _estimateInputTokens(streamOptions: StreamOptions): Promise<number> {
+  private async _estimateInputTokens(): Promise<number> {
     // Find the last assistant message with usage metadata
     let lastAssistantIdx = -1
     for (let i = this.messages.length - 1; i >= 0; i--) {
@@ -2762,13 +3033,10 @@ export class Agent implements LocalAgent, InvokableAgent {
         estimate = knownBaseline
       } else {
         // System prompt and tool spec tokens are already included in the baseline from the prior model call
-        estimate = knownBaseline + (await this.model.countTokens(newMessages))
+        estimate = knownBaseline + (await new ModelProxy(this.model).countTokens(newMessages))
       }
     } else {
-      estimate = await this.model.countTokens(this.messages, {
-        ...(streamOptions.systemPrompt !== undefined && { systemPrompt: streamOptions.systemPrompt }),
-        ...(streamOptions.toolSpecs !== undefined && { toolSpecs: streamOptions.toolSpecs }),
-      })
+      estimate = await countRequestTokens(this, this.messages)
     }
 
     return estimate
@@ -2853,6 +3121,23 @@ function isBlankTextBlock(block: ContentBlock): boolean {
 }
 
 const INVALID_TOOL_NAME_PLACEHOLDER = 'INVALID_TOOL_NAME'
+const BLANK_TEXT_PLACEHOLDER = '[blank text]'
+
+/**
+ * Returns the IDs of a message's structured output tool calls.
+ *
+ * @param message - The assistant message to scan
+ * @returns The tool use IDs of every structured output tool call in the message
+ */
+function structuredOutputToolUseIds(message: Message): Set<string> {
+  return new Set(
+    message.content
+      .filter(
+        (block): block is ToolUseBlock => block.type === 'toolUseBlock' && block.name === STRUCTURED_OUTPUT_TOOL_NAME
+      )
+      .map((block) => block.toolUseId)
+  )
+}
 
 /**
  * Replaces invalid tool-use names on assistant messages with `INVALID_TOOL_NAME`
@@ -2888,6 +3173,29 @@ function normalizeToolUseNames(messages: Message[]): Message[] {
   })
 
   return replaced ? next : messages
+}
+
+/**
+ * Gives empty assistant messages a `[blank text]` block. Providers drop messages with no content
+ * when formatting a request, which would otherwise send two user turns in a row.
+ * Returns the input unchanged (same reference) when no message is empty.
+ */
+function fillEmptyAssistantMessages(messages: Message[]): Message[] {
+  if (!messages.some(isEmptyAssistantMessage)) return messages
+  logger.debug('replacing empty assistant message content with blank text placeholder')
+  return messages.map((message) =>
+    isEmptyAssistantMessage(message)
+      ? new Message({
+          role: message.role,
+          content: [new TextBlock(BLANK_TEXT_PLACEHOLDER)],
+          ...(message.metadata !== undefined && { metadata: message.metadata }),
+        })
+      : message
+  )
+}
+
+function isEmptyAssistantMessage(message: Message | undefined): boolean {
+  return message?.role === 'assistant' && message.content.length === 0
 }
 
 /**

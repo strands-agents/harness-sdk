@@ -6,22 +6,26 @@ The shared process-supervision engine behind the shell-based backends (Docker,
 SSH): a backend builds an argv, and this spawns the process, streams its output
 as :class:`StreamChunk` objects, and yields a final :class:`ExecutionResult`.
 
-Cancellation is cooperative -- cancelling the consuming task (or closing the
-generator) runs the cleanup in ``finally``, which kills the process. ``timeout``
-is wall-clock: measured from spawn and not reset by ongoing output.
+Setting ``cancel_signal`` kills the process and raises :class:`SandboxAbortError`.
+Cancelling the consuming task (or closing the generator) also kills it, through
+the cleanup in ``finally``. ``timeout`` is wall-clock: measured from spawn and
+not reset by ongoing output.
 """
 
 import asyncio
 import contextlib
 import os
 import signal
+import threading
 from collections.abc import AsyncGenerator
+from typing import Literal
 
-from .errors import SandboxTimeoutError
+from .errors import SandboxAbortError, SandboxTimeoutError
 from .types import ExecutionResult, StreamChunk, StreamType
 
 _READ_CHUNK_SIZE = 65536
 _SIGNAL_EXIT_BASE = 128
+_CANCEL_POLL_INTERVAL = 0.05
 
 # The child is spawned in its own process group (start_new_session) so the whole
 # tree can be killed at once. Without this, "sh -c 'cmd; sleep 60'" leaves the
@@ -48,12 +52,14 @@ async def _stream_process(
     cwd: str | None = None,
     env: dict[str, str] | None = None,
     input: str | None = None,
+    cancel_signal: threading.Event | None = None,
 ) -> AsyncGenerator[StreamChunk | ExecutionResult, None]:
     """Spawn a command and stream its stdout/stderr, yielding the final result.
 
     Yields :class:`StreamChunk` objects as output arrives, then a single final
     :class:`ExecutionResult`. Signal termination maps to ``128 + signal`` (e.g.
-    SIGKILL -> 137). Cancelling the consuming task kills the process.
+    SIGKILL -> 137). Setting ``cancel_signal`` or cancelling the consuming task
+    kills the process.
 
     Args:
         program: The binary to spawn (e.g. ``"docker"``, ``"ssh"``).
@@ -66,6 +72,8 @@ async def _stream_process(
         cwd: Working directory for the child.
         env: Environment for the child (replaces, not merges).
         input: Written to the child's stdin, which is then closed.
+        cancel_signal: Kills the process when set. A signal that is already set
+            raises before anything is spawned.
 
     Yields:
         :class:`StreamChunk` objects for output, then a final
@@ -73,8 +81,11 @@ async def _stream_process(
 
     Raises:
         SandboxTimeoutError: If execution exceeds ``timeout`` seconds.
+        SandboxAbortError: If ``cancel_signal`` is set before the process exits.
         FileNotFoundError: If ``program`` is not found and ``enoent_message`` is ``None``.
     """
+    if cancel_signal is not None and cancel_signal.is_set():
+        raise SandboxAbortError()
     try:
         proc = await asyncio.create_subprocess_exec(
             program,
@@ -100,7 +111,7 @@ async def _stream_process(
     queue: asyncio.Queue[StreamChunk | None] = asyncio.Queue()
     out_buf: list[str] = []
     err_buf: list[str] = []
-    timed_out = False
+    stopped_by: Literal["timeout", "cancel"] | None = None
 
     async def pump(stream: asyncio.StreamReader, stream_type: StreamType, buf: list[str]) -> None:
         while data := await stream.read(_READ_CHUNK_SIZE):
@@ -116,30 +127,45 @@ async def _stream_process(
         await proc.wait()
         await queue.put(None)
 
-    async def enforce_timeout(timeout: float) -> None:
-        nonlocal timed_out
-        await asyncio.sleep(timeout)
-        if proc.returncode is None:
-            timed_out = True
+    reading = asyncio.ensure_future(reader())
+
+    async def stop(reason: Literal["timeout", "cancel"]) -> None:
+        nonlocal stopped_by
+        # Not ``proc.returncode``: a backgrounded child keeps the pipes open after the shell itself exits.
+        if stopped_by is None and not reading.done():
+            stopped_by = reason
             _kill_tree(proc)
             await queue.put(None)  # signal the consumer loop to stop
 
-    tasks = [asyncio.ensure_future(reader())]
+    async def enforce_timeout(timeout: float) -> None:
+        await asyncio.sleep(timeout)
+        await stop("timeout")
+
+    async def watch_cancel(cancel_signal: threading.Event) -> None:
+        while not cancel_signal.is_set():
+            await asyncio.sleep(_CANCEL_POLL_INTERVAL)
+        await stop("cancel")
+
+    tasks = [reading]
     if timeout is not None:
         tasks.append(asyncio.ensure_future(enforce_timeout(timeout)))
+    if cancel_signal is not None:
+        tasks.append(asyncio.ensure_future(watch_cancel(cancel_signal)))
 
     try:
         while (item := await queue.get()) is not None:
             yield item
 
-        if timed_out:
+        if stopped_by == "timeout":
             raise SandboxTimeoutError(timeout, "".join(out_buf), "".join(err_buf))
+        if stopped_by == "cancel":
+            raise SandboxAbortError("".join(out_buf), "".join(err_buf))
 
         returncode = proc.returncode if proc.returncode is not None else 1
         exit_code = _SIGNAL_EXIT_BASE - returncode if returncode < 0 else returncode
         yield ExecutionResult(exit_code=exit_code, stdout="".join(out_buf), stderr="".join(err_buf))
     finally:
-        if proc.returncode is None:
+        if not reading.done():
             _kill_tree(proc)
         pumps.cancel()
         for task in tasks:
