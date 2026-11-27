@@ -972,6 +972,8 @@ class OpenAIResponsesModel(Model):
                 )
                 reasoning_items = []
             formatted_messages.extend(reasoning_items)
+            # Tool outputs must immediately follow their calls, before any user text in the same message.
+            formatted_messages.extend(formatted_tool_messages)
             if formatted_contents:
                 if role == "assistant":
                     # Only the string EasyInputMessage form is a valid assistant *input* shape
@@ -999,7 +1001,6 @@ class OpenAIResponsesModel(Model):
                     )
 
             formatted_messages.extend(formatted_tool_calls)
-            formatted_messages.extend(formatted_tool_messages)
 
         if skipped_blocks is None:
             _log_skipped_blocks(logger, skipped)
