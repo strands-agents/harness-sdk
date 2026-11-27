@@ -166,6 +166,10 @@ export type { FunctionToolConfig, FunctionToolCallback } from './tools/function-
 export { ZodTool } from './tools/zod-tool.js'
 export type { ZodToolConfig } from './tools/zod-tool.js'
 
+// ClientTool implementation
+export { ClientTool, CLIENT_TOOL_INTERRUPT_NAME } from './tools/client-tool.js'
+export type { ClientToolConfig } from './tools/client-tool.js'
+
 // Tool factory function
 export { tool } from './tools/tool-factory.js'
 
