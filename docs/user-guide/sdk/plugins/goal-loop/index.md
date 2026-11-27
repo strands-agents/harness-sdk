@@ -414,8 +414,8 @@ const plugin = new GoalLoop({
 - [Hook events](/docs/user-guide/sdk/agents/hooks-events/index.md) (2 shared tags)
 - [Hooks](/docs/user-guide/sdk/agents/hooks/index.md) (2 shared tags)
 - [Interrupts](/docs/user-guide/sdk/interrupts/index.md) (2 shared tags)
-- [Interrupts in Multi-Agent Systems](/docs/user-guide/sdk/interrupts-multi-agent/index.md) (2 shared tags)
 - [Interventions](/docs/user-guide/sdk/agents/interventions/index.md) (2 shared tags)
+- [Interrupts in Multi-Agent Systems](/docs/user-guide/sdk/interrupts-multi-agent/index.md) (2 shared tags)
 - [Instruction following evaluator](/docs/user-guide/evals-sdk/evaluators/instruction_following_evaluator/index.md) (1 shared tag)
 
 

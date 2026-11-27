@@ -28,7 +28,7 @@
   - [context-and-caching](https://strandsagents.com/docs/user-guide/harness/configure/context-and-caching/index.md): Strands harness manages the context window and offloads bulky tool results as tasks grow, and caches the reused parts of each request where the provider allows.
   - [interventions](https://strandsagents.com/docs/user-guide/harness/configure/interventions/index.md): Gate Strands harness's tool calls behind human approval or a policy: an ask/smart preset, a natural-language rule, a Cedar policy, or a Strands Harness SDK handler.
   - [mcp-servers](https://strandsagents.com/docs/user-guide/harness/configure/mcp-servers/index.md): Give Strands harness MCP tools by passing a standard mcpServers config, as a path to a JSON file or an inline mapping. A failed server yields no tools, not a crash.
-  - [background-tasks](https://strandsagents.com/docs/user-guide/harness/configure/background-tasks/index.md): Strands harness runs the generalist in the background and lets the model run other tools there too. Tune or disable that with backgroundTasks.
+  - [background-tasks](https://strandsagents.com/docs/user-guide/harness/configure/background-tasks/index.md): Strands harness runs its subagent tool in the background and lets the model run other tools there too. Tune or disable that with a background tasks policy.
 - Built-in tools
   - [shell-and-files](https://strandsagents.com/docs/user-guide/harness/tools/shell-and-files/index.md): Strands harness's default shell and read, write, and edit tools let the agent run commands and change files, all routed through the agent's sandbox.
   - [web-access](https://strandsagents.com/docs/user-guide/harness/tools/web-access/index.md): Strands harness's default web tools: web_fetch reads a URL and answers over it with a small summarizer, and web_search turns on the provider's native search, or AgentCore web search on Bedrock.
@@ -57,6 +57,7 @@
     - [Attach and invoke tools](https://strandsagents.com/docs/user-guide/sdk/tools/using-tools/index.md): Pass tools to a Strands agent at init or runtime, inspect what is loaded, and invoke them either through natural language or as direct method calls.
     - [Use MCP tools](https://strandsagents.com/docs/user-guide/sdk/tools/mcp-tools/index.md): Connect AI agents to any MCP server for tool access. Strands agents integrate and invoke MCP tools without custom integration code.
     - [Create custom tools](https://strandsagents.com/docs/user-guide/sdk/tools/custom-tools/index.md): Turn functions you write into tools your agent can call: define them with the @tool decorator or the tool() function, then control their inputs, results, and context.
+    - [Run tools in the background](https://strandsagents.com/docs/user-guide/sdk/tools/background-tasks/index.md): Run slow tools in the background while your Strands agent keeps working: choose which tools qualify, receive their results, cancel tasks, and handle interrupts.
   - Sessions
     - [Persist state across sessions](https://strandsagents.com/docs/user-guide/sdk/agents/session-management/index.md): Persist agent conversations across sessions. Save and restore chat history, tool state, and context for long-running AI workflows.
   - Memory
@@ -158,6 +159,7 @@
     - [tool-results](https://strandsagents.com/docs/user-guide/sdk/tools/tool-results/index.md): The structure a Strands tool returns to the agent: the ToolResult schema, its content types, and how plain return values are converted into it.
     - [mcp-transports](https://strandsagents.com/docs/user-guide/sdk/tools/mcp-transports/index.md): How a Strands agent reaches an MCP server: stdio for local processes, Streamable HTTP and SSE for remote servers, with OAuth and AWS IAM authentication.
     - [executors](https://strandsagents.com/docs/user-guide/sdk/tools/executors/index.md): Control whether Strands agents run tool calls concurrently or sequentially. Covers tool executors, event ordering, cancellation, and custom executors.
+    - [Background tasks](https://strandsagents.com/docs/user-guide/sdk/tools/background-tasks/index.md): Run slow tools in the background while your Strands agent keeps working: choose which tools qualify, receive their results, cancel tasks, and handle interrupts.
     - Vended Tools
       - [Overview](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/index.md): Pre-built tools included in the SDK for common agent tasks like file operations, shell commands, HTTP requests, and persistent notes.
       - [edit](https://strandsagents.com/docs/user-guide/sdk/tools/vended-tools/edit/index.md): Use the edit vended tool to let a Strands agent make surgical, in-place changes to a text file by replacing an exact, unique string with the new content.

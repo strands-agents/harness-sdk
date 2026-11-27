@@ -647,9 +647,9 @@ Interrupts work across swarm and graph orchestration too, using the same interfa
 
 ## Related pages
 
-- [Agent Loop](/docs/user-guide/sdk/agents/agent-loop/index.md) (3 shared tags)
 - [Hook events](/docs/user-guide/sdk/agents/hooks-events/index.md) (3 shared tags)
 - [Hooks](/docs/user-guide/sdk/agents/hooks/index.md) (3 shared tags)
+- [Agent Loop](/docs/user-guide/sdk/agents/agent-loop/index.md) (3 shared tags)
 - [Interrupts in Multi-Agent Systems](/docs/user-guide/sdk/interrupts-multi-agent/index.md) (3 shared tags)
 - [Steering](/docs/user-guide/sdk/agents/interventions/steering/index.md) (3 shared tags)
 - [Interventions](/docs/user-guide/sdk/agents/interventions/index.md) (3 shared tags)

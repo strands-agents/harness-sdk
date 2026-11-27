@@ -29,13 +29,15 @@ A Lua script that the Shell runs does not read the input piped into the alias: i
 
 Each invocation is one command. A variable exported in one invocation is unset in the next. The Shell starts each command with `HOME` set to the agent’s `HOME`, in the directory the alias was run from. It also gets the placeholder of each [credential route](/docs/user-guide/box/guides/network-and-credentials/index.md), in the same variable as the agent. So `curl -H "Authorization: Bearer $GITHUB_TOKEN" ...` sends the placeholder. On a request to the route’s destination that policy permits, the gateway puts the real token in its place.
 
-The alias takes the directory it was run from from `PWD` when `PWD` names it, and otherwise asks the operating system. A directory other than the workspace takes the same `fs:read` decision, with operation `change_dir`, that `cd` takes. The command doesn’t run, and the alias exits `126`, if policy refuses that decision, if the directory isn’t a directory, or if it is outside the operator’s home, the agent’s home, and the workspace. The last case covers `/` and `/tmp`, which the Shell holds only in memory. If the alias can’t tell which directory it was run from, or the directory’s name isn’t valid UTF-8, it exits `125` and runs nothing.
+Shell accesses host files only within the [hosted filesystem roots](/docs/user-guide/box/reference/configuration/index.md#hosted-filesystem-roots). That section defines the selected storage paths and the spelling to use in commands and policy.
+
+The alias takes the directory it was run from from `PWD` when `PWD` names it, and otherwise asks the operating system. A directory other than the workspace takes the same `fs:read` decision, with operation `change_dir`, that `cd` takes. The command doesn’t run, and the alias exits `126`, if policy refuses that decision, if the directory isn’t a directory, or if it is outside the hosted filesystem roots. The last case covers `/` and `/tmp`, which the Shell holds only in memory. If the alias can’t tell which directory it was run from, or the directory’s name isn’t valid UTF-8, it exits `125` and runs nothing.
 
 The `python3` and `python` aliases send their arguments to the Shell’s own `python3` and `python` commands, as [Python in a box](/docs/user-guide/box/reference/python/index.md#running-a-script) describes. They forward no standard input: the command reads its input as empty.
 
 ## What runs where
 
-The reachable paths check is deny-only and runs after policy. It refuses a path outside the operator’s home, the agent’s home, and the workspace, a path inside the box directory, and the `box.toml` and `policy.dw` the run loaded, whatever a `permit` says.
+The reachable paths check is deny-only and runs after policy. It refuses host filesystem access outside the hosted roots, inside the box directory, and to the `box.toml` and `policy.dw` the run loaded, whatever a `permit` says.
 
 Once the alias hands a command to the Shell, each command in it runs as follows:
 
@@ -54,7 +56,7 @@ The Shell implements these, each in place of a program of the same name on the `
 -   System: `uname`, which prints the host’s values, except that `-p` and `-i` print `unknown`; `whoami`, which prints `$USER`; and `id`, which prints `$USER` with the Shell’s own IDs. A program path such as `/usr/bin/uname -p` runs the host program instead, as a `shell:spawn`.
 -   Interpreters: `sh` and `lash`, which run a script in the Shell; `lua`; and `python` and `python3`, which run in Monty, Box’s Python interpreter. With [`monty = false`](/docs/user-guide/box/reference/configuration/index.md#monty), `python` and `python3` are external programs instead. Policy sees `sh` and `lash` as two programs. `sh FILE` and `/bin/sh FILE` are both decided as `program == "sh"`, and `lash FILE` and `/bin/lash FILE` as `program == "lash"`, so a rule meant for the Shell’s script interpreter must name both. `.` and `source` also run a file.
 
-Paths outside the operator’s home, the agent’s home, and the workspace, such as `/tmp`, exist only in the Shell’s memory, for one command. A file written to `/tmp` is gone when the command ends.
+Paths outside the hosted filesystem roots, such as `/tmp`, exist only in the Shell’s memory, for one command. A file written to `/tmp` is gone when the command ends.
 
 ## `shell:exec`
 
@@ -233,7 +235,7 @@ A name changes only which file runs. The spawn still needs a `shell:spawn` permi
 
 ## `curl`
 
-`curl` sends each request through the egress gateway, which decides `net:connect` and `http:request` ([how Box controls outbound traffic](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/design/egress.md)). A request the gateway refuses makes `curl` exit `1` and print the reason, even with `-s`. A request the gateway doesn’t refuse but can’t complete makes `curl` exit `6` and print `curl: (6)` and the reason, unless `-s` hides errors.
+`curl` sends each request through the egress gateway, which decides `net:connect` and `http:request` ([how Box controls outbound traffic](https://github.com/strands-agents/box/blob/b4e3d3999d0df8d3b916dfc081868c451b7bbfe9/docs/design/egress.md)). A request the gateway refuses makes `curl` exit `1` and print the reason, even with `-s`. A request the gateway doesn’t refuse but can’t complete makes `curl` exit `6` and print `curl: (6)` and the reason, unless `-s` hides errors.
 
 A response body is at most [`limits.shell.max_output`](/docs/user-guide/box/reference/configuration/index.md#limits) bytes, 1 MiB by default. Past it, `curl` exits with status `6`, writes none of the body, and prints `curl: (6) response body too large` unless `-s` hides errors. The request was already sent, so its effect at the server stays.
 
@@ -248,7 +250,7 @@ A response body is at most [`limits.shell.max_output`](/docs/user-guide/box/refe
 | `125` | The name of the directory the alias was run from isn’t valid UTF-8. Run the command from another directory. | `strands-box-sock-alias: error[H0203]: the working directory is not valid UTF-8` |
 | `125` | The call exceeded the broker’s backup deadline, five seconds after its finite Shell allowance. | `strands-box-sock-alias: error[H0105]: the call exceeded its deadline` |
 | `125` | The deadline exceeds the platform’s clock range. Reduce `limits.shell.timeout`. | `strands-box-sock-alias: error[H0106]: the call deadline exceeds this platform's clock range` |
-| `126` | Policy refused the directory the alias was run from, it isn’t a directory, or it is outside the operator’s home, the agent’s home, and the workspace. Nothing ran. | `strands-box: error[B1202]: cannot start in <directory>: <error>` |
+| `126` | Policy refused the directory the alias was run from, it isn’t a directory, or it is outside the hosted filesystem roots. Nothing ran. | `strands-box: error[B1202]: cannot start in <directory>: <error>` |
 | `126` | Policy refused the command. | `strands-shell: effect denied: policy denied this operation on '<program>'`, then `[policy: <id>]` or `[default-deny]`. A tool grammar action reads the same way. |
 | `126` | A tool grammar binds the program file, and Box refused the spawn before any rule decided it. | `strands-shell: effect denied: policy denied this operation on '<program>' [tool-grammar]: <reason>. No policy can permit it.` |
 | `126` | Policy permitted a program that a `[tool.<name>]` table names, and its arguments match no table’s fixed arguments. | ``strands-shell: <program>: no tool runs <path>: no `[tool.<name>] command` matches this program and its leading arguments`` |
@@ -265,6 +267,6 @@ A response body is at most [`limits.shell.max_output`](/docs/user-guide/box/refe
 ## See also
 
 -   [Write policy for shell commands](/docs/user-guide/box/guides/write-shell-policy/index.md): rules for commands, programs, and paths.
--   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/design/shell.md): how the Shell decides each command, and the order of the checks.
--   [A tool’s sandbox](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/design/containment.md#a-tools-leaf-box): what a tool such as `git` can reach.
+-   [How Box runs shell commands and programs](https://github.com/strands-agents/box/blob/b4e3d3999d0df8d3b916dfc081868c451b7bbfe9/docs/design/shell.md): how the Shell decides each command, and the order of the checks.
+-   [A tool’s sandbox](https://github.com/strands-agents/box/blob/b4e3d3999d0df8d3b916dfc081868c451b7bbfe9/docs/design/containment.md#a-tools-leaf-box): what a tool such as `git` can reach.
 -   [The `[egress.<name>]` table](/docs/user-guide/box/guides/network-and-credentials/index.md): credentials for the requests `curl` sends.

@@ -1,10 +1,10 @@
 An `[egress.<name>]` table in `box.toml` binds a credential to a set of destinations. The box’s egress gateway adds the credential to each request to those destinations. Policy decides whether each request goes out.
 
-Audience: an operator with a working box from [getting started](/docs/user-guide/box/core/quickstart/index.md) who gives the agent a credential for a service. For how the gateway decides and forwards each request, read [how Box controls outbound traffic](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/design/egress.md).
+Audience: an operator with a working box from [getting started](/docs/user-guide/box/core/quickstart/index.md) who gives the agent a credential for a service. For how the gateway decides and forwards each request, read [how Box controls outbound traffic](https://github.com/strands-agents/box/blob/b4e3d3999d0df8d3b916dfc081868c451b7bbfe9/docs/design/egress.md).
 
 A tool or local MCP server with `network.contain_egress = false` can connect directly, outside gateway policy. On Linux, this includes IPv4 access to reachable private networks, loopback services, and instance metadata endpoints. See [server network settings](/docs/user-guide/box/guides/add-an-mcp-server/index.md#network).
 
-Such a program connects as it would on the host. Box sets no proxy variable and no CA file for it, so it uses its own defaults and verifies the real server’s certificate. Its table’s `env` may set `HTTPS_PROXY`, `SSL_CERT_FILE`, `GIT_SSL_CAINFO` and the other proxy and CA names, for a company proxy or CA bundle; add a `read_file` entry for a file it names. On macOS, the program may ask the system’s certificate services (`trustd` and `SecurityServer`), and keychain files stay unreadable. On Linux, if the default bundle is a link outside `/etc/ssl`, such as into `/etc/pki`, add a `read` entry for it. The startup report shows a `native trust:` line for the program. See [a native-egress process keeps its own proxy and trust settings](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/design/decisions.md#a-native-egress-process-keeps-its-own-proxy-and-trust-settings).
+Such a program connects as it would on the host. Box sets no proxy variable and no CA file for it, so it uses its own defaults and verifies the real server’s certificate. Its table’s `env` may set `HTTPS_PROXY`, `SSL_CERT_FILE`, `GIT_SSL_CAINFO` and the other proxy and CA names, for a company proxy or CA bundle; add a `read_file` entry for a file it names. On macOS, the program may ask the system’s certificate services (`trustd` and `SecurityServer`), and keychain files stay unreadable. On Linux, if the default bundle is a link outside `/etc/ssl`, such as into `/etc/pki`, add a `read` entry for it. The startup report shows a `native trust:` line for the program. See [a native-egress process keeps its own proxy and trust settings](https://github.com/strands-agents/box/blob/b4e3d3999d0df8d3b916dfc081868c451b7bbfe9/docs/design/decisions.md#a-native-egress-process-keeps-its-own-proxy-and-trust-settings).
 
 ## Example
 
@@ -22,7 +22,7 @@ secret.ref   = "aws://my-profile"
 
 `box run` reads `GITHUB_TOKEN` from its own environment. The agent gets a placeholder in `GITHUB_TOKEN`, and sends it as it would send the token. The gateway replaces the placeholder with the real token on each request to `api.github.com`.
 
-> **Every process in the box can use every route.** The agent, each tool, each stdio MCP server, and the Shell that runs the agent’s commands get the same placeholders, and the gateway adds the real credential to a request from any of them. The gateway can’t tell which process sent a request, so no setting limits a route to one process. To keep a credential away from a tool or a server, run it in a separate box. [The box is the credential boundary](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/design/decisions.md#the-box-is-the-credential-boundary) explains why.
+> **Every process in the box can use every route.** The agent, each tool, each stdio MCP server, and the Shell that runs the agent’s commands get the same placeholders, and the gateway adds the real credential to a request from any of them. The gateway can’t tell which process sent a request, so no setting limits a route to one process. To keep a credential away from a tool or a server, run it in a separate box. [The box is the credential boundary](https://github.com/strands-agents/box/blob/b4e3d3999d0df8d3b916dfc081868c451b7bbfe9/docs/design/decisions.md#the-box-is-the-credential-boundary) explains why.
 
 To let the requests out, permit them in `policy.dw`:
 
@@ -131,10 +131,12 @@ A remote MCP server re-routes the same way: attach `[[mcp.<name>.backends]]` to 
 | `aws://PROFILE` | The named profile `PROFILE`, resolved through the AWS SDK | On each request. The gateway signs the request with SigV4. |
 | `aws://` (no profile) | The AWS SDK default credential provider chain on the host | On each request. The gateway signs the request with SigV4, under the host’s ambient identity. |
 | `credsd://NAME`, with `secret.type = "aws"` or no `secret.type` | The credential `NAME` in the [AWS Credential Daemon](https://github.com/aws/credential-daemon) (credsd), over its socket: `CREDSD_SOCKET`, or the [platform default](#the-credsd-socket) | On each request. The gateway signs the request with SigV4, using the credential’s AWS session credentials, and never falls back to the host’s ambient identity. Before the workload starts, `box run` checks that the daemon answers and lists `NAME`, and stops the box if it doesn’t. Needs credsd 0.2.0 or later. With no `secret.type`, the box warns when it starts. |
-| `credsd://NAME`, with `secret.type = "token"` | The access token that the credsd daemon serves as `NAME`, such as a token stored with `creds bootstrap --credential github static-secret` | Once, when the box starts. The box keeps the token for the run and doesn’t refresh it, so a token that expires stops working until the next run. The box warns when the token has an expiry. With `secret.env`, the workload gets a placeholder in that variable. Without it, the workload holds none, and the route needs `secret.inject = "always"`. |
+| `credsd://NAME`, with `secret.type = "token"` | The access token that the credsd daemon serves as `NAME`, such as a token stored with `creds bootstrap --credential github static-secret` | At startup. If the token has an expiry, the first request near or past expiry reads it again. If that read fails, Box keeps attaching the old token until it expires, and then refuses requests until a read succeeds. A token without an expiry stays in use for the run. With `secret.env`, the workload gets a placeholder in that variable. Without it, the workload holds none, and the route needs `secret.inject = "always"`. |
 | `<scheme>://NAME[#FIELD]`, for a scheme that a [`[secret-source.<scheme>]`](/docs/user-guide/box/reference/configuration/index.md#secret-sourcescheme) table declares | The host program that the table names | Experimental. Once, when the box starts: Box runs the program and reads the secret from its stdout. The agent, each tool, each stdio MCP server, and the Shell get a placeholder in the variable that `secret.env` names. You don’t set that variable. See [how a run reads the secrets](/docs/user-guide/box/reference/configuration/index.md#how-a-run-reads-the-secrets). |
 
-This route sends a GitHub token from credsd to `github.com`, for `git` over HTTPS:
+Box checks expiry when it attaches a token. It keeps the workload’s placeholder and asks the daemon for a token during the last fifth of the remaining lifetime measured at acquisition, up to 60 seconds before expiry. Concurrent requests share the read. After a failed read, the next request more than 5 seconds later retries. Once a route has an expiry, each replacement must include a valid future expiry.
+
+This route sends a GitHub token from credsd to `github.com` for Git over HTTPS.
 
 ```toml
 [egress.github]
@@ -261,6 +263,7 @@ The list applies to every process in the box. An entry is a host name alone: the
 | A credsd token route has no `secret.env` and no `secret.inject = "always"` | Set `secret.inject = "always"`, or name the placeholder variable with `secret.env`. |
 | At startup, `credsd credential "<name>" is "<kind>", but a route that reads it expects "<kind>"` | On an egress or MCP route, set `secret.type` to the credential’s kind in `creds list`: `aws` for `session_credentials`, `token` for `access_token`. A telemetry target always signs, so name a `session_credentials` credential there. |
 | At startup, a credsd token route reads a token whose type is not `Bearer` | Use a bearer token. The box can’t make the proof that a DPoP token needs. |
+| An expiring credsd token fails to load or refresh | Check the local daemon and the credential name. Each replacement must include a future RFC 3339 `expires_at`. Retry after the source recovers. |
 | A `credsd://` route has no `secret.type`, at startup (a warning) | Set `secret.type = "aws"`, or `"token"` for a token. A later release requires the key. |
 | `secret.env` on an `env://NAME` route is not `NAME`, or an `aws://` route sets `secret.env` | Remove `secret.env`. |
 | Two entries hold a placeholder in one variable and name different secrets | Give one of them another variable. One placeholder variable holds one secret. |
@@ -325,5 +328,5 @@ Without forced termination, Box waits for active upstream exchanges and other wo
 
 ## See also
 
--   [How Box controls outbound traffic](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/design/egress.md): routing, the connect and request decisions, and how the gateway adds a credential.
+-   [How Box controls outbound traffic](https://github.com/strands-agents/box/blob/b4e3d3999d0df8d3b916dfc081868c451b7bbfe9/docs/design/egress.md): routing, the connect and request decisions, and how the gateway adds a credential.
 -   [The `[mcp.<name>]` table](/docs/user-guide/box/guides/add-an-mcp-server/index.md): a credential for an http MCP server.

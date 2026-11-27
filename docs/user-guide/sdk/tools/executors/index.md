@@ -114,10 +114,10 @@ Custom tool executors are not currently supported but are planned for a future r
 - [Hooks](/docs/user-guide/sdk/agents/hooks/index.md) (2 shared tags)
 - [Interrupts](/docs/user-guide/sdk/interrupts/index.md) (2 shared tags)
 - [Creating a Custom Model Provider](/docs/user-guide/sdk/model-providers/custom_model_provider/index.md) (1 shared tag)
+- [Run tools in the background](/docs/user-guide/sdk/tools/background-tasks/index.md) (1 shared tag)
 - [Steering](/docs/user-guide/sdk/agents/interventions/steering/index.md) (2 shared tags)
 - [Interventions](/docs/user-guide/sdk/agents/interventions/index.md) (2 shared tags)
 - [Production Lifecycle Controls](/docs/user-guide/sdk/agents/lifecycle-controls/index.md) (1 shared tag)
-- [Retry Strategies](/docs/user-guide/sdk/agents/retry-strategies/index.md) (1 shared tag)
 
 
 ## Implementation

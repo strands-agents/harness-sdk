@@ -111,7 +111,7 @@ The agent checks for cancellation at four checkpoints:
 
 The agent returns a result with `stop_reason="cancelled"`. `cancel()` is thread-safe and idempotent. Calling it multiple times or from different threads is safe.
 
-[Background tasks](/docs/user-guide/harness/configure/background-tasks/index.md) keep running after `cancel()`. Pass `cancel_background_tasks=True` to cancel this agent’s queued, working, and input-required background tasks immediately as well. On an idle agent, `cancel(cancel_background_tasks=True)` cancels only the background tasks, while plain `cancel()` also cancels the next invocation. If the invocation had already finished its turn and was only waiting for background tasks, it returns with its natural stop reason, and the cancelled results are delivered on the next invocation.
+[Background tasks](/docs/user-guide/sdk/tools/background-tasks/index.md) keep running after `cancel()`. Pass `cancel_background_tasks=True` to cancel this agent’s queued, working, and input-required background tasks immediately as well. On an idle agent, `cancel(cancel_background_tasks=True)` cancels only the background tasks, while plain `cancel()` also cancels the next invocation. If the invocation had already finished its turn and was only waiting for background tasks, it returns with its natural stop reason, and the cancelled results are delivered on the next invocation.
 
 ```python
 import threading
@@ -196,7 +196,7 @@ The agent checks for cancellation at five checkpoints:
 
 The agent returns a result with `stopReason: 'cancelled'`. `cancel()` is idempotent: calling it multiple times is safe.
 
-[Background tasks](/docs/user-guide/harness/configure/background-tasks/index.md) keep running after `cancel()`. Pass `cancel({ cancelBackgroundTasks: true })` to cancel this agent’s queued, working, and input-required background tasks too, whether or not an invocation is running. If the invocation had already finished its turn and was only waiting for background tasks, it returns with its natural stop reason, and the cancelled results are delivered on the next invocation.
+[Background tasks](/docs/user-guide/sdk/tools/background-tasks/index.md) keep running after `cancel()`. Pass `cancel({ cancelBackgroundTasks: true })` to cancel this agent’s queued, working, and input-required background tasks too, whether or not an invocation is running. If the invocation had already finished its turn and was only waiting for background tasks, it returns with its natural stop reason, and the cancelled results are delivered on the next invocation.
 
 ```typescript
 const agent = new Agent()

@@ -8,7 +8,7 @@ A plugin is not a pack. Every program a pack names runs inside the box. A plugin
 
 ## Where plugins are defined
 
-A profile lists a plugin in `plugins`. `@box/<name>` is a plugin that ships with `box`, and a plain name is a folder in `~/.strands/box/plugins/`, so `~/.strands/box/plugins/op-service/plugin.toml` is the plugin `op-service`. A plugin that a team shares is in the `plugins/` folder of a [collection](/docs/user-guide/box/reference/files/index.md#collections), and `@<scope>/<name>` names it, such as `@acme/vault` for `~/.strands/box/external/acme/plugins/vault/`. `box` ships two plugins, and [Plugins](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/cli/README.md#plugins) lists them.
+A profile lists a plugin in `plugins`. `@box/<name>` is a plugin that ships with `box`, and a plain name is a folder in `~/.strands/box/plugins/`, so `~/.strands/box/plugins/op-service/plugin.toml` is the plugin `op-service`. A plugin that a team shares is in the `plugins/` folder of a [collection](/docs/user-guide/box/reference/files/index.md#collections), and `@<scope>/<name>` names it, such as `@acme/vault` for `~/.strands/box/external/acme/plugins/vault/`. `box` ships two plugins, and [Plugins](https://github.com/strands-agents/box/blob/b4e3d3999d0df8d3b916dfc081868c451b7bbfe9/docs/cli/README.md#plugins) lists them.
 
 ## Use a plugin
 
@@ -60,7 +60,7 @@ env   = ["OP_SERVICE_ACCOUNT_TOKEN"]
 paths = ["${{ home }}/.config/op"]
 ```
 
-Compare it with the shipped [`@box/1password`](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/resources/plugins/1password/plugin.toml).
+Compare it with the shipped [`@box/1password`](https://github.com/strands-agents/box/blob/b4e3d3999d0df8d3b916dfc081868c451b7bbfe9/resources/plugins/1password/plugin.toml).
 
 The program runs on your machine, outside the box. So a plugin’s `[env]` goes to that program and never to the agent, and its `[protect]` says what the box keeps from the agent. The [plugin reference](/docs/user-guide/box/reference/plugins/index.md) lists each key.
 

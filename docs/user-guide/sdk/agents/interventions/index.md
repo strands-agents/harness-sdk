@@ -521,9 +521,9 @@ Interventions return typed actions that the framework interprets. This enables:
 
 ## Related pages
 
-- [Agent Loop](/docs/user-guide/sdk/agents/agent-loop/index.md) (3 shared tags)
 - [Hook events](/docs/user-guide/sdk/agents/hooks-events/index.md) (3 shared tags)
 - [Hooks](/docs/user-guide/sdk/agents/hooks/index.md) (3 shared tags)
+- [Agent Loop](/docs/user-guide/sdk/agents/agent-loop/index.md) (3 shared tags)
 - [Interrupts](/docs/user-guide/sdk/interrupts/index.md) (3 shared tags)
 - [Steering](/docs/user-guide/sdk/agents/interventions/steering/index.md) (3 shared tags)
 - [Approve before your agent acts](/docs/user-guide/sdk/agents/approve-before-acting/index.md) (2 shared tags)

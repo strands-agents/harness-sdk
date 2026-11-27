@@ -9,7 +9,7 @@ A key can come from one of four places. The scheme at the start of `secret.ref` 
 |  | A variable in your shell | AWS credentials | The credentials daemon | A password manager or secret store |
 | --- | --- | --- | --- | --- |
 | `secret.ref` | `env://GH_TOKEN` | `aws://` or `aws://work` | `credsd://work` | `op://Personal/GitHub/token` |
-| Read | Once, when the box starts | On each request | On each request, or once at start for a token | Once, when the box starts |
+| Read | Once, when the box starts | On each request | On each AWS request. For tokens, at startup and near expiry | Once, when the box starts |
 | The agent gets | A placeholder in `GH_TOKEN` | Placeholder AWS keys | Placeholder AWS keys, or for a token, the placeholder that `secret.env` names | A placeholder in the variable `secret.env` names |
 | Works for | Any HTTPS host | AWS service hosts | AWS service hosts, or any HTTPS host for a token | Any HTTPS host |
 | Long-lived key kept in | Your shell | `~/.aws` | The daemon’s keystore | Your password manager |
@@ -45,7 +45,7 @@ Both `aws://` forms run any `credential_process` in your AWS configuration outsi
 
 ## The credentials daemon
 
-The [AWS Credential Daemon](https://github.com/aws/credential-daemon) (credsd) is a local service that holds your long-lived AWS sign-in, such as an IAM Identity Center (SSO) session or an IAM user’s keys, sealed in a hardware or OS keystore. It gives out short-lived session credentials over a local socket and refreshes them for you. A `credsd://` route asks it for credentials on each request, so an SSO sign-in works without exporting temporary keys, and the sign-in itself stays in the daemon.
+The [AWS Credential Daemon](https://github.com/aws/credential-daemon) (credsd) is a local service that holds your long-lived AWS sign-in, such as an IAM Identity Center (SSO) session or an IAM user’s keys, sealed in a hardware or OS keystore. It gives out short-lived session credentials over a local socket and refreshes them for you. A signed `credsd://` route asks it for credentials on each request, so an SSO sign-in works without exporting temporary keys, and the sign-in itself stays in the daemon.
 
 `credsd://` names a credential you set up in the daemon. This profile signs Bedrock requests with the credential `work`:
 
@@ -80,7 +80,7 @@ secret.placement = "basic_auth"   # the credsd secret holds x-access-token:<toke
 secret.inject = "always"
 ```
 
-The box reads the token once, when it starts, and doesn’t refresh it during the run, as it does for a password manager. Without `secret.env`, the agent holds no placeholder, so the route needs `secret.inject = "always"`.
+The box reads a token at startup. If the daemon supplies an expiry, the first request near or past expiry asks the daemon again. The agent keeps the same placeholder. Without `secret.env`, the agent holds no placeholder, so the route needs `secret.inject = "always"`.
 
 ### What the box checks
 

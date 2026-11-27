@@ -756,6 +756,7 @@ Report `stateful``stateful` as `true` only if your service keeps conversation st
 
 ## Related pages
 
+- [Run tools in the background](/docs/user-guide/sdk/tools/background-tasks/index.md) (1 shared tag)
 - [Tools](/docs/user-guide/sdk/bidi/tools/index.md) (1 shared tag)
 - [Middleware](/docs/user-guide/sdk/agents/middleware/index.md) (1 shared tag)
 - [Tool Executors](/docs/user-guide/sdk/tools/executors/index.md) (1 shared tag)
@@ -765,7 +766,6 @@ Report `stateful``stateful` as `true` only if your service keeps conversation st
 - [Building a Custom Sandbox](/docs/user-guide/sdk/sandbox/custom-sandbox/index.md) (1 shared tag)
 - [Sandbox](/docs/user-guide/sdk/sandbox/index.md) (1 shared tag)
 - [Agents as tools](/docs/user-guide/sdk/multi-agent/agents-as-tools/index.md) (1 shared tag)
-- [Agent Loop](/docs/user-guide/sdk/agents/agent-loop/index.md) (1 shared tag)
 
 
 ## Implementation

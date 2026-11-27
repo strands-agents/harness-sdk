@@ -462,7 +462,7 @@ A code your `box` doesn’t know exits with `1`, since a newer `box` may know it
 
 ## box telemetry
 
-Turn usage telemetry on or off. [Usage telemetry](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/CLI_TELEMETRY.md) says what `box` sends.
+Turn usage telemetry on or off. [Usage telemetry](https://github.com/strands-agents/box/blob/b4e3d3999d0df8d3b916dfc081868c451b7bbfe9/CLI_TELEMETRY.md) says what `box` sends.
 
 ```sh
 box telemetry off
@@ -506,7 +506,7 @@ It works before you have a profile, and `box --help` tells a coding agent to run
 | --- | --- |
 | `BOX_HOME` | Use another folder in place of `~/.strands/box`, such as to try `box` with no profiles. It takes a full path, and an empty value counts as not set. Without it, `box` refuses a link at `~/.strands` or `~/.strands/box`. Only `installation.toml` and `packages/` stay in `~/.strands/box` ([Where Box keeps its files](/docs/user-guide/box/reference/files/index.md)). |
 | `BOX_TELEMETRY`, `DO_NOT_TRACK` | Turn usage telemetry off for one shell, with `BOX_TELEMETRY=0` or `DO_NOT_TRACK=1`. |
-| `BOX_TEST_TELEMETRY_ENDPOINT` | Developer capture: send usage telemetry to an HTTP URL with a literal loopback address and no credentials. Invalid values, including empty or non-UTF-8 values, disable delivery. Consent still applies. See [local capture](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/dev/manual-testing.md#check-telemetry-delivery). |
+| `BOX_TEST_TELEMETRY_ENDPOINT` | Developer capture: send usage telemetry to an HTTP URL with a literal loopback address and no credentials. Invalid values, including empty or non-UTF-8 values, disable delivery. Consent still applies. See [local capture](https://github.com/strands-agents/box/blob/b4e3d3999d0df8d3b916dfc081868c451b7bbfe9/docs/dev/manual-testing.md#check-telemetry-delivery). |
 | `NO_COLOR` | Turn off color in the output of `box`. |
 | `CREDSD_SOCKET` | The socket of the credentials daemon, for a `credsd://` route ([Where the box finds the daemon](/docs/user-guide/box/credentials/index.md#where-the-box-finds-the-daemon)). |
 | `BOX_RESOURCES` | Use the packs, plugins, starters, policy starters, and agent guide in another folder in place of the ones that come with `box`. |

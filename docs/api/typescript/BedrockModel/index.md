@@ -1,4 +1,4 @@
-Defined in: [src/models/bedrock.ts:517](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L517)
+Defined in: [src/models/bedrock.ts:526](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L526)
 
 AWS Bedrock model provider implementation.
 
@@ -41,7 +41,7 @@ for await (const event of provider.stream(messages)) {
 new BedrockModel(options?): BedrockModel;
 ```
 
-Defined in: [src/models/bedrock.ts:562](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L562)
+Defined in: [src/models/bedrock.ts:573](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L573)
 
 Creates a new BedrockModel instance.
 
@@ -95,7 +95,7 @@ const provider = new BedrockModel({
 get modelInfo(): ModelInfo;
 ```
 
-Defined in: [src/models/bedrock.ts:614](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L614)
+Defined in: [src/models/bedrock.ts:625](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L625)
 
 Turns `serverSideSummary` off, reports how Converse caches the model where that differs from the shared model info, and turns deferred tool loading off under `strictTools`; a `modelInfo` override still wins over all three. Strict mode needs each tool’s full input schema, so it can’t take a deferred tool as a stub.
 
@@ -165,7 +165,7 @@ Reads `modelInfo.capabilities.stateful`, so a provider that keeps state server-s
 updateConfig(modelConfig): void;
 ```
 
-Defined in: [src/models/bedrock.ts:813](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L813)
+Defined in: [src/models/bedrock.ts:852](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L852)
 
 Updates the model configuration. Merges the provided configuration with existing settings.
 
@@ -201,7 +201,7 @@ provider.updateConfig({
 getConfig(): BedrockModelConfig;
 ```
 
-Defined in: [src/models/bedrock.ts:828](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L828)
+Defined in: [src/models/bedrock.ts:867](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L867)
 
 Retrieves the current model configuration.
 
@@ -230,7 +230,7 @@ console.log(config.modelId)
 countTokens(messages, options?): Promise<number>;
 ```
 
-Defined in: [src/models/bedrock.ts:845](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L845)
+Defined in: [src/models/bedrock.ts:884](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L884)
 
 Count tokens using Bedrock’s native CountTokens API.
 
@@ -261,7 +261,7 @@ Total input token count
 stream(messages, options?): AsyncIterable<ModelStreamEvent>;
 ```
 
-Defined in: [src/models/bedrock.ts:926](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L926)
+Defined in: [src/models/bedrock.ts:965](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/bedrock.ts#L965)
 
 Streams a conversation with the Bedrock model. Returns an async iterable that yields streaming events as they occur.
 

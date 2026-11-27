@@ -18,7 +18,7 @@ Every pack has a kind:
 
 There are three places a pack can be defined:
 
-1.  **In Box**, for the packs that ship with it. Each is named `@box/<name>`, such as `@box/claude`, and [the pack list](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/docs/cli/README.md#packs) links each one’s README.
+1.  **In Box**, for the packs that ship with it. Each is named `@box/<name>`, such as `@box/claude`, and [the pack list](https://github.com/strands-agents/box/blob/b4e3d3999d0df8d3b916dfc081868c451b7bbfe9/docs/cli/README.md#packs) links each one’s README.
     
 2.  **In your Box folder**, for a pack of your own. It’s a folder in `~/.strands/box/packs/`, and the folder’s name is the pack’s name, so `~/.strands/box/packs/team-agent/pack.toml` is the pack `team-agent`.
     

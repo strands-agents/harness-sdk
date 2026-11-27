@@ -22,6 +22,8 @@ All tools, whether custom, community-provided, or included in the Strands tools 
 
 [Tool executors](executors/index.md)Control whether multiple tool calls run concurrently or in sequence.
 
+[Background tasks](background-tasks/index.md)Run tools while the agent continues working, then deliver their results.
+
 ## A running agent with a tool
 
 The smallest useful setup is an agent with a single tool it can decide to call. Define the tool, pass it to the agent, and invoke:

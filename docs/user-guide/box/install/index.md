@@ -1,4 +1,4 @@
-The installer downloads a Box release from `strands-agents/box` on GitHub, checks it, and puts `box` on your `PATH`. On macOS, the checks include Apple’s signing and notarization. To build `box` yourself instead, see [Build from source](#build-from-source).
+Install Box with [Homebrew](#install-with-homebrew), or with the installer. Each downloads a Box release from `strands-agents/box` on GitHub, checks it, and puts `box` on your `PATH`. To build `box` yourself, see [Build from source](#build-from-source).
 
 ## Requirements
 
@@ -10,13 +10,21 @@ Install your agent, such as Claude Code, and set up its credentials first. The i
 
 ## Install
 
-Download the installer and run it:
+Install `box` with Homebrew:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/strands-agents/box/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/install.sh | sh
+brew install --cask strands-agents/tap/box
 ```
 
-Example output on a Mac:
+[Install with Homebrew](#install-with-homebrew) says what this adds and how to upgrade and uninstall.
+
+Or download the installer and run it:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/strands-agents/box/b4e3d3999d0df8d3b916dfc081868c451b7bbfe9/install.sh | sh
+```
+
+Example output of the installer on a Mac:
 
 ```text
 Downloading box-cli-v0.3.0-aarch64-apple-darwin.tar.gz...
@@ -35,7 +43,7 @@ box run claude                             # Run from your project
 
 box sends usage telemetry to telemetry.strandsagents.com
 To opt out, run: box telemetry off
-To learn more: https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/CLI_TELEMETRY.md
+To learn more: https://github.com/strands-agents/box/blob/b4e3d3999d0df8d3b916dfc081868c451b7bbfe9/CLI_TELEMETRY.md
 ```
 
 In a color terminal, a progress bar replaces the `Downloading` and `Installed` lines. On Linux, the check line is `Verified checksum and archive`, because there are no Apple checks. The telemetry lines appear only while telemetry is on, so if you’ve already [turned it off](/docs/user-guide/box/reference/cli/index.md#box-telemetry), a new install keeps that choice and leaves them out.
@@ -70,7 +78,7 @@ The installer reads your shell from `SHELL`. If `SHELL` is unset, it uses zsh on
 To upgrade to the latest release, run the install command again. To install another release, run the installer again with its number in `BOX_VERSION`:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/strands-agents/box/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/install.sh | BOX_VERSION=0.3.1 sh
+curl -fsSL https://raw.githubusercontent.com/strands-agents/box/b4e3d3999d0df8d3b916dfc081868c451b7bbfe9/install.sh | BOX_VERSION=0.3.1 sh
 ```
 
 It switches `current` to that release, prints `Updated box 0.3.0 to 0.3.1.`, and then shows the same welcome as a first install. When you have that release already, it prints `box 0.3.1 is already installed.` and keeps your release, without the welcome. If you installed with any of the other [installer variables](#installer-variables), set them again.
@@ -92,7 +100,7 @@ Old releases stay in `~/.strands/box/packages/`. Installing one you already have
 To install from another public repository, such as your own fork, name it in `BOX_GITHUB_REPO`. On macOS, a release that isn’t signed by the Box publisher, such as a fork’s own build, also needs `BOX_ALLOW_UNSIGNED=1`:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/strands-agents/box/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/install.sh |
+curl -fsSL https://raw.githubusercontent.com/strands-agents/box/b4e3d3999d0df8d3b916dfc081868c451b7bbfe9/install.sh |
   BOX_GITHUB_REPO=your-account/box BOX_ALLOW_UNSIGNED=1 sh
 ```
 
@@ -101,11 +109,49 @@ curl -fsSL https://raw.githubusercontent.com/strands-agents/box/526b5a0cf70e792f
 ## Manage PATH without the installer
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/strands-agents/box/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/install.sh |
+curl -fsSL https://raw.githubusercontent.com/strands-agents/box/b4e3d3999d0df8d3b916dfc081868c451b7bbfe9/install.sh |
   BOX_NO_MODIFY_PATH=1 sh
 ```
 
 This leaves your shell’s startup files alone, so put `~/.local/bin` on your `PATH` in your own setup.
+
+## Install with Homebrew
+
+On macOS and Linux, install `box` from the [Strands Homebrew tap](https://github.com/strands-agents/homebrew-tap):
+
+```sh
+brew install --cask strands-agents/tap/box
+```
+
+This adds the tap, trusts the `box` cask, and puts `box` in Homebrew’s `bin` folder. For Linux, see [Linux requirements](/docs/user-guide/box/reference/linux-requirements/index.md). To install by the short name `box`, see the tap’s [Install by short name](https://github.com/strands-agents/homebrew-tap#install-by-short-name).
+
+`box` keeps a box from changing the release folder of the `box` you run, in Homebrew’s Caskroom, but not the rest of Homebrew’s prefix. The default prefix (`/opt/homebrew`, `/usr/local`, or `/home/linuxbrew/.linuxbrew`) is outside your home, so a write rule over your home doesn’t reach it. A prefix inside your home, such as `~/.linuxbrew`, is reached by such a rule too. Either way, keep your write grants and `permit` rules out of `$(brew --prefix)` ([Keep write rules narrow](/docs/user-guide/box/policies/index.md#keep-write-rules-narrow)).
+
+Check that `box` runs:
+
+```console
+$ box --version
+box 0.3.1
+```
+
+`box` sends usage telemetry. To opt out, run `box telemetry off`. [Usage telemetry](https://github.com/strands-agents/box/blob/b4e3d3999d0df8d3b916dfc081868c451b7bbfe9/CLI_TELEMETRY.md) says what it sends. Next, [create a Claude Code profile](/docs/user-guide/box/quickstart/index.md#2-create-a-claude-code-profile), and skip that page’s install step.
+
+### Upgrade with Homebrew
+
+```sh
+brew update
+brew upgrade --cask box
+```
+
+The cask follows Box’s stable releases and skips pre-releases. A new release reaches the tap when the tap’s bump pull request for it is merged. The installer variables, such as `BOX_VERSION`, don’t apply.
+
+### Uninstall with Homebrew
+
+```sh
+brew uninstall --cask box
+```
+
+This removes `box` and its release files. Your profiles, packs, storage, and run records stay in `~/.strands/box`. To remove them too, delete that folder.
 
 ## Build from source
 
@@ -118,7 +164,7 @@ just build-cli
 export PATH="$PWD/target/debug:$PATH"
 ```
 
-The build uses the packs and starters in the checkout’s `resources/`. The `export` lasts only in this terminal, so add `target/debug` to your `PATH` in your shell’s startup file to keep it. [CONTRIBUTING.md](https://github.com/strands-agents/box/blob/526b5a0cf70e792fb1e5e9ca9b11ba0ed58f3ba6/CONTRIBUTING.md) has more on building from source.
+The build uses the packs and starters in the checkout’s `resources/`. The `export` lasts only in this terminal, so add `target/debug` to your `PATH` in your shell’s startup file to keep it. [CONTRIBUTING.md](https://github.com/strands-agents/box/blob/b4e3d3999d0df8d3b916dfc081868c451b7bbfe9/CONTRIBUTING.md) has more on building from source.
 
 ## Uninstall
 
