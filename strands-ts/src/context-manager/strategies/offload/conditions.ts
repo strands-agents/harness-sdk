@@ -65,20 +65,31 @@ type ConditionName = keyof OffloadConditions
  * @internal
  */
 export class ParsedCondition {
+  readonly isShare: boolean
+  readonly #_percentText: string | undefined
+
   /**
    * @param value - The count, or a share's percent as written
-   * @param isShare - Whether `value` is a percent of a whole rather than a count
+   * @param percentText - The validated decimal text for a share, without the percent sign
    */
   constructor(
     readonly value: number,
-    readonly isShare: boolean
-  ) {}
+    percentText?: string
+  ) {
+    this.isShare = percentText !== undefined
+    this.#_percentText = percentText
+  }
 
   /** The count this condition stands for out of `whole`, rounded up. */
   of(whole: number): number {
-    // Multiplies before dividing: `percent / 100` is inexact for most percents, and the product of that and `whole`
-    // lands just above the answer, so "7%" of 100 would round up to 8.
-    return this.isShare ? Math.ceil((this.value * whole) / 100) : this.value
+    if (this.#_percentText === undefined) return this.value
+    if (!Number.isInteger(whole) || whole < 0) return Math.ceil((this.value * whole) / 100)
+
+    const [integerDigits, fractionalDigits = ''] = this.#_percentText.split('.')
+    const numerator = BigInt(integerDigits! + fractionalDigits) * BigInt(whole)
+    const denominator = 100n * 10n ** BigInt(fractionalDigits.length)
+    // Integer division rounds down, so add one less than the denominator to round up.
+    return Number((numerator + denominator - 1n) / denominator)
   }
 
   /** A share's fraction of the whole, for a condition compared against one directly. */
@@ -127,10 +138,11 @@ export function parseCondition(name: ConditionName, raw: unknown, label: string 
   if (raw === undefined) return undefined
   const rule = CONDITION_RULES[name]
   if (typeof raw === 'string' && PERCENT_PATTERN.test(raw)) {
-    const percent = Number(raw.slice(0, -1))
-    if (rule.percentInRange(percent)) return new ParsedCondition(percent, true)
+    const percentText = raw.slice(0, -1)
+    const percent = Number(percentText)
+    if (rule.percentInRange(percent)) return new ParsedCondition(percent, percentText)
   }
-  if (typeof raw === 'number' && Number.isInteger(raw) && raw >= rule.minCount) return new ParsedCondition(raw, false)
+  if (typeof raw === 'number' && Number.isInteger(raw) && raw >= rule.minCount) return new ParsedCondition(raw)
   throw new Error(`${label}=${formatConditionValue(raw)} is invalid: expected ${rule.expected}${percentHint(raw)}`)
 }
 

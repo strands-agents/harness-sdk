@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { Offload } from '../offload/index.js'
 import { EmergencyTruncateStrategy } from '../offload/base.js'
-import { formatDroppedMessages, formatElided, offloadPlaceholder } from '../../placeholder.js'
+import { formatDropped, formatDroppedMessages, formatElided, offloadPlaceholder } from '../../placeholder.js'
 import { parseCondition, ResolvedConditions } from '../offload/conditions.js'
 import type { OffloadConditions, Percent } from '../offload/conditions.js'
 import { OffloadTargetMatcher } from '../offload/target.js'
@@ -867,6 +867,8 @@ describe('ResolvedConditions.withoutPreserved', () => {
     ['99%', 10, 0],
     // A share that divides exactly keeps exactly that many, with no rounding up from float error.
     ['7%', 100, 93],
+    // Fractional percentages also protect exactly the computed whole count (#6322).
+    ['8.8%', 375, 342],
   ] as const)('preserveRecent=%j of %i matches leaves %i', (preserveRecent, count, left) => {
     expect(new ResolvedConditions({ preserveRecent }).withoutPreserved(matches(count))).toEqual(matches(left))
   })
@@ -1182,14 +1184,22 @@ describe('condition resolution', () => {
     }
   )
 
-  it('resolves a percent threshold against the context window', async () => {
-    const messages = toolHistory([100, 101])
-    const strategy = Offload.drop('toolResults').when({ blockThreshold: '1%' })
+  // A percentage that resolves to a whole count offloads blocks above exactly that count (#6322).
+  it.each([
+    ['1%', 10_000, 100],
+    ['0.07%', 200_000, 140],
+    ['1.1%', 200_000, 2_200],
+  ] as const)(
+    'resolves a %s block threshold against a %i-token context window',
+    async (blockThreshold, contextWindowLimit, thresholdTokens) => {
+      const messages = toolHistory([thresholdTokens, thresholdTokens + 1])
+      const strategy = Offload.drop('toolResults').when({ blockThreshold })
 
-    expect(await strategy.apply(makeContext(messages, 0, false, 10_000))).toBe(true)
+      expect(await strategy.apply(makeContext(messages, 0, false, contextWindowLimit))).toBe(true)
 
-    expect(resultTexts(messages)).toEqual(['x'.repeat(400), '[Dropped: ~101 tokens]'])
-  })
+      expect(resultTexts(messages)).toEqual(['x'.repeat(thresholdTokens * 4), formatDropped(thresholdTokens + 1)])
+    }
+  )
 })
 
 describe('tool results that already hold a placeholder', () => {
