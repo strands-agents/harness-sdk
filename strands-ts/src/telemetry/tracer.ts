@@ -390,7 +390,9 @@ export class Tracer {
       const span = this._startSpan({
         name: 'chat',
         attributes: { ...attributes, ...this._traceAttributes },
-        spanKind: SpanKind.INTERNAL,
+        // A model invocation is a client call to a remote provider; the GenAI
+        // conventions specify CLIENT so tooling can select model calls.
+        spanKind: SpanKind.CLIENT,
         ...(this._loopSpan && { parentSpan: this._loopSpan }),
       })
       this._addSystemPromptEvent(span, systemPrompt)
