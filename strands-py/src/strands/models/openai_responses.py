@@ -402,7 +402,18 @@ class OpenAIResponsesModel(Model):
 
         async with self._get_client() as client:
             try:
-                response = await client.responses.create(**request)
+                try:
+                    response = await client.responses.create(**request)
+                except openai.BadRequestError as rejection:
+                    if not self._rejects_replayed_reasoning(request, rejection):
+                        raise
+                    # History keeps the reasoning, so a later endpoint that accepts it still gets it.
+                    logger.warning("error=<%s> | endpoint rejected replayed reasoning | retrying without it", rejection)
+                    request = {
+                        **request,
+                        "input": [item for item in request["input"] if item.get("type") != "reasoning"],
+                    }
+                    response = await client.responses.create(**request)
 
                 logger.debug("streaming response from OpenAI Responses API model")
 
@@ -947,6 +958,16 @@ class OpenAIResponsesModel(Model):
                 if "toolResult" in content
             ]
 
+            # A reasoning item must be followed by the output it produced, a message or a function call.
+            if (
+                reasoning_items
+                and not formatted_tool_calls
+                and not any(part.get("type") == "output_text" and part.get("text") for part in formatted_contents)
+            ):
+                skipped["reasoningContent without a message or tool call in its turn | skipping content block"] += len(
+                    reasoning_items
+                )
+                reasoning_items = []
             formatted_messages.extend(reasoning_items)
             if formatted_contents:
                 if role == "assistant":
@@ -1133,6 +1154,13 @@ class OpenAIResponsesModel(Model):
             chunks.append(self._format_chunk({"chunk_type": "content_start", "data_type": data_type}))
 
         return chunks, data_type
+
+    @staticmethod
+    def _rejects_replayed_reasoning(request: dict[str, Any], error: openai.BadRequestError) -> bool:
+        """Whether a request that replayed reasoning failed because the endpoint would not take that reasoning."""
+        message = str(error).lower()
+        replayed = any(isinstance(item, dict) and item.get("type") == "reasoning" for item in request["input"])
+        return replayed and ("reasoning" in message or "encrypted" in message)
 
     def _capture_reasoning(
         self, items: list[Any] | None, captured: set[str], data_type: str | None

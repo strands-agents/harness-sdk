@@ -37,6 +37,7 @@ import {
   formatResponsesRequest,
   mapResponsesEventToSDK,
   warnManagedParams as warnResponsesManagedParams,
+  withoutRejectedReasoning,
 } from './responses-adapter.js'
 import type {
   ChatStreamState,
@@ -337,7 +338,16 @@ export class OpenAIModel extends Model<OpenAIModelConfig> {
         stateful,
         this.modelInfo
       )
-      const stream = await this._client.responses.create(request, { signal: options?.cancelSignal })
+      let stream
+      try {
+        stream = await this._client.responses.create(request, { signal: options?.cancelSignal })
+      } catch (error) {
+        const retry = withoutRejectedReasoning(request, error)
+        if (!retry) throw error
+        // History keeps the reasoning, so a later endpoint that accepts it still gets it.
+        logger.warn(`error=<${String(error)}> | endpoint rejected replayed reasoning | retrying without it`)
+        stream = await this._client.responses.create(retry, { signal: options?.cancelSignal })
+      }
 
       // Stateless only: a stored conversation keeps its reasoning server-side.
       const state = createResponsesStreamState(stateful ? undefined : request.model)

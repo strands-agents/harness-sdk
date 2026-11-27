@@ -3243,3 +3243,71 @@ async def test_agent_replays_captured_reasoning_on_the_next_tool_turn(openai_cli
         "id": "rs_1",
         "encrypted_content": "enc",
     }
+
+
+def _bad_request(message):
+    response = httpx.Response(400, request=httpx.Request("POST", "https://api.openai.com/v1/responses"))
+    return openai.BadRequestError(message, response=response, body=None)
+
+
+_REPLAY_HISTORY = [
+    {"role": "user", "content": [{"text": "go"}]},
+    {"role": "assistant", "content": [_reasoning_block("rs_1", summary=[], encrypted_content="enc"), {"text": "ok"}]},
+    {"role": "user", "content": [{"text": "next"}]},
+]
+
+
+@pytest.mark.asyncio
+async def test_stream_retries_once_without_reasoning_the_endpoint_rejects(openai_client, agenerator, alist):
+    rejection = _bad_request("The encrypted content for item rs_1 could not be verified.")
+    openai_client.responses.create = unittest.mock.AsyncMock(side_effect=[rejection, agenerator([_completed()])])
+    model = OpenAIResponsesModel(model_id="gpt-4o")
+
+    await alist(model.stream(_REPLAY_HISTORY))
+
+    first, second = (call.kwargs["input"] for call in openai_client.responses.create.call_args_list)
+    assert [item.get("type") for item in first].count("reasoning") == 1
+    assert all(item.get("type") != "reasoning" for item in second)
+    assert _REPLAY_HISTORY[1]["content"][0]["reasoningContent"]["providerData"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("history", [_REPLAY_HISTORY[2:], _REPLAY_HISTORY])
+async def test_stream_raises_a_bad_request_that_is_not_about_replayed_reasoning(openai_client, alist, history):
+    message = "Invalid value for temperature." if history is _REPLAY_HISTORY else "Invalid reasoning effort."
+    openai_client.responses.create = unittest.mock.AsyncMock(side_effect=_bad_request(message))
+    model = OpenAIResponsesModel(model_id="gpt-4o")
+
+    with pytest.raises(openai.BadRequestError):
+        await alist(model.stream(history))
+    assert openai_client.responses.create.call_count == 1
+
+
+def test_format_request_messages_drops_reasoning_from_a_turn_with_nothing_after_it(caplog):
+    messages = [
+        {"role": "user", "content": [{"text": "go"}]},
+        {"role": "assistant", "content": [_reasoning_block("rs_1", summary=[], encrypted_content="enc")]},
+        {"role": "user", "content": [{"text": "next"}]},
+    ]
+
+    with caplog.at_level("WARNING"):
+        items = OpenAIResponsesModel._format_request_messages(messages, reasoning_model_id="gpt-4o")
+
+    assert all(item.get("type") != "reasoning" for item in items)
+    assert "reasoningContent without a message or tool call" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_stream_captures_reasoning_from_an_incomplete_response_and_skips_empty_items(agenerator, alist):
+    model = OpenAIResponsesModel(model_id="gpt-4o")
+    output = [ResponseReasoningItem(id="rs_0", type="reasoning", summary=[]), _reasoning_item("rs_1")]
+    incomplete = SimpleNamespace(
+        type="response.incomplete",
+        response=SimpleNamespace(
+            usage=None, incomplete_details=SimpleNamespace(reason="max_output_tokens"), output=output
+        ),
+    )
+
+    message, _ = await _stream_message(model, [incomplete], agenerator, alist)
+
+    assert message["content"] == [_reasoning_block("rs_1", encrypted_content="enc")]

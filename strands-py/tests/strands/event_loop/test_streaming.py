@@ -2208,3 +2208,16 @@ def test_handle_content_block_stop_keeps_reasoning_provider_data_on_its_block(te
     reasoning = {"reasoningText": {"text": text}} if text else {}
     assert state["content"] == [{"reasoningContent": {**reasoning, "providerData": provider_data}}]
     assert "reasoningProviderData" not in state
+
+
+def test_handle_content_block_delta_keeps_provider_data_sent_with_text():
+    provider_data = {"provider": "openai_responses", "modelId": "m", "data": {"id": "rs_1"}}
+    state = {"content": [], "current_tool_use": {}, "text": "", "reasoningText": "", "citationsContent": []}
+    delta = {"reasoningContent": {"text": "plan", "providerData": provider_data}}
+
+    state, _ = strands.event_loop.streaming.handle_content_block_delta({"delta": delta}, state)
+    state = strands.event_loop.streaming.handle_content_block_stop(state)
+
+    assert state["content"] == [
+        {"reasoningContent": {"reasoningText": {"text": "plan"}, "providerData": provider_data}}
+    ]

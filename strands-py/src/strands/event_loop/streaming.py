@@ -283,7 +283,7 @@ def handle_content_block_delta(
             state["redactedContent"] = state.get("redactedContent", b"") + redacted_content
             typed_event = ReasoningRedactedContentStreamEvent(redacted_content=redacted_content, delta=delta_content)
 
-        elif "providerData" in reasoning_delta:
+        if "providerData" in reasoning_delta:
             state["reasoningProviderData"] = reasoning_delta["providerData"]
 
     return state, typed_event

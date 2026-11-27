@@ -354,7 +354,15 @@ function formatResponsesMessages(messages: Message[], reasoningModelId?: string)
       }
     }
 
-    input.push(...reasoningItems)
+    // A reasoning item must be followed by the output it produced, a message or a function call.
+    const followed = toolCallItems.length > 0 || contentItems.some((item) => item.type === 'output_text' && item.text)
+    if (reasoningItems.length > 0 && !followed) {
+      logger.warn(
+        `count=<${reasoningItems.length}> | reasoning without a message or tool call in its turn cannot be replayed to the responses api | skipping`
+      )
+    } else {
+      input.push(...reasoningItems)
+    }
     if (contentItems.length > 0) {
       if (role === 'assistant') {
         // Only the string EasyInputMessage form is a valid assistant *input* shape
@@ -389,6 +397,24 @@ function formatResponsesMessages(messages: Message[], reasoningModelId?: string)
   }
 
   return input
+}
+
+/**
+ * The request without its replayed reasoning, when the endpoint rejected the request because of that reasoning;
+ * otherwise undefined.
+ *
+ * @internal
+ */
+export function withoutRejectedReasoning(
+  request: ResponseCreateParamsStreaming,
+  error: unknown
+): ResponseCreateParamsStreaming | undefined {
+  const message = error instanceof Error ? error.message.toLowerCase() : ''
+  const input = Array.isArray(request.input) ? request.input : []
+  const replayed = input.some((item) => item.type === 'reasoning')
+  if ((error as { status?: number }).status !== 400 || !replayed) return undefined
+  if (!message.includes('reasoning') && !message.includes('encrypted')) return undefined
+  return { ...request, input: input.filter((item) => item.type !== 'reasoning') }
 }
 
 /** The reasoning input item for a block this adapter captured from `modelId`, else undefined. */

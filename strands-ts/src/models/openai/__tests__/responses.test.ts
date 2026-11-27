@@ -1486,6 +1486,50 @@ describe('OpenAIModel (api: responses) stateless reasoning replay', () => {
     warn.mockRestore()
   })
 
+  describe('when the endpoint rejects replayed reasoning', () => {
+    const history = (): Message[] => [
+      user('go'),
+      new Message({ role: 'assistant', content: [tagged('rs_1'), new TextBlock('ok')] }),
+      user('next'),
+    ]
+    const badRequest = (message: string): Error => Object.assign(new Error(message), { status: 400 })
+
+    async function run(messages: Message[], error: Error): Promise<any[]> {
+      const requests: any[] = []
+      const create = vi.fn(async (req: any) => {
+        requests.push(req)
+        if (requests.length === 1) throw error
+        return (async function* () {
+          yield { type: 'response.completed', response: {} }
+        })()
+      })
+      const model = new OpenAIModel({ api: 'responses', client: { responses: { create } } as any, modelId: 'gpt-4o' })
+      await collectIterator(model.stream(messages)).catch(() => undefined)
+      return requests
+    }
+
+    it('retries once without the reasoning', async () => {
+      const messages = history()
+      const requests = await run(messages, badRequest('The encrypted content for item rs_1 could not be verified.'))
+      expect(requests).toHaveLength(2)
+      expect(requests[0].input.some((item: any) => item.type === 'reasoning')).toBe(true)
+      expect(requests[1].input.some((item: any) => item.type === 'reasoning')).toBe(false)
+      expect(messages[1]!.content[0]).toEqual(tagged('rs_1'))
+    })
+
+    it.each([
+      ['an unrelated bad request', history(), badRequest('Invalid value for temperature.')],
+      ['a request with no replayed reasoning', [user('next')], badRequest('Invalid reasoning effort.')],
+    ])('does not retry %s', async (_label, messages, error) => {
+      expect(await run(messages, error)).toHaveLength(1)
+    })
+  })
+
+  it('drops reasoning from a turn with nothing after it', async () => {
+    const req = await request([user('go'), new Message({ role: 'assistant', content: [tagged('rs_1')] }), user('next')])
+    expect(req.input.some((item: any) => item.type === 'reasoning')).toBe(false)
+  })
+
   it('accepts back only reasoning it captured from the configured model', () => {
     const model = new OpenAIModel({ api: 'responses', client: {} as OpenAI, modelId: 'gpt-4o' })
     expect(model._acceptsReasoning(tagged('rs_1').providerData!)).toBe(true)
