@@ -22,8 +22,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class _LLMSteering(BaseModel):
-    """Structured output model for LLM steering decisions."""
+class LLMSteering(BaseModel):
+    """Structured output model whose class name is also the provider-facing tool name."""
 
     decision: Literal["proceed", "guide", "interrupt"] = Field(
         description="Steering decision: 'proceed' to continue, 'guide' to provide feedback, 'interrupt' for human input"
@@ -95,11 +95,11 @@ class LLMSteeringHandler(SteeringHandler):
         )
 
         # Get LLM decision
-        llm_result: _LLMSteering = cast(
-            _LLMSteering,
+        llm_result: LLMSteering = cast(
+            LLMSteering,
             steering_agent(
                 prompt,
-                structured_output_model=_LLMSteering,
+                structured_output_model=LLMSteering,
                 invocation_context=_create_auxiliary_invocation_context(invocation_context),
             ).structured_output,
         )
