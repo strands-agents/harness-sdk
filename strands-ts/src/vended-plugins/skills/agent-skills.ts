@@ -206,10 +206,10 @@ export class AgentSkills implements Plugin {
    * a path to a parent directory containing multiple skills, or an
    * HTTPS URL pointing to a SKILL.md file.
    *
-   * Skill instances are resolved immediately into the returned map. Async sources
-   * (URLs) are resolved in the background; the returned `ready` promise resolves when
-   * all URL fetches have completed. Filesystem paths are returned in `skillPaths` to be
-   * loaded at initAgent, where they read from the agent's sandbox.
+   * The returned map is filled once every URL fetch has settled, in source order, so the listing does
+   * not depend on which fetch finishes first. The returned `ready` promise resolves when that pass is
+   * done. Filesystem paths are returned in `skillPaths` to be loaded at initAgent, where they read
+   * from the agent's sandbox.
    */
   private _resolveSkills(sources: SkillSource[]): {
     skills: Map<string, Skill>
@@ -218,44 +218,40 @@ export class AgentSkills implements Plugin {
   } {
     const resolved = new Map<string, Skill>()
     const skillPaths: string[] = []
-    const asyncTasks: Promise<void>[] = []
+    // Positioned by source so the fill below runs in source order; a failed fetch leaves its position empty.
+    const position: (Skill | Promise<Skill | undefined>)[] = []
+    let hasUrlSource = false
 
     for (const source of sources) {
       if (source instanceof Skill) {
-        if (resolved.has(source.name)) {
-          logger.warn(`name=<${source.name}> | duplicate skill name, overwriting previous skill`)
-        }
-        resolved.set(source.name, source)
+        position.push(source)
       } else if (source.startsWith('https://')) {
-        asyncTasks.push(
-          Skill.fromUrl(source, { strict: this._strict }).then(
-            (skill) => {
-              if (resolved.has(skill.name)) {
-                logger.warn(`name=<${skill.name}> | duplicate skill name, overwriting previous skill`)
-              }
-              resolved.set(skill.name, skill)
-            },
-            (error) => {
-              logger.warn(`url=<${source}> | failed to load skill from URL: ${error}`)
-            }
-          )
+        hasUrlSource = true
+        position.push(
+          Skill.fromUrl(source, { strict: this._strict }).catch((error) => {
+            logger.warn(`url=<${source}> | failed to load skill from URL: ${error}`)
+            return undefined
+          })
         )
       } else {
         skillPaths.push(source)
       }
     }
 
-    let ready: Promise<void>
-    if (asyncTasks.length > 0) {
-      ready = Promise.all(asyncTasks).then(() => {
-        logger.debug(
-          `source_count=<${sources.length}>, resolved_count=<${resolved.size}> | skills resolved (including async)`
-        )
-      })
-    } else {
-      logger.debug(`source_count=<${sources.length}>, resolved_count=<${resolved.size}> | skills resolved`)
-      ready = Promise.resolve()
-    }
+    const ready = Promise.all(position).then((loaded) => {
+      for (const skill of loaded) {
+        if (!skill) continue
+        if (resolved.has(skill.name)) {
+          logger.warn(`name=<${skill.name}> | duplicate skill name, overwriting previous skill`)
+        }
+        resolved.set(skill.name, skill)
+      }
+      logger.debug(
+        `source_count=<${sources.length}>, resolved_count=<${resolved.size}> | skills resolved${
+          hasUrlSource ? ' (including async)' : ''
+        }`
+      )
+    })
 
     return { skills: resolved, ready, skillPaths }
   }
@@ -309,8 +305,11 @@ export class AgentSkills implements Plugin {
         continue
       }
 
-      // Parent directory: load each subdirectory that contains a skill.
-      for (const entry of entries.filter((e) => e.isDir).sort((a, b) => a.name.localeCompare(b.name))) {
+      // Parent directory: load each subdirectory that contains a skill. Code-unit order, as Skill.fromDirectory
+      // reads a directory, so the listing does not change with the process locale.
+      for (const entry of entries
+        .filter((e) => e.isDir)
+        .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
         const childDir = `${skillPath}/${entry.name}`
         const childEntries = await sandbox.listFiles(childDir).catch((error) => {
           logger.warn(`path=<${childDir}> | failed to load skill from sandbox: ${error}`)

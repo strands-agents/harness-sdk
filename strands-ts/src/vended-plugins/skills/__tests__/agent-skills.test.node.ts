@@ -79,6 +79,23 @@ describe('AgentSkills', () => {
       expect(await plugin.getAvailableSkills(agent)).toHaveLength(2)
     })
 
+    it('lists skills from a parent directory in code-unit order, as Skill.fromDirectory does', async () => {
+      // Mixed case is what makes the two orders differ: a locale collation compares "Zebra-tools" as a
+      // "zebra-tools" and sorts it among the lowercase names, while code-unit order puts it first.
+      for (const name of ['Zebra-tools', 'apple-tools', 'beta-tools']) {
+        await createSkillDir(name, `---\nname: ${name}\ndescription: The ${name} skill.\n---\nBody.`)
+      }
+      const plugin = new AgentSkills({ skills: [testDir] })
+      const agent = createMockAgent()
+      await plugin.initAgent(agent)
+
+      expect((await plugin.getAvailableSkills(agent)).map((s) => s.name)).toEqual([
+        'Zebra-tools',
+        'apple-tools',
+        'beta-tools',
+      ])
+    })
+
     it('warns on duplicate names and keeps the last', async () => {
       const skill1 = makeSkill('dup', 'First')
       const skill2 = makeSkill('dup', 'Second')
@@ -591,6 +608,36 @@ describe('AgentSkills', () => {
 
       expect(await plugin.getAvailableSkills()).toHaveLength(1)
       expect(agent.trackedHooks).toHaveLength(1)
+    })
+
+    it('lists URL skills in source order, not fetch completion order', async () => {
+      const content = (name: string) => `---\nname: ${name}\ndescription: The ${name} skill.\n---\nDo ${name}.\n`
+      // alpha answers last and charlie first, so completion order alone would list them backwards.
+      const delays: Record<string, number> = { alpha: 60, bravo: 30, charlie: 5 }
+      vi.spyOn(globalThis, 'fetch').mockImplementation((async (url: string) => {
+        const name = String(url).split('/').at(-2)!
+        await new Promise((resolve) => setTimeout(resolve, delays[name]))
+        return { ok: true, status: 200, statusText: 'OK', text: () => Promise.resolve(content(name)) } as Response
+      }) as unknown as typeof globalThis.fetch)
+
+      const local = makeSkill('local', 'A Skill instance.')
+      const plugin = new AgentSkills({
+        skills: [
+          'https://example.com/alpha/SKILL.md',
+          local,
+          'https://example.com/bravo/SKILL.md',
+          'https://example.com/charlie/SKILL.md',
+        ],
+      })
+      const agent = createMockAgent()
+      await plugin.initAgent(agent)
+
+      expect((await plugin.getAvailableSkills(agent)).map((s) => s.name)).toEqual([
+        'alpha',
+        'local',
+        'bravo',
+        'charlie',
+      ])
     })
   })
 })
