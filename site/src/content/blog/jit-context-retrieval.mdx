@@ -9,6 +9,8 @@ tags:
 draft: true
 ---
 
+import Diagram from '@components/Diagram.astro'
+
 When developing agentic systems, the limited width of the context window quickly becomes one of your most sacred and scarce resources. The Strands team has come to know this well: Model performance degrades under context bloat, causing bugs to bubble up in code; Applications hit context window overflows and crash; Agents get stuck in loops attempting to access the context they just shrunk. Meanwhile, token costs continue to rise.
 
 With this in mind, we developed a tiered approach to the curation of the model's context window, ensuring context is dropped, but never forgotten. These are the defaults behind [Strands harness](/blog/introducing-strands-harness/), and a large part of why it costs 28% less than other harnesses across six benchmarks.
@@ -17,14 +19,10 @@ With this in mind, we developed a tiered approach to the curation of the model's
 
 Historically, at their inception, agentic systems relied upon rudimentary "Conversation Managers", which acted as a stopgap between the application and the dreaded Context Window Overflow Error. In Strands, a Conversation Manager would merely catch a Context Window Overflow Error returned by the model call once the context window had surpassed its limit, then either it would drop (or summarize) the oldest 30% of its context to be able to free up space in the context window, reinvoke the model, and recover gracefully.
 
-```mermaid
-flowchart LR
-    A[Agent turn] --> B[Model call]
-    B -->|fits| C[Response]
-    B -->|over limit| D[Context Window<br/>Overflow Error]
-    D --> E[Drop or summarize<br/>oldest 30%]
-    E --> B
-```
+<Diagram
+  name="context-overflow-recovery"
+  alt="The reactive recovery loop. An agent turn triggers a model call. If the context fits, the model returns a response. If it is over the limit, the call fails with a context overflow error and the turn is wasted. The conversation manager then drops or summarizes the oldest 30% of context and retries the model call."
+/>
 
 While this approach enabled the advent of model-driven applications, it was far from ideal. Each Context Window Overflow Error meant that an entire turn was wasted, requiring re-invocation of the model at a high token cost.
 
@@ -73,17 +71,10 @@ Although compressing context clears out room for further conversations, it loses
 
 We resolved this in Strands by maintaining a lossless copy of any context that has been sent to the agent in a log colloquially known as the "stash". Since this "stash" is maintained in storage independently of the agent's context window, the agent is able to empty its context window without sacrificing any information. Now, the compacted versions of context are able to act as previews for the agent to retrieve the full context blocks as needed.
 
-```mermaid
-flowchart LR
-    subgraph CW["Context window — billed every turn"]
-        P["toolResult tu_abc123<br/>Truncated: ~12,500 tokens<br/>head + tail preview"]
-    end
-    subgraph S["Stash — storage, never billed"]
-        F["tu_abc123_0<br/>full 12,500-token result"]
-    end
-    P -. "retrieve_context" .-> F
-    F -. "only the slice requested" .-> CW
-```
+<Diagram
+  name="context-stash-preview"
+  alt="The stash next to the context window. The context window, billed every turn, holds only a preview: the head and tail of tool result tu_abc123 with about 12,500 tokens cut. The stash, which lives in storage and is never billed, holds the lossless block tu_abc123_0 with the full 12,500-token result. The agent calls retrieve_context against the stash, and only the slice it asked for returns to the context window."
+/>
 
 ```python
 from strands import Agent
@@ -113,14 +104,10 @@ storage = LocalFileStorage(
 )
 ```
 
-```mermaid
-flowchart LR
-    A["Model sees preview<br/>+ toolUseId"] --> B{Preview enough?}
-    B -->|yes| C[Answer directly<br/>zero extra tokens]
-    B -->|no| D["retrieve_context(reference, pattern)"]
-    D --> E[Search ranks and filters<br/>the lossless blocks]
-    E --> F[Only matching lines<br/>re-enter context]
-```
+<Diagram
+  name="context-retrieval-decision"
+  alt="The retrieval decision. The model reads a preview: a compacted block plus its reference. If the preview is enough, it answers directly at zero extra tokens. If it needs the rest, it calls retrieve_context with the reference and a pattern; search ranks and filters the lossless blocks, and only the matching lines re-enter the context window."
+/>
 
 ## Context Isolation
 
@@ -145,13 +132,10 @@ writer = Agent(
 )
 ```
 
-```mermaid
-flowchart TB
-    O[Orchestrator] --> R[Researcher]
-    O --> W[Writer]
-    R --> RS["./.strands/researcher"]
-    W --> WS["./.strands/writer"]
-```
+<Diagram
+  name="context-isolation-namespaces"
+  alt="Context isolation through storage namespaces. An orchestrator launches two sub-agents, a researcher and a writer. Each works in its own storage namespace — ./.strands/researcher and ./.strands/writer — so no context bleeds between them and each context window stays task-specific."
+/>
 
 The Context Window Overflow Error was never the problem; it was the symptom of treating the context window as the only place context could live. Once context has somewhere else to go, the window stops being the bottleneck of agentic capability and becomes what it always should have been: a working set, assembled for the turn in front of it.
 

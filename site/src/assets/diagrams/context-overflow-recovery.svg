@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="context-overflow-recovery" viewBox="0 0 720 240" width="720" height="240">
+  <!-- Type: loop. Story: the reactive conversation manager acts only after the model call overflows, so every recovery costs a wasted turn. -->
+  <!-- Standalone fallback: zero-specificity rules, so diagrams.css wins whenever the SVG is inlined on the site. -->
+  <style>
+    :where(.context-overflow-recovery) { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; }
+    :where(.context-overflow-recovery .dg-bg) { fill: #ffffff; }
+    :where(.context-overflow-recovery .dg-node) { fill: #ffffff; stroke: rgba(0, 0, 0, 0.55); stroke-width: 1; }
+    :where(.context-overflow-recovery .dg-node.is-input) { fill: #fafafa; stroke: #666464; }
+    :where(.context-overflow-recovery .dg-name) { fill: #000000; font-size: 14px; font-weight: 600; }
+    :where(.context-overflow-recovery .dg-sub) { fill: #666464; font-size: 12px; }
+    :where(.context-overflow-recovery .dg-label) { fill: #666464; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; letter-spacing: 0.06em; }
+    :where(.context-overflow-recovery .dg-edge) { fill: none; stroke: #666464; stroke-width: 1.25; }
+    :where(.context-overflow-recovery .dg-head) { fill: #666464; }
+    :where(.context-overflow-recovery .dg-mask) { fill: #ffffff; }
+    :where(.context-overflow-recovery .is-danger-text) { fill: #c4161c; }
+    @media (prefers-color-scheme: dark) {
+    :where(.context-overflow-recovery .dg-bg) { fill: #000000; }
+    :where(.context-overflow-recovery .dg-node) { fill: #000000; stroke: rgba(255, 255, 255, 0.55); }
+    :where(.context-overflow-recovery .dg-node.is-input) { fill: #0a0a0a; stroke: #999696; }
+    :where(.context-overflow-recovery .dg-name) { fill: #ffffff; }
+    :where(.context-overflow-recovery .dg-sub) { fill: #999696; }
+    :where(.context-overflow-recovery .dg-label) { fill: #999696; }
+    :where(.context-overflow-recovery .dg-edge) { stroke: #999696; }
+    :where(.context-overflow-recovery .dg-head) { fill: #999696; }
+    :where(.context-overflow-recovery .dg-mask) { fill: #000000; }
+    :where(.context-overflow-recovery .is-danger-text) { fill: #f7414c; }
+    }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+  <rect class="dg-bg" width="720" height="240"/>
+
+  <!-- Edges -->
+  <path class="dg-edge" d="M136,92 H182" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M320,92 H438" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M288,120 V168 Q288,176 296,176 H398" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M400,188 H242" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M212,160 V122" marker-end="url(#arrow)"/>
+
+  <!-- Edge labels -->
+  <rect class="dg-mask" x="360" y="72" width="40" height="12" rx="2"/>
+  <text class="dg-label" x="380" y="81" text-anchor="middle">FITS</text>
+  <rect class="dg-mask" x="307" y="156" width="80" height="12" rx="2"/>
+  <text class="dg-label" x="347" y="165" text-anchor="middle">OVER LIMIT</text>
+  <text class="dg-label" x="220" y="145">RETRY</text>
+
+  <!-- Nodes -->
+  <rect class="dg-node is-input" x="16" y="64" width="120" height="56" rx="6"/>
+  <text class="dg-name" x="76" y="97" text-anchor="middle">Agent turn</text>
+
+  <rect class="dg-node" x="184" y="64" width="136" height="56" rx="6"/>
+  <text class="dg-name" x="252" y="97" text-anchor="middle">Model call</text>
+
+  <rect class="dg-node" x="440" y="64" width="120" height="56" rx="6"/>
+  <text class="dg-name" x="500" y="97" text-anchor="middle">Response</text>
+
+  <rect class="dg-node" x="400" y="160" width="160" height="56" rx="6"/>
+  <text class="dg-name is-danger-text" x="480" y="185" text-anchor="middle">Context overflow</text>
+  <text class="dg-sub" x="480" y="203" text-anchor="middle">the turn is wasted</text>
+
+  <rect class="dg-node" x="96" y="160" width="144" height="56" rx="6"/>
+  <text class="dg-name" x="168" y="185" text-anchor="middle">Drop oldest 30%</text>
+  <text class="dg-sub" x="168" y="203" text-anchor="middle">or summarize</text>
+</svg>
