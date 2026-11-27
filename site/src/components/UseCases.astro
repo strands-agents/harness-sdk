@@ -514,6 +514,18 @@ const useCases = [
     color: var(--accent-green);
   }
 
+  /* Inactive items are buttons that swap the code sample. Lift them out of
+     the muted grey on hover and focus so they read as clickable. */
+  .use-cases__item:not(.is-active):hover,
+  .use-cases__item:not(.is-active):has(.use-cases__item-btn:focus-visible) {
+    color: var(--fg);
+  }
+
+  .use-cases__item:not(.is-active):hover .use-cases__item-icon,
+  .use-cases__item:not(.is-active):has(.use-cases__item-btn:focus-visible) .use-cases__item-icon {
+    color: var(--accent-green);
+  }
+
   .use-cases__item-icon :global(svg) {
     width: 30px;
     height: 28px;

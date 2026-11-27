@@ -435,6 +435,11 @@ body:has(.cat-page) {
   background: color-mix(in srgb, var(--sl-color-accent) 14%, transparent);
   color: var(--cat-accent-text);
 }
+.cat-seg-btn[aria-pressed='false']:hover,
+.cat-seg-btn[aria-checked='false']:hover {
+  background: var(--docs-hover-bg);
+  color: var(--sl-color-white);
+}
 
 /* Vertical divider between filter groups in the facet row (language / SDK |
    maintainer | status) so the single combined row still reads as distinct

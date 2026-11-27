@@ -677,6 +677,19 @@ const supportingCards = [cardFor('/box'), cardFor('/evals'), cardFor('/decider')
     cursor: pointer;
   }
 
+  /* Tint the border in the card's accent while the tile or code button is
+     hovered or the code button has keyboard focus, so the card reads as
+     something that opens. The docs link inside the tile navigates instead, so
+     hovering it does not tint. */
+  .toolkit__card--expandable:not(.is-open):has(.toolkit__card-compact:hover):not(:has(.toolkit__card-read:hover)),
+  .toolkit__card--expandable:not(.is-open):has(.toolkit__card-open:hover, .toolkit__card-open:focus-visible) {
+    border-color: var(--accent);
+  }
+
+  .toolkit__card-open:hover {
+    opacity: 0.8;
+  }
+
   .toolkit__card-slug {
     margin: 0;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
