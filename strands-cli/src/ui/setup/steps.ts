@@ -648,7 +648,7 @@ function pluginSelectionRows(
             settings: { ...next.settings, mcpDiscovery: enabled, agentMessaging: enabled },
             profile: {
               ...next.profile,
-              builtinPlugins: enabled ? DEFAULT_HARNESS_AGENT_CONFIG.builtinPlugins : [],
+              builtinPlugins: enabled ? ['todos', 'environment'] : [],
             },
           }
         })

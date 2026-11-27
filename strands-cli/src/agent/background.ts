@@ -380,7 +380,10 @@ function formatToolResult(content: readonly ToolResultContent[]): string {
         if (block.type === 'videoBlock') {
           return `[video: ${block.format}]`
         }
-        return `[document: ${block.name}.${block.format}]`
+        if (block.type === 'documentBlock') {
+          return `[document: ${block.name}.${block.format}]`
+        }
+        return JSON.stringify(block.data, null, 2)
       })
       .join('\n')
   )

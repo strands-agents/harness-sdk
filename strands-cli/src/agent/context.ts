@@ -108,14 +108,17 @@ async function estimateContext(context: InvokeModelContext): Promise<ContextEsti
     other: [],
   }
   const lastIndex = context.messages.length - 1
+  const latestUser = context.messages.findLastIndex((message) => message.role === 'user')
   for (const [messageIndex, message] of context.messages.entries()) {
     const injectionStart =
       messageIndex === lastIndex && message.role === 'user'
         ? message.content.length - (context.dynamicTrailingBlocks ?? 0)
         : message.content.length
     for (const [blockIndex, block] of message.content.entries()) {
+      // Models read only the latest user message's injected blocks.
+      if (block.type === 'injectedBlock' && messageIndex !== latestUser) continue
       const kind =
-        blockIndex >= injectionStart
+        blockIndex >= injectionStart || block.type === 'injectedBlock'
           ? 'injectedContext'
           : block.type === 'toolResultBlock'
             ? 'toolResults'

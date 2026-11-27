@@ -25,12 +25,6 @@ const PYTHON_CLASSES: Readonly<Record<string, ModelClass>> = {
   OpenAIResponsesModel: { provider: 'openai', key: 'params' },
 }
 
-const HARNESS_FIELDS: Readonly<Record<string, string>> = {
-  bedrock: 'additionalRequestFields',
-  anthropic: 'params',
-  openai: 'params',
-}
-
 const classesFor = (python: boolean): Readonly<Record<string, ModelClass>> =>
   python ? PYTHON_CLASSES : TYPESCRIPT_CLASSES
 
@@ -77,9 +71,10 @@ const withinTokenLimit = (fields: ReasoningFields | undefined, maxTokens: unknow
     : { ...fields, thinking: { ...thinking, budget_tokens: maxTokens - 1 } }
 }
 
-const harnessFields = async (spec: string, key: string, effort: string): Promise<ReasoningFields | undefined> => {
+// The harness builds Claude on Bedrock as an AnthropicModel, so read the fields where the built class keeps them.
+const harnessFields = async (spec: string, effort: string): Promise<ReasoningFields | undefined> => {
   const model = (await resolveModel(spec, spec, effort as Effort)) as unknown as { getConfig(): ReasoningFields }
-  const value = model.getConfig()[key]
+  const value = model.getConfig()[TYPESCRIPT_CLASSES[model.constructor.name]?.key ?? '']
   return isRecord(value) ? value : undefined
 }
 
@@ -104,9 +99,7 @@ export const modelEffort = async ({
       `The ${className} sets no model id, so strands dev cannot look up its reasoning settings.`
     )
   const spec = `${modelClass.provider}/${modelId}`
-  const results = await Promise.allSettled(
-    EFFORT_LEVELS.map((level) => harnessFields(spec, HARNESS_FIELDS[modelClass.provider]!, level))
-  )
+  const results = await Promise.allSettled(EFFORT_LEVELS.map((level) => harnessFields(spec, level)))
   const byLevel = new Map<string, ReasoningFields | undefined>()
   results.forEach((result, index) => {
     if (result.status === 'fulfilled') byLevel.set(EFFORT_LEVELS[index]!, withinTokenLimit(result.value, maxTokens))

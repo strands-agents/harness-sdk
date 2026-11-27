@@ -169,6 +169,8 @@ export function projectToolResultContent(block: ToolResultContent): ChatToolResu
       return { type: 'text', text: sanitizeTerminalText(block.text) }
     case 'jsonBlock':
       return { type: 'json', value: sanitizeTerminalValue(block.json) }
+    case 'unknownBlock':
+      return { type: 'json', value: sanitizeTerminalValue(block.data as JSONValue) }
     default:
       return projectMediaContent(block)
   }

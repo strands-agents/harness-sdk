@@ -207,6 +207,8 @@ function summarizeToolResult(content: readonly ToolResultContent[]): string {
           return `[video: ${block.format}]`
         case 'documentBlock':
           return `[document: ${block.name}.${block.format}]`
+        case 'unknownBlock':
+          return JSON.stringify(block.data)
       }
     })
     .map(sanitizeTerminalText)

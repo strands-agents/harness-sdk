@@ -61,6 +61,9 @@ function setupControls(profile: Partial<HarnessAgentConfig>, discovery = true) {
   }
 }
 
+// A model with no built-in web search, where web_search goes through the Exa opt-in.
+const NO_SEARCH_MODEL = 'ollama/llama3.2'
+
 const configuredTools: HarnessConfigBuiltinTools = {
   shell: { description: 'Custom shell' },
   read: { media: false },
@@ -164,6 +167,7 @@ describe('setup feature controls', () => {
       memory: { dir: './private-memory' },
       contextManager: 'agentic',
       agentConfig: { backgroundTasks: { maxConcurrency: 2, timeout: 23000 }, maxParallelTools: 3 },
+      builtinPlugins: ['todos', 'environment'],
     })
     const controls = setupControls(profile, discovery)
     await harnessAgentOptionsFromConfig(profile)
@@ -186,7 +190,7 @@ describe('setup feature controls', () => {
 
   it.each([false, true])('preserves configured tools and explicit Exa=%s through bulk toggles', async (exa) => {
     const tools = { ...configuredTools, web_search: exa ? ('exa' as const) : false }
-    const controls = setupControls({ builtinTools: tools })
+    const controls = setupControls({ model: NO_SEARCH_MODEL, builtinTools: tools })
     await harnessAgentOptionsFromConfig(controls.draft.profile)
     expect(controls.row(3, 'select-all').label).toBe('Deselect all')
     controls.row(3, 'select-all').activate()
@@ -198,6 +202,7 @@ describe('setup feature controls', () => {
 
   it('enables defaults without adding Exa or converting a tool list to a mapping', () => {
     const controls = setupControls({
+      model: NO_SEARCH_MODEL,
       skills: [],
       memory: false,
       contextManager: false,
@@ -537,7 +542,8 @@ describe('setup web_search availability', () => {
   )
 
   it.each([
-    ['Exa', 'bedrock', 'exa'],
+    ['Exa', 'ollama', 'exa'],
+    ['Native', 'bedrock', 'native'],
     ['Native', 'bedrock-mantle', 'native'],
   ] as const)('offers an explicit %s web search opt-in for %s', (label, provider, mode) => {
     const draft = quickstartDraft(`${provider}/openai.gpt-6.1-sol`)
