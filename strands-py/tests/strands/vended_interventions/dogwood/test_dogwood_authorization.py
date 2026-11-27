@@ -503,6 +503,44 @@ def test_after_tool_call_records_a_call_only_once():
     assert _kinds(recorder) == ["request", "response"]
 
 
+PERMIT_PING_AFTER_SEARCH = (
+    PERMIT_SEARCH + 'permit(principal, action == Action::"ping", resource) '
+    'when temporal { formerly within 1h Action::"search"::response{} };'
+)
+
+
+def test_after_tool_call_lets_a_later_call_satisfy_a_temporal_predicate():
+    dogwood = DogwoodAuthorization(policies=PERMIT_PING_AFTER_SEARCH, tools=SPECS)
+
+    assert dogwood.before_tool_call(_before_event("ping", {}, tool_use_id="p1")).type == "deny"
+    assert dogwood.before_tool_call(_before_event("search", {"query": "x"}, tool_use_id="s1")).type == "proceed"
+    # A request is not a response: the predicate waits for the call to come back.
+    assert dogwood.before_tool_call(_before_event("ping", {}, tool_use_id="p2")).type == "deny"
+
+    dogwood.after_tool_call(_after_event("search", tool_use_id="s1"))
+
+    assert dogwood.before_tool_call(_before_event("ping", {}, tool_use_id="p3")).type == "proceed"
+
+
+def test_after_tool_call_does_not_satisfy_a_response_predicate_with_a_failed_call():
+    dogwood = DogwoodAuthorization(policies=PERMIT_PING_AFTER_SEARCH, tools=SPECS)
+    dogwood.before_tool_call(_before_event("search", {"query": "x"}, tool_use_id="s1"))
+
+    dogwood.after_tool_call(_after_event("search", tool_use_id="s1", status="error"))
+
+    assert dogwood.before_tool_call(_before_event("ping", {}, tool_use_id="p1")).type == "deny"
+
+
+def test_reset_denies_a_call_the_dropped_history_would_have_permitted():
+    dogwood = DogwoodAuthorization(policies=PERMIT_PING_AFTER_SEARCH, tools=SPECS)
+    dogwood.before_tool_call(_before_event("search", {"query": "x"}, tool_use_id="s1"))
+    dogwood.after_tool_call(_after_event("search", tool_use_id="s1"))
+
+    dogwood.reset()
+
+    assert dogwood.before_tool_call(_before_event("ping", {}, tool_use_id="p1")).type == "deny"
+
+
 def test_before_tool_call_denies_when_the_authorizer_returns_no_decision():
     dogwood = DogwoodAuthorization(policies=PERMIT_SEARCH, tools=SPECS)
     dogwood._authorizer = _SilentAuthorizer()

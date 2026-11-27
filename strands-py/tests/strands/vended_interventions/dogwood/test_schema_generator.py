@@ -84,6 +84,25 @@ def test_generate_action_schema_makes_input_optional_only_when_every_argument_is
     assert "input: searchInput" in schema
 
 
+def test_generate_action_schema_relaxes_only_the_tool_whose_whole_name_matches():
+    all_optional = {
+        "name": "a",
+        "description": "All optional",
+        "inputSchema": {"json": {"type": "object", "properties": {"x": {"type": "string"}}}},
+    }
+    # `input: aInput` is a prefix of this tool's own `input: aInputInput`, which must stay required.
+    name_collides = {
+        "name": "aInput",
+        "description": "Requires a query",
+        "inputSchema": {"json": {"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"]}},
+    }
+
+    schema = generate_action_schema([all_optional, name_collides])
+
+    assert "input?: aInput," in schema
+    assert "input: aInputInput," in schema
+
+
 def test_generate_action_schema_maps_each_json_type_to_a_cedar_type():
     tru_attributes = _declared_type(generate_action_schema([TYPED_SPEC]), "reportInput")
     exp_attributes = [
