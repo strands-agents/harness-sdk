@@ -202,17 +202,14 @@ describe('httpRequest tool', () => {
   })
 
   describe('error handling', () => {
-    it('throws timeout error when request exceeds timeout', async () => {
-      globalThis.fetch = vi.fn().mockImplementation(
-        async (_url, _options) =>
-          new Promise((_resolve, reject) => {
-            globalThis.setTimeout(() => {
-              const error = new Error('The operation was aborted')
-              error.name = 'AbortError'
-              reject(error)
-            }, 100)
-          })
-      )
+    // https://github.com/strands-agents/harness-sdk/issues/6427
+    it('throws its own timeout error when fetch rejects with the timeout signal reason', async () => {
+      globalThis.fetch = vi.fn((_url, options) => {
+        const signal = options?.signal as AbortSignal
+        return new Promise<Response>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+        })
+      })
 
       await expect(
         httpRequest.invoke({
@@ -220,7 +217,7 @@ describe('httpRequest tool', () => {
           url: 'https://slow-api.example.com',
           timeout: 0.1,
         })
-      ).rejects.toThrow('Request timed out')
+      ).rejects.toThrow('Request timed out after 0.1 seconds: GET https://slow-api.example.com')
     })
 
     it('throws error for network failures', async () => {

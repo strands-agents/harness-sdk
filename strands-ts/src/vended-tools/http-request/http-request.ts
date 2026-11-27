@@ -77,7 +77,8 @@ export const httpRequest = tool({
         body: responseBody,
       }
     } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
+      // AbortSignal.timeout() rejects fetch with a TimeoutError, not an AbortError
+      if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
         const reason = timeoutSignal.aborted ? `timed out after ${timeout} seconds` : 'cancelled'
         throw new Error(`Request ${reason}: ${method} ${url}`, { cause: error })
       }
