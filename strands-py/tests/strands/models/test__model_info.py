@@ -17,6 +17,7 @@ from strands.models._model_info import (
     ModelInfo,
     ModelLimits,
     PromptCaching,
+    _accepts_mime_type,
     _load_data,
     _section,
     get_context_window_limit,
@@ -265,10 +266,10 @@ def test_model_info_merge_keeps_an_empty_accepted_list_as_known():
         (("video/*",), "audio/mp4", False),
     ],
 )
-def test_model_info_accepts_reads_the_accepted_mime_types(accepted, mime_type, exp_accepts):
+def test_accepts_mime_type_reads_the_accepted_mime_types(accepted, mime_type, exp_accepts):
     info = ModelInfo(capabilities=ModelCapabilities(accepted_mime_types=accepted))
 
-    assert info.accepts(mime_type) is exp_accepts
+    assert _accepts_mime_type(info, mime_type) is exp_accepts
 
 
 def test_prompt_caching_value_map_covers_exactly_the_prompt_caching_type():

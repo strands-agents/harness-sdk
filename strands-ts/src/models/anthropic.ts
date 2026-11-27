@@ -22,7 +22,7 @@ import {
 import { zodSchemaToJsonSchema } from '../tools/zod-utils.js'
 import { LOAD_TOOLS_TOOL_NAME } from '../tools/load-tools.js'
 import type { ToolSpec } from '../tools/types.js'
-import { lookupModelInfo, ModelInfo } from './model-info.js'
+import { acceptsMimeType, lookupModelInfo, ModelInfo } from './model-info.js'
 import { withToolReferenceText } from './tool-references.js'
 import { Message, SummaryBlock } from '../types/messages.js'
 import type { ContentBlock, SystemPrompt, ToolResultContent } from '../types/messages.js'
@@ -434,9 +434,9 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
     const shared = lookupModelInfo(this.modelId ?? '')
     const capabilities = shared.capabilities ?? {}
     // JSON and XML documents go out as text, so a model that reads text reads them.
-    const asText = ModelInfo.accepts(shared, 'text/plain') ? ['application/json', 'application/xml'] : []
+    const asText = acceptsMimeType(shared, 'text/plain') ? ['application/json', 'application/xml'] : []
     const acceptedMimeTypes = capabilities.acceptedMimeTypes && [
-      ...SENDABLE_MIME_TYPES.filter((type) => ModelInfo.accepts(shared, type)),
+      ...SENDABLE_MIME_TYPES.filter((type) => acceptsMimeType(shared, type)),
       ...asText,
     ]
     return ModelInfo.merge(

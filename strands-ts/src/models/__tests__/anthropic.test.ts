@@ -3,7 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { VERSION as SDK_VERSION } from '@anthropic-ai/sdk/version'
 import { isNode } from '../../__fixtures__/environment.js'
 import { AnthropicModel } from '../anthropic.js'
-import { lookupModelInfo, ModelInfo } from '../model-info.js'
+import { acceptsMimeType, lookupModelInfo } from '../model-info.js'
 import { ModelProxy } from '../model-proxy.js'
 import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../../errors.js'
 import { collectGenerator, collectIterator } from '../../__fixtures__/model-test-helpers.js'
@@ -251,11 +251,11 @@ describe('AnthropicModel', () => {
 
     it('keeps only the listed types it sends', () => {
       const docx = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      expect(ModelInfo.accepts(lookupModelInfo('claude-sonnet-4-6'), docx)).toBe(true)
+      expect(acceptsMimeType(lookupModelInfo('claude-sonnet-4-6'), docx)).toBe(true)
       const info = new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-sonnet-4-6' }).modelInfo
 
       expect(info.capabilities?.acceptedMimeTypes).toEqual([...sendable, 'application/json', 'application/xml'])
-      expect(ModelInfo.accepts(info, docx)).toBe(false)
+      expect(acceptsMimeType(info, docx)).toBe(false)
       expect(Object.isFrozen(info.capabilities?.acceptedMimeTypes)).toBe(true)
     })
 
@@ -263,20 +263,20 @@ describe('AnthropicModel', () => {
       'narrows wildcards for %s to the types it sends',
       (modelId) => {
         const shared = lookupModelInfo(modelId)
-        expect(ModelInfo.accepts(shared, 'application/msword') || ModelInfo.accepts(shared, 'video/mp4')).toBe(true)
+        expect(acceptsMimeType(shared, 'application/msword') || acceptsMimeType(shared, 'video/mp4')).toBe(true)
         const info = new AnthropicModel({ apiKey: 'sk-ant-test', modelId }).modelInfo
 
         for (const type of info.capabilities?.acceptedMimeTypes ?? [])
           expect([...sendable, 'application/json', 'application/xml']).toContain(type)
-        expect(ModelInfo.accepts(info, 'application/msword')).toBe(false)
-        expect(ModelInfo.accepts(info, 'video/mp4')).toBe(false)
+        expect(acceptsMimeType(info, 'application/msword')).toBe(false)
+        expect(acceptsMimeType(info, 'video/mp4')).toBe(false)
       }
     )
 
     it('accepts every type when the shared data has no list', () => {
       const info = new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-3-opus-20240229' }).modelInfo
       expect(info.capabilities?.acceptedMimeTypes).toBeUndefined()
-      expect(ModelInfo.accepts(info, 'application/msword')).toBe(true)
+      expect(acceptsMimeType(info, 'application/msword')).toBe(true)
     })
 
     it('lets the modelInfo config set the accepted types', () => {

@@ -8,7 +8,7 @@ import type { ToolSpec } from '../tools/types.js'
 import type { CountTokensOptions, Model, StreamAggregatedResult, StreamOptions } from './model.js'
 import type { ModelStreamEvent } from './streaming.js'
 import { wellFormedRequest } from './well-formed-request.js'
-import { ModelInfo } from './model-info.js'
+import { acceptsMimeType, type ModelInfo } from './model-info.js'
 import { toMimeType } from '../mime.js'
 import { logger } from '../logging/logger.js'
 
@@ -318,7 +318,7 @@ function omittedMedia<T extends ContentBlock | ToolResultContent>(block: T, info
   if (kind === undefined) return block
   const { format } = block as unknown as { format: string }
   const mimeType = kind === 'audio' ? `audio/${format}` : toMimeType(format)
-  if (mimeType === undefined || ModelInfo.accepts(info, mimeType)) return block
+  if (mimeType === undefined || acceptsMimeType(info, mimeType)) return block
   logger.debug(`mime_type=<${mimeType}> | model does not accept media type, sending a placeholder text`)
   const name = block.type === 'documentBlock' ? ` "${block.name}"` : ''
   return new TextBlock(`[${kind}${name} omitted: this model can't read ${mimeType}]`)

@@ -69,7 +69,7 @@ export interface ModelCapabilities {
   /**
    * MIME types the model and provider take in the media blocks of a user message (`image/png`, or `video/*` for every
    * video type); `[]` when they take only text. `undefined` accepts every type. Tool results can take fewer. Check a
-   * type with {@link ModelInfo.accepts}.
+   * type with `acceptsMimeType`.
    */
   readonly acceptedMimeTypes?: readonly string[] | undefined
 }
@@ -120,22 +120,23 @@ export const ModelInfo = Object.freeze({
     if (mergedLimits) merged.limits = mergedLimits
     return Object.freeze(merged)
   },
-
-  /**
-   * Whether a model takes a MIME type in a user message, by its `acceptedMimeTypes`.
-   *
-   * @param info - What the SDK knows about the model, usually {@link Model.modelInfo}
-   * @param mimeType - The type to check, such as `image/png`; parameters (`; charset=utf-8`) are ignored
-   * @returns True when the list names the type or its `type/*`, or when the model has no list
-   */
-  accepts(info: ModelInfo, mimeType: string): boolean {
-    const accepted = info.capabilities?.acceptedMimeTypes
-    if (accepted === undefined) return true
-    const type = mimeType.split(';')[0]!.trim().toLowerCase()
-    const wildcard = `${type.split('/')[0]}/*`
-    return accepted.some((entry) => [type, wildcard].includes(entry.toLowerCase()))
-  },
 })
+
+/**
+ * Whether a model takes a MIME type in a user message, by its `acceptedMimeTypes`.
+ *
+ * @internal
+ * @param info - What the SDK knows about the model, usually {@link Model.modelInfo}
+ * @param mimeType - The type to check, such as `image/png`; parameters (`; charset=utf-8`) are ignored
+ * @returns True when the list names the type or its `type/*`, or when the model has no list
+ */
+export function acceptsMimeType(info: ModelInfo, mimeType: string): boolean {
+  const accepted = info.capabilities?.acceptedMimeTypes
+  if (accepted === undefined) return true
+  const type = mimeType.split(';')[0]!.trim().toLowerCase()
+  const wildcard = `${type.split('/')[0]}/*`
+  return accepted.some((entry) => [type, wildcard].includes(entry.toLowerCase()))
+}
 
 /**
  * Turns `serverSideSummary` off for providers that serve a model the shared info lists it for but have no

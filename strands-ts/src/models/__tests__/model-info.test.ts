@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ModelInfo } from '../model-info.js'
+import { acceptsMimeType, ModelInfo } from '../model-info.js'
 
 const base: ModelInfo = {
   capabilities: { stateful: false, promptCaching: 'cachePoints' },
@@ -55,7 +55,7 @@ describe('ModelInfo.merge', () => {
   })
 })
 
-describe('ModelInfo.accepts', () => {
+describe('acceptsMimeType', () => {
   it.each<[readonly string[] | undefined, string, boolean]>([
     [undefined, 'application/x-anything', true],
     [[], 'image/png', false],
@@ -67,6 +67,6 @@ describe('ModelInfo.accepts', () => {
     [['video/*'], 'video/mp4', true],
     [['video/*'], 'audio/mp4', false],
   ])('with %j accepts %s: %s', (acceptedMimeTypes, mimeType, expected) => {
-    expect(ModelInfo.accepts({ capabilities: { acceptedMimeTypes } }, mimeType)).toBe(expected)
+    expect(acceptsMimeType({ capabilities: { acceptedMimeTypes } }, mimeType)).toBe(expected)
   })
 })

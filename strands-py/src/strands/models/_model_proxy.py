@@ -27,7 +27,7 @@ from pydantic import BaseModel
 from ..event_loop.streaming import _normalize_messages, process_stream
 from ..types.content import ContentBlock, Message, Messages, SystemContentBlock
 from ..types.tools import ToolSpec
-from ._model_info import ModelInfo
+from ._model_info import ModelInfo, _accepts_mime_type
 from ._provider_name import _model_key
 
 if TYPE_CHECKING:
@@ -223,7 +223,7 @@ def _without_offload_marks(messages: Messages) -> Messages:
     ]
 
 
-# The MIME type ModelInfo.accepts checks for each media format; audio is ``audio/<format>``.
+# The MIME type _accepts_mime_type checks for each media format; audio is ``audio/<format>``.
 _MEDIA_MIME_TYPES: dict[str, dict[str, str]] = {
     "image": {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"},
     "document": {
@@ -263,7 +263,7 @@ def _without_unaccepted_media(messages: Messages, info: ModelInfo) -> Messages:
 
     Messages with nothing to replace, and the list when none has, are passed through as they are.
     """
-    if info.capabilities.accepted_mime_types is None:
+    if not isinstance(info.capabilities.accepted_mime_types, tuple | list):
         return messages
     prepared = [_with_message_media_omitted(message, info) for message in messages]
     return messages if all(new is old for new, old in zip(prepared, messages, strict=True)) else prepared
@@ -298,7 +298,7 @@ def _omitted_media(block: ContentBlock, info: ModelInfo) -> ContentBlock:
     media: dict[str, Any] = cast(dict[str, Any], block)[kind]
     media_format = str(media.get("format", "")).lower()
     mime_type = f"audio/{media_format}" if kind == "audio" else _MEDIA_MIME_TYPES[kind].get(media_format)
-    if mime_type is None or info.accepts(mime_type):
+    if mime_type is None or _accepts_mime_type(info, mime_type):
         return block
     logger.debug("mime_type=<%s> | model does not accept media type, sending a placeholder text", mime_type)
     name = f' "{media["name"]}"' if kind == "document" and media.get("name") else ""

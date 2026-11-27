@@ -55,7 +55,7 @@ class ModelCapabilities:
             skips the block with a warning, Mistral drops it, other providers raise ``TypeError``.
         accepted_mime_types: MIME types the model and provider take in the media blocks of a user message
             (``image/png``, or ``video/*`` for every video type); ``()`` when they take only text. None accepts every
-            type. Tool results can take fewer. Check a type with :meth:`ModelInfo.accepts`.
+            type. Tool results can take fewer. Check a type with ``_accepts_mime_type``.
     """
 
     stateful: bool | None = None
@@ -97,21 +97,6 @@ class ModelInfo:
     capabilities: ModelCapabilities = ModelCapabilities()
     limits: ModelLimits = ModelLimits()
 
-    def accepts(self, mime_type: str) -> bool:
-        """Report whether the model takes a MIME type in a user message, by ``capabilities.accepted_mime_types``.
-
-        Args:
-            mime_type: The type to check, such as ``image/png``; parameters (``; charset=utf-8``) are ignored.
-
-        Returns:
-            True when the list names the type or its ``type/*``, or when the model has no list.
-        """
-        accepted = self.capabilities.accepted_mime_types
-        if accepted is None:
-            return True
-        media_type = mime_type.split(";")[0].strip().lower()
-        return not {media_type, f"{media_type.split('/')[0]}/*"}.isdisjoint(entry.lower() for entry in accepted)
-
     @classmethod
     def merge(cls, *parts: "ModelInfo | None") -> "ModelInfo":
         """Merge partial records, later defined fields winning. None and missing fields inherit.
@@ -145,6 +130,24 @@ def _merge_section(parts: list[_SectionT], empty: _SectionT) -> _SectionT:
         if known:
             merged = replace(merged, **known)
     return merged
+
+
+def _accepts_mime_type(info: ModelInfo, mime_type: str) -> bool:
+    """Report whether a model takes a MIME type in a user message, by ``capabilities.accepted_mime_types``.
+
+    Args:
+        info: What the SDK knows about the model, usually :attr:`strands.models.Model.model_info`.
+        mime_type: The type to check, such as ``image/png``; parameters (``; charset=utf-8``) are ignored.
+
+    Returns:
+        True when the list names the type or its ``type/*``, or when the model has no list.
+    """
+    accepted = info.capabilities.accepted_mime_types
+    # Anything but a tuple or list is unknown, as the loader reads it.
+    if not isinstance(accepted, tuple | list):
+        return True
+    media_type = mime_type.split(";")[0].strip().lower()
+    return not {media_type, f"{media_type.split('/')[0]}/*"}.isdisjoint(entry.lower() for entry in accepted)
 
 
 SERVER_SIDE_SUMMARY_OFF = ModelInfo(capabilities=ModelCapabilities(server_side_summary=False))

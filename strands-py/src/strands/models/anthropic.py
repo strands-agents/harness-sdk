@@ -37,7 +37,7 @@ from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceAuto, ToolChoiceToolDict, ToolSpec
 from ._cache_points import cache_control, section_ttl
 from ._defaults import resolve_config_metadata, resolve_max_tokens
-from ._model_info import ModelCapabilities, ModelInfo, lookup_model_info
+from ._model_info import ModelCapabilities, ModelInfo, _accepts_mime_type, lookup_model_info
 from ._native_output import (
     StructuredOutputMechanism,
     handle_rejected_mechanism,
@@ -366,7 +366,7 @@ class AnthropicModel(Model):
                     temporary_messages=capabilities.temporary_messages,
                     accepted_mime_types=None
                     if capabilities.accepted_mime_types is None
-                    else tuple(t for t in _SENDABLE_MIME_TYPES if shared.accepts(t)),
+                    else tuple(t for t in _SENDABLE_MIME_TYPES if _accepts_mime_type(shared, t)),
                 )
             ),
             self.get_config().get("model_info"),

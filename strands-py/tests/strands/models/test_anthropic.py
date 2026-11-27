@@ -16,7 +16,7 @@ import pytest
 import strands
 from strands.agent.agent_metadata import AgentMetadata
 from strands.models import Model, ModelCapabilities, ModelInfo, ModelLimits, SummarizeResult
-from strands.models._model_info import lookup_model_info
+from strands.models._model_info import _accepts_mime_type, lookup_model_info
 from strands.models._model_proxy import ModelProxy
 from strands.models.anthropic import AnthropicModel
 from strands.models.model import CacheConfig, CacheToolsConfig
@@ -2035,23 +2035,25 @@ _SENDABLE = (
 def test_model_info_keeps_only_the_listed_types_the_provider_sends(anthropic_client):
     _ = anthropic_client
 
-    assert lookup_model_info("claude-sonnet-4-6").accepts(_OFFICE_TYPES[1])
+    assert _accepts_mime_type(lookup_model_info("claude-sonnet-4-6"), _OFFICE_TYPES[1])
     model = AnthropicModel(model_id="claude-sonnet-4-6", max_tokens=1)
 
     assert model.model_info.capabilities.accepted_mime_types == _SENDABLE
-    assert not model.model_info.accepts(_OFFICE_TYPES[1])
+    assert not _accepts_mime_type(model.model_info, _OFFICE_TYPES[1])
 
 
 @pytest.mark.parametrize("model_id", ["claude-sonnet-4-20250514", "claude-mythos-preview"])
 def test_model_info_narrows_wildcards_to_the_types_the_provider_sends(anthropic_client, model_id):
     _ = anthropic_client
-    assert lookup_model_info(model_id).accepts("application/msword") or lookup_model_info(model_id).accepts("video/mp4")
+    assert _accepts_mime_type(lookup_model_info(model_id), "application/msword") or _accepts_mime_type(
+        lookup_model_info(model_id), "video/mp4"
+    )
 
     info = AnthropicModel(model_id=model_id, max_tokens=1).model_info
 
     assert set(info.capabilities.accepted_mime_types) <= set(_SENDABLE)
-    assert not info.accepts("application/msword")
-    assert not info.accepts("video/mp4")
+    assert not _accepts_mime_type(info, "application/msword")
+    assert not _accepts_mime_type(info, "video/mp4")
 
 
 def test_model_info_accepts_every_type_when_the_shared_data_has_no_list(anthropic_client):
@@ -2060,7 +2062,7 @@ def test_model_info_accepts_every_type_when_the_shared_data_has_no_list(anthropi
     model = AnthropicModel(model_id="claude-3-opus-20240229", max_tokens=1)
 
     assert model.model_info.capabilities.accepted_mime_types is None
-    assert model.model_info.accepts(_OFFICE_TYPES[1])
+    assert _accepts_mime_type(model.model_info, _OFFICE_TYPES[1])
 
 
 def test_model_info_override_sets_the_accepted_mime_types(anthropic_client):
