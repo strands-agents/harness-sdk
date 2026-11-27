@@ -3,6 +3,7 @@
 
 import { Agent, tool, SessionManager, FileStorage } from '@strands-agents/sdk'
 import { BeforeToolCallEvent, BeforeToolsEvent } from '@strands-agents/sdk'
+import { InterruptError } from '@strands-agents/sdk'
 import { z } from 'zod'
 
 // =====================
@@ -135,6 +136,33 @@ async function toolsExample() {
 
   // ...
   // --8<-- [end:tools_example]
+}
+
+async function toolsRethrowExample() {
+  // --8<-- [start:tools_rethrow]
+  const deleteFiles = tool({
+    name: 'delete_files',
+    description: 'Delete files at the given paths',
+    inputSchema: z.object({ paths: z.array(z.string()) }),
+    callback: (input, context) => {
+      try {
+        const approval = context!.interrupt<string>({
+          name: 'myapp-approval',
+          reason: { paths: input.paths },
+        })
+        if (approval.toLowerCase() !== 'y') return false
+
+        // Implementation here
+
+        return true
+      } catch (error) {
+        // Let the agent pause for the interrupt; handle every other error here.
+        if (error instanceof InterruptError) throw error
+        return false
+      }
+    },
+  })
+  // --8<-- [end:tools_rethrow]
 }
 
 // =====================

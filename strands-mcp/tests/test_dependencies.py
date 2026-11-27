@@ -32,9 +32,8 @@ def _mcp_requirement() -> Requirement:
 def test_mcp_requirement_has_upper_bound():
     """The declared mcp range is capped, so a new major is never resolved into (#3533).
 
-    server.py imports mcp.server.fastmcp at module scope. mcp reorganises that
-    surface across majors, so an uncapped range makes the next major a hard
-    ModuleNotFoundError at import for every fresh install.
+    mcp reorganises its public surface across majors, so an uncapped range
+    makes the next untested major a hard import error for every fresh install.
     """
     requirement = _mcp_requirement()
 

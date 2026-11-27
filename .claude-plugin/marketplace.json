@@ -1,0 +1,16 @@
+{
+  "name": "strands-agents",
+  "description": "Official Strands Agents plugins for coding assistants.",
+  "owner": {
+    "name": "Strands Agents"
+  },
+  "plugins": [
+    {
+      "name": "strands",
+      "source": "./.agents/skills/strands",
+      "description": "Build, extend, evaluate, and migrate applications with Strands Agents.",
+      "category": "development",
+      "homepage": "https://strandsagents.com/docs/user-guide/build-with-ai/"
+    }
+  ]
+}

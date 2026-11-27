@@ -3,6 +3,7 @@ import uuid
 
 import pydantic
 import pytest
+from botocore.exceptions import ClientError
 
 import strands
 from strands import Agent, tool
@@ -237,6 +238,9 @@ def test_invoke_multi_modal_input(streaming_agent, yellow_img):
     assert "yellow" in text
 
 
+_AUDIO_UNSUPPORTED_MESSAGE = "Model does not support audio modality"
+
+
 def test_invoke_audio_input(pineapple_audio):
     model = BedrockModel(
         model_id="mistral.voxtral-small-24b-2507",
@@ -250,7 +254,13 @@ def test_invoke_audio_input(pineapple_audio):
         {"audio": {"format": "mp3", "source": {"bytes": pineapple_audio}}},
     ]
 
-    result = agent(content)
+    try:
+        result = agent(content)
+    except ClientError as error:
+        # A service-side Bedrock rejection, not an SDK defect; the test resumes once Bedrock serves audio again.
+        if _AUDIO_UNSUPPORTED_MESSAGE in str(error):
+            pytest.skip(f"Bedrock rejected audio input: {error}")
+        raise
     text = result.message["content"][0]["text"].lower()
 
     assert "pineapple" in text
@@ -319,7 +329,7 @@ def test_reasoning_content_in_messages_with_thinking_disabled():
     """Test that messages with reasoningContent are accepted when thinking is explicitly disabled."""
     # First, get a real reasoning response with thinking enabled
     thinking_model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         additional_request_fields={
             "thinking": {
                 "type": "enabled",
@@ -335,7 +345,7 @@ def test_reasoning_content_in_messages_with_thinking_disabled():
 
     # Now create a model with thinking disabled and use the messages from the thinking session
     disabled_model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="global.anthropic.claude-sonnet-4-6",
         additional_request_fields={
             "thinking": {
                 "type": "disabled",
@@ -532,7 +542,7 @@ def test_prompt_caching_backward_compatibility_no_ttl(quiet_strands_logging):
 class TestCountTokens:
     @pytest.fixture
     def model(self):
-        return BedrockModel(model_id="anthropic.claude-sonnet-4-20250514-v1:0", use_native_token_count=True)
+        return BedrockModel(model_id="anthropic.claude-sonnet-4-6", use_native_token_count=True)
 
     @pytest.fixture
     def messages(self):
@@ -809,6 +819,28 @@ def test_a_cache_boundary_keeps_per_call_content_out_of_the_cached_prefix(quiet_
     assert second.metrics.latest_agent_invocation.usage.get("cacheReadInputTokens", 0) > 0, (
         "second turn rewrote the prefix instead of reading it"
     )
+
+
+def test_nova_reads_the_cache_on_a_later_user_turn():
+    """Automatic caching on Nova reads on each follow-up user turn what the earlier turns wrote.
+
+    An in-region model id keeps this deterministic: a cross-region profile only finds an entry in the
+    region that wrote it. Not streamed, because Nova's stream now and then reports no usage at all.
+    """
+    model = BedrockModel(
+        model_id="amazon.nova-pro-v1:0",
+        region_name="us-east-1",
+        streaming=False,
+        cache_config=CacheConfig(strategy="auto"),
+    )
+    agent = Agent(model=model, load_tools_from_directory=False, callback_handler=None)
+
+    first = agent(f"{_durable_prefix()} Reply ALPHA.")
+    assert first.metrics.latest_agent_invocation.usage.get("cacheWriteInputTokens", 0) > 0
+
+    for prompt in ("Reply BETA.", "Reply GAMMA."):
+        usage = agent(prompt).metrics.latest_agent_invocation.usage
+        assert usage.get("cacheReadInputTokens", 0) > 0, f"'{prompt}' rewrote the conversation instead of reading it"
 
 
 def test_a_leading_cache_point_is_accepted(quiet_strands_logging):

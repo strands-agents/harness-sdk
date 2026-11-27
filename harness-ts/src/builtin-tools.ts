@@ -4,8 +4,10 @@
  * from the same record.
  */
 
-import { type Agent, McpClient, MemoryManager, Tool, type ToolList } from '@strands-agents/sdk'
+import { type Agent, McpClient, MemoryManager, ModelRouter, Tool, type ToolList } from '@strands-agents/sdk'
+import { type AgentBuilder, type AgentSpec, Choice, Fixed } from '@strands-agents/sdk/multiagent'
 import { makeShell } from '@strands-agents/sdk/vended-tools/bash'
+import { GENERALIST, makeSubagent } from '@strands-agents/sdk/vended-tools/subagent'
 
 import type { HarnessAgentOptions } from './agent.js'
 import {
@@ -14,14 +16,13 @@ import {
   type BuiltinToolName,
   type ConfigurableBuiltinToolName,
 } from './config.js'
-import { DEFAULT_BUILTIN_TOOLS, DEFAULT_MODEL } from './defaults.js'
+import { DEFAULT_BUILTIN_TOOLS, DEFAULT_MODEL, DEFAULT_SUBAGENT_MAX_DEPTH } from './defaults.js'
 import { logger } from './logging.js'
 import { resolveMemory } from './memory.js'
-import { resolveWebFetchModel, supportsMedia, supportsWebSearch } from './models.js'
-import { edit, exaWebSearch, makeRead, makeWebFetch, write } from './tools/index.js'
+import { resolveWebFetchModel, supportsMedia, webSearchKind } from './models.js'
+import { edit, exaWebSearch, makeAgentCoreWebSearch, makeRead, makeWebFetch, write } from './tools/index.js'
 import { makeProgrammaticToolCaller } from './tools/programmatic-tool-caller.js'
-import { type AgentBuilder, type AgentSpec, Choice, CONTEXT_MODES, GENERALIST, makeSubagent } from './tools/subagent.js'
-import type { BuiltinToolsConfig, ToolConfig, WebSearchSetting } from './types/agent.js'
+import type { BuiltinToolsConfig, SubagentConfig, ToolConfig, WebSearchSetting } from './types/agent.js'
 
 export type ResolvedBuiltinTools = {
   readonly [K in BuiltinToolName]: K extends 'web_search' ? WebSearchSetting : boolean | ToolConfig<K>
@@ -73,7 +74,8 @@ export function resolveBuiltinTools(
     if (unknown.length > 0) {
       throw new TypeError(`Unknown ${name} config keys: ${unknown.sort().join(', ')}. Allowed: ${allowed.join(', ')}.`)
     }
-    resolved[name] = setting
+    // A subagent that may not delegate even once is not registered at all.
+    resolved[name] = name === 'subagent' && (setting as SubagentConfig).maxDepth === 0 ? false : setting
   }
   return resolved as ResolvedBuiltinTools
 }
@@ -103,11 +105,12 @@ export function webSearchExplicit(value: readonly BuiltinToolName[] | BuiltinToo
     : (value as BuiltinToolsConfig | undefined)?.web_search !== undefined
 }
 
-export type WebSearchMode = 'native' | 'exa'
+export type WebSearchMode = 'native' | 'agentcore' | 'exa'
 
 /**
- * How `web_search` is served for `model`: `'native'` (a model flag), `'exa'` (the third-party tool,
- * opted into with `'exa'`), or `undefined` (off).
+ * How `web_search` is served for `model`: `'exa'` (the third-party tool, whenever opted into with
+ * `'exa'`), `'native'` (a model flag), `'agentcore'` (the AgentCore tool, on Bedrock), or
+ * `undefined` (off).
  */
 export function webSearchMode(
   setting: WebSearchSetting,
@@ -117,24 +120,33 @@ export function webSearchMode(
   if (setting === false) {
     return undefined
   }
-  if (supportsWebSearch(model)) {
-    return 'native'
-  }
   if (setting === 'exa') {
     logger.warn(
       "web_search is opted into Exa (exa.ai), a third-party service: every search query leaves your environment and is subject to Exa's privacy policy (https://exa.ai/privacy-policy)."
     )
     return 'exa'
   }
-  const target =
-    typeof model === 'string' || model === undefined ? `Model ${model ?? DEFAULT_MODEL}` : 'A pre-built Model instance'
-  const message =
-    `${target} has no native web search. Pass builtinTools: { web_search: 'exa' } ` +
-    "to search through Exa (a third party), or drop 'web_search'."
-  if (explicit) {
-    throw new Error(message)
+  const kind = webSearchKind(model)
+  if (kind !== undefined) {
+    return kind
   }
-  logger.warn(message)
+  const target =
+    typeof model === 'string' || model === undefined
+      ? `Model ${model ?? DEFAULT_MODEL}`
+      : model instanceof ModelRouter
+        ? 'A pre-built ModelRouter'
+        : 'A pre-built Model instance'
+  if (explicit) {
+    throw new Error(
+      `${target} has no built-in web search. Pass builtinTools: { web_search: 'exa' } to search ` +
+        "through Exa (a third party), or remove 'web_search' from builtinTools. See https://strandsagents.com/docs/user-guide/harness/tools/web-access/#web_search"
+    )
+  }
+  // Info, not a warning: the user didn't ask for search, and nothing failed.
+  logger.info(
+    `${target} has no built-in web search, so the web_search tool is disabled. To enable it through Exa ` +
+      "(a third party), pass builtinTools: { web_search: 'exa' }. See https://strandsagents.com/docs/user-guide/harness/tools/web-access/#web_search"
+  )
   return undefined
 }
 
@@ -142,12 +154,13 @@ export function webSearchMode(
 export type BuildAgent = (options: HarnessAgentOptions) => Promise<Agent>
 
 // `web_fetch` needs the agent's model to pick its default summarizer, and `subagent` the whole
-// parent config to rebuild a child. `web_search` here is the Exa fallback; `createHarness` selects
-// it only for a model without native search.
+// parent config to rebuild a child. `web_search` is the AgentCore tool when that is its mode
+// (`webSearchMode`) and the Exa tool otherwise.
 export async function buildBuiltinTools(
   buildAgent: BuildAgent,
   parentConfig: HarnessAgentOptions,
-  builtins: ResolvedBuiltinTools
+  builtins: ResolvedBuiltinTools,
+  webSearch: WebSearchMode | undefined
 ): Promise<Record<BuiltinToolName, Tool>> {
   const webFetch = builtinToolConfig(builtins, 'web_fetch')
   const caller = builtinToolConfig(builtins, 'programmatic_tool_caller') ?? {}
@@ -165,7 +178,7 @@ export async function buildBuiltinTools(
       model: await resolveWebFetchModel(parentConfig.model, webFetch?.model),
       transport: webFetch?.transport,
     }),
-    web_search: exaWebSearch,
+    web_search: webSearch === 'agentcore' ? makeAgentCoreWebSearch() : exaWebSearch,
     // The portable config spells the bound in seconds (`timeout`); the factory takes `timeoutMs`.
     programmatic_tool_caller: makeProgrammaticToolCaller({
       ...(caller.allowedTools === undefined || caller.allowedTools === null
@@ -182,57 +195,28 @@ export function selectBuiltinTools(names: readonly BuiltinToolName[], tools: Rec
   return names.map((name) => tools[name])
 }
 
-// The SDK never leaves `clientName` empty: an `McpClient` built without `applicationName` reports this.
-const UNNAMED_MCP_CLIENT = 'strands-agents-ts-sdk'
+const SUBAGENT_DESCRIPTION =
+  'Delegate a self-contained task to a subagent that runs in its own context and returns a final ' +
+  'report. Reach for this when a subtask would otherwise flood your context with intermediate ' +
+  'work and you only need its conclusion. Do not poll for progress or redo its work.'
 
 /**
- * Key the parent's `McpClient` entries by `clientName` for the `mcp_servers` axis. The model picks
- * servers by name, so a client without one can't be offered and is left out of delegation; when two
- * share a name the first keeps it and the rest are dropped. Both are warned about.
- */
-function mcpClientsByClientName(tools: readonly unknown[]): Map<string, McpClient> {
-  const clients = new Map<string, McpClient>()
-  for (const client of tools) {
-    if (!(client instanceof McpClient)) {
-      continue
-    }
-    const name = client.clientName
-    if (name === UNNAMED_MCP_CLIENT) {
-      logger.warn(
-        "An McpClient in `tools` has no applicationName; it can't be offered to subagents on `mcp_servers`, " +
-          "so delegates won't get its tools. Set applicationName to name it."
-      )
-    } else if (clients.has(name)) {
-      logger.warn(
-        `Two McpClients in \`tools\` share the name ${JSON.stringify(name)}; only the first is offered to subagents on \`mcp_servers\`.`
-      )
-    } else {
-      clients.set(name, client)
-    }
-  }
-  return clients
-}
-
-/**
- * The `subagent` tool the harness wires by default: the `generalist` preset and a builder that rebuilds the
- * child through `buildAgent` with the resolved spec applied.
+ * The `subagent` tool the harness wires by default: the SDK's tool with the `generalist` preset and a
+ * builder that rebuilds the child through `buildAgent` with the resolved spec applied.
  *
  * Consumer `tools` join the selectable set (same objects, same inherited `interventions`); the
- * builder splits a selection back into `builtinTools` (names) and `tools` (objects). The parent's live
- * MCP clients are the `McpClient` entries in its `tools` (named by `clientName`); the selected ones stay
- * in the child's `tools` (shared, not reconnected: `connect()` is a no-op once connected) so the delegate
- * keeps the parent's MCP tools, narrowable per server through the `mcp_servers` axis (omitted grants all).
- * The clients are tool providers with no fixed tool name at schema-build time, so the axis selects
- * whole servers, not individual MCP tools.
+ * builder splits a selection back into `builtinTools` (names) and `tools` (objects). The parent's
+ * `McpClient` entries always stay in the child's `tools` (shared, not reconnected: `connect()` is a
+ * no-op once connected), so the delegate keeps every MCP tool.
  *
  * `memory` (default `true`) shares the parent's store(s) with the delegate read-only; `false` builds
  * delegates with no memory. `maxDepth` is the `builtinTools.subagent` config's delegation-depth
- * bound, forwarded to {@link makeSubagent}.
+ * bound, forwarded to `makeSubagent`.
  */
 export function buildDefaultSubagent(
   buildAgent: BuildAgent,
   parentConfig: HarnessAgentOptions,
-  { memory = true, maxDepth }: { memory?: boolean; maxDepth?: number } = {}
+  { memory = true, maxDepth = DEFAULT_SUBAGENT_MAX_DEPTH }: { memory?: boolean; maxDepth?: number } = {}
 ): Tool {
   // Only named `Tool` instances can join the selectable set; the SDK also accepts unnamed forms.
   const consumerByName = new Map<string, Tool>()
@@ -241,9 +225,14 @@ export function buildDefaultSubagent(
       consumerByName.set(candidate.name, candidate)
     }
   }
-  const mcpClientsByName = mcpClientsByClientName(parentConfig.tools ?? [])
+  const mcpClients = (parentConfig.tools ?? []).filter((candidate) => candidate instanceof McpClient)
   const parentBuiltins = resolveBuiltinTools(parentConfig.builtinTools)
   const parentMemory = parentConfig.memory instanceof MemoryManager ? false : parentConfig.memory
+  // web_search is resolved per model, not selectable; subagent stays in, bounded by the depth guard.
+  const inheritedTools = [
+    ...enabledBuiltinTools(parentBuiltins).filter((name) => name !== 'web_search'),
+    ...consumerByName.keys(),
+  ]
 
   const builder: AgentBuilder = async (spec: AgentSpec): Promise<Agent> => {
     const childConfig: HarnessAgentOptions = { ...parentConfig, printer: false }
@@ -259,10 +248,10 @@ export function buildDefaultSubagent(
       })
     }
     childConfig.memory = false
-    if (spec.instructions !== null) {
+    if (spec.instructions !== undefined) {
       childConfig.instructions = spec.instructions
     }
-    if (spec.tools !== null) {
+    if (spec.tools !== undefined) {
       // spec.tools is already clamped to the allowed set; split it back into the two channels. The
       // selection pins a mapping so each tool keeps its parent config (e.g. `web_fetch.model`).
       const builtinNames = spec.tools.filter((t): t is BuiltinToolName => !consumerByName.has(t))
@@ -273,29 +262,25 @@ export function buildDefaultSubagent(
           (name) => [name, builtinNames.includes(name) || name === 'web_search' ? parentBuiltins[name] : false]
         )
       ) as BuiltinToolsConfig
-      childConfig.tools = spec.tools.filter((t) => consumerByName.has(t)).map((t) => consumerByName.get(t)!)
+      childConfig.tools = [
+        ...spec.tools.filter((t) => consumerByName.has(t)).map((t) => consumerByName.get(t)!),
+        ...mcpClients,
+      ]
     }
-    if (spec.model !== null) {
+    if (spec.model !== undefined) {
       childConfig.model = spec.model
     }
-    // The clamped selection (or all servers, unnarrowed) replaces any parent clients in `tools`, so the
-    // child re-offers exactly these on its own mcp_servers axis and can pass them to a grandchild.
-    const selectedNames = spec.mcpServers ?? [...mcpClientsByName.keys()]
-    const selected = [...new Set(selectedNames)].flatMap((n) => mcpClientsByName.get(n) ?? [])
-    childConfig.tools = [...(childConfig.tools ?? []).filter((t) => !(t instanceof McpClient)), ...selected]
     return buildAgent(childConfig)
   }
 
-  // web_search is resolved per model, not selectable; subagent stays in, bounded by the depth guard.
-  const builtinNames = enabledBuiltinTools(parentBuiltins).filter((t) => t !== 'web_search')
-  const inheritedTools = [...builtinNames, ...consumerByName.keys()]
   return makeSubagent({
     builder,
     presets: { generalist: GENERALIST },
-    inheritedTools,
-    inheritedMcpServers: [...mcpClientsByName.keys()],
-    // Offer context sharing; the generalist preset defaults to 'none' (isolated).
-    context: new Choice([...CONTEXT_MODES]),
-    ...(maxDepth === undefined ? {} : { maxDepth }),
+    // The tool is built even when `subagent` is off, so the selectable set can be empty.
+    tools: inheritedTools.length > 0 ? new Choice(inheritedTools, true) : new Fixed([]),
+    // Offer context sharing; omitted, the child starts isolated ('none').
+    context: new Choice(['none', 'all', 'no_tools']),
+    maxDepth,
+    description: SUBAGENT_DESCRIPTION,
   })
 }

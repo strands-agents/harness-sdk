@@ -1,0 +1,55 @@
+---
+title: Bash / shell
+description: "Let a Strands agent run shell commands: TypeScript's bash keeps a persistent host session, while shell runs each stateless command through the agent's sandbox."
+tags: [tool-authoring]
+sourceLinks:
+  - path: strands-ts/src/vended-tools/bash/bash.ts
+  - path: strands-ts/src/vended-tools/shell/make-shell.ts
+  - path: strands-py/src/strands/vended_tools/shell/shell.py
+---
+
+Lets your agent run shell commands and act on the output. The two SDKs expose
+different tools here:
+
+- **TypeScript `bash`** spawns a persistent `bash` process on the host. Shell state (variables, working directory, exported functions) persists across invocations within the same session, so the agent can build up context incrementally. Sessions can be restarted to clear state.
+- **Python `shell`** (and TypeScript's `makeShell`) routes each command through the agent's [Sandbox](../../sandbox/index.mdx) and is stateless: every call runs in a fresh shell, so variables and the working directory do not carry over. The sandbox decides the interpreter (`sh` locally and in Docker, the remote login shell over SSH), so use portable POSIX syntax.
+
+_Supported in: Node.js on Unix/Linux/macOS (TypeScript), all platforms (Python)._
+
+:::caution[Security Warning]
+These tools execute arbitrary shell commands. Without a [Sandbox](../../sandbox/index.mdx), commands run with the full permissions of the process. Only use with trusted input and consider running in a [sandboxed environment](../../sandbox/index.mdx) for production.
+:::
+
+**Example - File Operations:**
+
+<Tabs>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools/shell_imports.ts:bash_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools/shell.ts:bash_example"
+```
+
+</Tab>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.vended_tools import shell
+
+agent = Agent(tools=[shell])
+agent("List all Python files in the current directory and count them")
+```
+
+</Tab>
+</Tabs>
+
+**Example - Session Persistence (TypeScript):**
+```typescript
+--8<-- "user-guide/sdk/tools/vended-tools/shell_imports.ts:bash_import"
+
+--8<-- "user-guide/sdk/tools/vended-tools/shell.ts:bash_session"
+```
+
+Full API reference: [shell](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/shell/README.md), [bash (TypeScript only)](https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/vended-tools/bash/README.md)

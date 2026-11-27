@@ -1,5 +1,5 @@
 /**
- * Live check of the default `web_search` backend against Exa's hosted MCP server.
+ * Live checks of the `web_search` backends: Exa's hosted MCP server and AgentCore `InvokeWebSearch`.
  *
  * The unit tests stub the transport, so a change on Exa's side (the MCP handshake, the text format
  * of `web_search_exa` results) would otherwise surface only as a silent `No results.` for every user
@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { exaBackend, WebSearchError } from '../../src/tools/web-search.js'
+import { agentCoreBackend, exaBackend, WebSearchError } from '../../src/tools/web-search.js'
 
 describe('exa backend (live)', () => {
   it('returns parsed results', async (ctx) => {
@@ -25,6 +25,19 @@ describe('exa backend (live)', () => {
     for (const result of results) {
       expect(result.title).not.toBe('')
       expect(result.url).toMatch(/^http/)
+    }
+  })
+})
+
+describe('agentcore backend (live)', () => {
+  // `web_search` on Bedrock; needs `bedrock-agentcore:InvokeWebSearch`.
+  it('returns parsed results', async () => {
+    const results = await agentCoreBackend()('Strands Agents SDK documentation', 3)
+    expect(results.length).toBeGreaterThan(0)
+    expect(results.length).toBeLessThanOrEqual(3)
+    for (const result of results) {
+      expect(result.url).toMatch(/^http/)
+      expect(result.snippet).not.toBe('')
     }
   })
 })

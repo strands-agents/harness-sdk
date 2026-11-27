@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
 import type { ToolSpec } from '@strands-agents/sdk'
 import { Agent, Message, TextBlock, tool } from '@strands-agents/sdk'
@@ -163,6 +164,21 @@ describe.skipIf(openaiResponses.skip)("OpenAIModel (api: 'responses') Integratio
 
       const messageStopEvent = events.find((e) => e.type === 'modelMessageStopEvent')
       expect(messageStopEvent?.stopReason).toBe('toolUse')
+    })
+  })
+
+  describe('Prompt Caching', () => {
+    // Guards against GPT-6.2 never caching instructions (#6367).
+    it('reads the cached system prompt on the second turn with GPT-6.2', async () => {
+      const model = openaiResponses.createModel({ modelId: 'gpt-6.2-sol' })
+      // A nonce per run makes turn 1 a cold write, so turn 2's read is caused by this run.
+      const systemPrompt = `Session ${uuidv7()}. ${'You answer arithmetic questions with only the number. '.repeat(300)}`
+      const agent = new Agent({ model, printer: false, systemPrompt })
+
+      await agent.invoke('What is 2+2?')
+      const result = await agent.invoke('What is 3+3?')
+
+      expect(result.metrics?.latestAgentInvocation?.usage.cacheReadInputTokens ?? 0).toBeGreaterThan(0)
     })
   })
 

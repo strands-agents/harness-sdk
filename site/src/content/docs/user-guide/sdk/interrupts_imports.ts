@@ -15,6 +15,11 @@ import { Agent, tool } from '@strands-agents/sdk'
 import { z } from 'zod'
 // --8<-- [end:tools_example_imports]
 
+// --8<-- [start:tools_rethrow_imports]
+import { tool, InterruptError } from '@strands-agents/sdk'
+import { z } from 'zod'
+// --8<-- [end:tools_rethrow_imports]
+
 // --8<-- [start:session_management_imports]
 import {
   Agent,

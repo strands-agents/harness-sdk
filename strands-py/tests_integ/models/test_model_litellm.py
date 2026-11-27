@@ -10,20 +10,29 @@ from strands import Agent
 from strands.models.litellm import LiteLLMModel
 from tests_integ.conftest import retry_on_flaky
 
+_MODEL_ID = "bedrock/global.anthropic.claude-sonnet-4-6"
+
+# Pinned so an explicitly-exported AWS_REGION cannot redirect these tests: conftest only
+# setdefault()s the region, so a developer's own AWS_REGION still wins. Bedrock prompt-cache
+# read-back measures ~88% in us-west-2 against ~100% in us-east-1 and us-east-2, so the region
+# decides whether the cache assertions below are stable. us-east-2 is the known-good alternative.
+_REGION = "us-east-1"
+_CLIENT_ARGS = {"aws_region_name": _REGION}
+
 
 @pytest.fixture
 def model():
-    return LiteLLMModel(model_id="bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0")
+    return LiteLLMModel(model_id=_MODEL_ID, client_args=_CLIENT_ARGS)
 
 
 @pytest.fixture
 def streaming_model():
-    return LiteLLMModel(model_id="bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0", params={"stream": True})
+    return LiteLLMModel(model_id=_MODEL_ID, client_args=_CLIENT_ARGS, params={"stream": True})
 
 
 @pytest.fixture
 def non_streaming_model():
-    return LiteLLMModel(model_id="bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0", params={"stream": False})
+    return LiteLLMModel(model_id=_MODEL_ID, client_args=_CLIENT_ARGS, params={"stream": False})
 
 
 @pytest.fixture
@@ -259,8 +268,13 @@ def test_streaming_returns_usage_metrics(model_fixture, request):
     assert result.metrics.accumulated_usage["totalTokens"] > 0
 
 
+# Bedrock prompt-cache read-back is best effort: an entry written on turn 1 is occasionally not
+# readable on turn 2, which the provider reports as a fresh write of identical size. Reruns rather
+# than `retry_on_flaky`, whose wrapper is sync and breaks async test collection. See #5315.
+@pytest.mark.flaky(reruns=4, reruns_delay=1)
 @pytest.mark.asyncio
-async def test_cache_read_tokens_multi_turn(model):
+@pytest.mark.parametrize("streaming", [True, False])
+async def test_cache_read_tokens_multi_turn(model, streaming):
     """Integration test for cache read tokens in multi-turn conversation."""
     from strands.types.content import SystemContentBlock
 
@@ -270,15 +284,17 @@ async def test_cache_read_tokens_multi_turn(model):
         {"cachePoint": {"type": "default"}},
     ]
 
+    model.update_config(stream=streaming)
     agent = Agent(model=model, system_prompt=system_prompt_content)
 
     # First turn - establishes cache
-    agent("Hello, what's 2+2?")
-    result = agent("What's 3+3?")
-    result.metrics.accumulated_usage["cacheReadInputTokens"]
+    first_result = await agent.invoke_async("Hello, what's 2+2?")
+    assert first_result.metrics.latest_agent_invocation.usage["cacheReadInputTokens"] == 0
+    assert first_result.metrics.latest_agent_invocation.usage["cacheWriteInputTokens"] > 0
 
-    assert result.metrics.accumulated_usage["cacheReadInputTokens"] > 0
-    assert result.metrics.accumulated_usage["cacheWriteInputTokens"] > 0
+    result = await agent.invoke_async("What's 3+3?")
+    assert result.metrics.latest_agent_invocation.usage["cacheReadInputTokens"] > 0
+    assert result.metrics.latest_agent_invocation.usage["cacheWriteInputTokens"] == 0
 
 
 @retry_on_flaky("The model may occasionally not elect to call both tools", retry_on=[AssertionError])

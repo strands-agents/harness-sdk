@@ -1,5 +1,9 @@
+## Human Overview
+<!-- If an AI agent drafted this PR, a human must give a short overview here in their own words. An AI agent MUST NOT fill out this section.
+     See team/AI_USAGE_POLICY.md. (50 words) -->
+
 ## Description
-<!-- Provide a detailed description of the changes in this PR -->
+<!-- Describe the changes in this PR. Longer background belongs in the Additional Details section below. (150 words) -->
 
 ## Related Issues
 
@@ -21,9 +25,22 @@ Other (please describe):
 
 ## Testing
 
-How have you tested the change? Verify that the changes do not break functionality or introduce new warnings.
+<!-- How have you tested the change? Verify that the changes do not break functionality or introduce new warnings. (100 words) -->
 
 - [ ] I ran `hatch run prepare`
+
+## Additional Details
+
+<!-- Optional. Use this section for extended context that doesn't fit above:
+     longer logs, deep-dive reasoning, extended test output, supplementary background.
+     Wrap it in a <details> block so the PR stays scannable by default. -->
+
+<details>
+<summary>Extended context (optional)</summary>
+
+<!-- Extended content here -->
+
+</details>
 
 ## Checklist
 - [ ] I have read the CONTRIBUTING document

@@ -1,0 +1,293 @@
+/**
+ * What the SDK knows about models: the {@link ModelInfo} type, and the shared model info data.
+ *
+ * Every {@link ModelInfo} field is optional, and a missing or undefined field means unknown. The same
+ * shape is used everywhere: the shared data file, the `modelInfo`
+ * config override, and the resolved {@link Model.modelInfo}. A known `'unsupported'` disables a feature;
+ * unknown leaves the SDK's existing default for that feature in place.
+ *
+ * `model-info.json` is copied from `shared/model-info.json` at the repository root (the source of truth for
+ * every SDK) on install (`prepare`) and before build (`prebuild`); it is not committed.
+ *
+ * This is the first slice of the shape proposed in the model metadata design (PR #5305). Fields are
+ * added when something outside the provider reads them.
+ */
+
+import modelInfoData from './model-info.json' with { type: 'json' }
+/** How a model supports prompt caching. */
+export type PromptCaching = 'unsupported' | 'auto' | 'cachePoints'
+
+/**
+ * How a model keeps deferred tool schemas out of its context until it loads them: `'native'` sends them with the
+ * API's own deferral flag, `'stubs'` sends each as its name and description with an open schema, and `'unsupported'`
+ * sends every schema.
+ */
+export type DeferredToolLoading = 'unsupported' | 'native' | 'stubs'
+
+/**
+ * What the model can do. A yes/no fact is a `boolean`; a fact with more than two states is a string
+ * union, like {@link PromptCaching} (which mechanism); a set of supported values is a list, where `[]` means none.
+ * A fact about two features together gets its own field named after the pair. `undefined` is unknown either way.
+ */
+export interface ModelCapabilities {
+  /** Whether the model keeps conversation state server-side; {@link Model.stateful} reads it. */
+  readonly stateful?: boolean | undefined
+  /** Whether and how the model caches prompts. */
+  readonly promptCaching?: PromptCaching | undefined
+  /**
+   * Whether the Bedrock and Anthropic providers force the structured output tool (`any` or a named tool) on the
+   * structured output retry. False when the model rejects forcing, or when a forced call degrades the response (for
+   * example, it skips thinking).
+   */
+  readonly forcedToolChoice?: boolean | undefined
+  /** Whether the provider can make the model's text output conform to a JSON schema. */
+  readonly nativeStructuredOutput?: boolean | undefined
+  /**
+   * Whether the model summarizes history server-side through {@link Model.summarize}; set `false` in `modelInfo`
+   * to summarize client-side.
+   */
+  readonly serverSideSummary?: boolean | undefined
+  /**
+   * Whether the model and provider take temporary messages: injected text the model reads only until the next user
+   * message, such as Anthropic's turn-scoped system messages. When `true`, the provider receives each `InjectedBlock`
+   * as stored and formats it; otherwise it receives only the latest user message's injected text, as text. The shared
+   * data lists the models that take them, but `Model.modelInfo` reports `false` unless the provider can send them
+   * (`AnthropicModel`). A `modelInfo` override that turns it on for another provider drops the injected text.
+   */
+  readonly temporaryMessages?: boolean | undefined
+  /**
+   * How the model and provider defer tool schemas; see {@link DeferredToolLoading}. In the shared data, `'native'` is
+   * the path on the model vendor's own API and `'unsupported'` marks a model that can't fill in a stub's parameters,
+   * such as one that constrains its tool calls to the stub's open schema. `Model.modelInfo` reports `'stubs'` for every
+   * other model, `'native'` only where the provider sends the deferral flag (`AnthropicModel`), and `'unsupported'`
+   * where the provider needs each tool's full input schema (`BedrockModel` with `strictTools`). A `modelInfo` override
+   * that sets `'unsupported'` sends every full spec to a model that handles stubs badly. On a provider without the
+   * flag, an override that sets `'native'` sends every full spec and only changes the `load_tools` result:
+   * `BedrockModel` names each loaded tool and other providers leave it out.
+   */
+  readonly deferredToolLoading?: DeferredToolLoading | undefined
+  /**
+   * MIME types the model and provider take in the media blocks of a user message; `[]` when they take only text,
+   * `undefined` for every type. An entry matches a type exactly (`image/png`) or by its `type/*`; case and
+   * `; parameters` are ignored. A wildcard can also mean the kind isn't verified (see `shared/README.md`). Tool results
+   * can take fewer.
+   */
+  readonly acceptedMimeTypes?: readonly string[] | undefined
+}
+
+/** Size limits of the model. */
+export interface ModelLimits {
+  /** Context window size in tokens. */
+  readonly contextWindow?: number | undefined
+  /** Largest `maxTokens` the model accepts. Providers that need a default `maxTokens` use it. */
+  readonly maxOutputTokens?: number | undefined
+}
+
+/** Everything the SDK knows about a model. Read it from {@link Model.modelInfo}. */
+export interface ModelInfo {
+  readonly capabilities?: ModelCapabilities
+  readonly limits?: ModelLimits
+}
+
+function defined<T extends object>(section: T): T | undefined {
+  const entries = Object.entries(section)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => [key, Array.isArray(value) ? Object.freeze([...value]) : value])
+  return entries.length === 0 ? undefined : (Object.freeze(Object.fromEntries(entries)) as T)
+}
+
+/** Operations on {@link ModelInfo} records, like Python's `ModelInfo.merge`. */
+export const ModelInfo = Object.freeze({
+  /**
+   * Merges partial records, later defined fields winning. Undefined and missing fields inherit.
+   * A provider overriding {@link Model.modelInfo} layers its facts and then the user's override:
+   * `ModelInfo.merge(super.modelInfo, { capabilities: { serverSideSummary: false } }, this.getConfig().modelInfo)`.
+   *
+   * @param parts - Partial records, in order of increasing precedence; `undefined` parts are skipped
+   * @returns A new frozen record with only the known fields; a section nothing is known about is omitted
+   */
+  merge(...parts: (ModelInfo | undefined)[]): ModelInfo {
+    const capabilities: Record<string, unknown> = {}
+    const limits: Record<string, unknown> = {}
+    for (const part of parts) {
+      for (const [key, value] of Object.entries(part?.capabilities ?? {}))
+        if (value !== undefined) capabilities[key] = value
+      for (const [key, value] of Object.entries(part?.limits ?? {})) if (value !== undefined) limits[key] = value
+    }
+    const merged: { capabilities?: ModelCapabilities; limits?: ModelLimits } = {}
+    const mergedCapabilities = defined(capabilities as ModelCapabilities)
+    const mergedLimits = defined(limits as ModelLimits)
+    if (mergedCapabilities) merged.capabilities = mergedCapabilities
+    if (mergedLimits) merged.limits = mergedLimits
+    return Object.freeze(merged)
+  },
+})
+
+/**
+ * Whether a model takes a MIME type in a user message, by its `acceptedMimeTypes`.
+ *
+ * @internal
+ * @param info - What the SDK knows about the model, usually {@link Model.modelInfo}
+ * @param mimeType - The type to check, such as `image/png`; parameters (`; charset=utf-8`) are ignored
+ * @returns True when the list names the type or its `type/*`, or when the model has no list
+ */
+export function acceptsMimeType(info: ModelInfo, mimeType: string): boolean {
+  const accepted = info.capabilities?.acceptedMimeTypes
+  if (accepted === undefined) return true
+  const type = mimeType.split(';')[0]!.trim().toLowerCase()
+  const wildcard = `${type.split('/')[0]}/*`
+  return accepted.some((entry) => [type, wildcard].includes(entry.toLowerCase()))
+}
+
+/**
+ * Turns `serverSideSummary` off for providers that serve a model the shared info lists it for but have no
+ * server-side summary of their own.
+ *
+ * @internal
+ */
+export const SERVER_SIDE_SUMMARY_OFF: ModelInfo = Object.freeze({ capabilities: { serverSideSummary: false } })
+
+interface ModelInfoData {
+  readonly defaults: { readonly limits: { readonly contextWindow: number } }
+  readonly models: Readonly<Record<string, ModelInfo>>
+}
+
+// Bedrock appends a version to some ids (`claude-3-5-haiku-20241022-v1:0`); the base id carries the facts.
+const VERSION_SUFFIX = /-(?:v\d+(?::\d+)?|\d+:\d+)$/
+// Dated snapshots (`claude-opus-5-5-20260401`, `claude-haiku-4-5@20251001`, `gpt-5.4-2026-03-05`) share the undated
+// model's facts.
+const DATE_SUFFIX = /[-@](?:\d{8}|\d{4}-\d{2}-\d{2})$/
+
+const data = modelInfoData as ModelInfoData
+
+/** Context window limit (in tokens) assumed for a model whose window is unknown. */
+export const DEFAULT_CONTEXT_WINDOW_LIMIT = data.defaults.limits.contextWindow
+
+const CAPABILITY_FIELDS = Object.keys({
+  stateful: true,
+  promptCaching: true,
+  forcedToolChoice: true,
+  nativeStructuredOutput: true,
+  serverSideSummary: true,
+  temporaryMessages: true,
+  deferredToolLoading: true,
+  acceptedMimeTypes: true,
+} satisfies Record<keyof ModelCapabilities, true>)
+const LIMIT_FIELDS = Object.keys({ contextWindow: true, maxOutputTokens: true } satisfies Record<
+  keyof ModelLimits,
+  true
+>)
+
+// Keeps the fields the SDK types and skips the rest, as the Python SDK does: the data file is shared
+// with other consumers (the harness), so it can carry fields the SDK doesn't read.
+function knownFields(entry: ModelInfo): ModelInfo {
+  const pick = (section: object | undefined, keys: readonly string[]): object | undefined => {
+    const picked = Object.fromEntries(Object.entries(section ?? {}).filter(([key]) => keys.includes(key)))
+    return Object.keys(picked).length > 0 ? picked : undefined
+  }
+  const capabilities = pick(entry.capabilities, CAPABILITY_FIELDS) as Record<string, unknown> | undefined
+  for (const value of Object.values(capabilities ?? {})) if (Array.isArray(value)) Object.freeze(value)
+  const limits = pick(entry.limits, LIMIT_FIELDS)
+  return { ...(capabilities ? { capabilities } : {}), ...(limits ? { limits } : {}) } as ModelInfo
+}
+
+const MODELS: Readonly<Record<string, ModelInfo>> = Object.fromEntries(
+  Object.entries(data.models).map(([id, entry]) => [id, Object.freeze(knownFields(entry))])
+)
+
+/**
+ * Finds the entry for a model id. Tries the id as given, then without a trailing Bedrock version
+ * suffix, then without a trailing date, then with each leading dot-separated segment removed in
+ * turn (`us.anthropic.claude-x` → `anthropic.claude-x` → `claude-x`), the same rule the Python SDK
+ * applies. One entry therefore serves a model across providers and snapshots: `claude-opus-5-5`
+ * answers for `anthropic.claude-opus-5-5-20260401-v1:0` too.
+ *
+ * @internal
+ * @param modelId - The model id to look up
+ * @returns The entry, or undefined when the id is not in the data
+ */
+export function lookupModel(modelId: string): ModelInfo | undefined {
+  const key = lookupKey(modelId)
+  return key === undefined ? undefined : MODELS[key]
+}
+
+// Finds the key of the entry for a model id, by the rule `lookupModel` documents.
+function lookupKey(modelId: string): string | undefined {
+  let candidate = modelId
+  for (;;) {
+    const unversioned = candidate.replace(VERSION_SUFFIX, '')
+    for (const key of [candidate, unversioned, unversioned.replace(DATE_SUFFIX, '')]) {
+      if (Object.hasOwn(MODELS, key)) return key
+    }
+    const dotIndex = candidate.indexOf('.')
+    if (dotIndex === -1) return undefined
+    candidate = candidate.substring(dotIndex + 1)
+  }
+}
+
+/**
+ * The values of `capabilities.chatCompletionsTools` in the data.
+ *
+ * @internal
+ */
+export type ChatCompletionsTools = 'reasoningOff' | 'unsupported'
+
+/**
+ * Whether OpenAI's Chat Completions API accepts tools for a model. The data carries this as
+ * `capabilities.chatCompletionsTools`, which `ModelCapabilities` does not carry.
+ *
+ * @internal
+ * @param modelId - The model id to look up
+ * @returns `'reasoningOff'` when only with reasoning off, `'unsupported'` when not at all, undefined when the data
+ *   does not say
+ */
+export function lookupChatCompletionsTools(modelId: string): ChatCompletionsTools | undefined {
+  const key = lookupKey(modelId)
+  if (key === undefined) return undefined
+  return (data.models[key]?.capabilities as { chatCompletionsTools?: ChatCompletionsTools } | undefined)
+    ?.chatCompletionsTools
+}
+
+/**
+ * The values of `capabilities.systemPromptPlacement` in the data.
+ *
+ * @internal
+ */
+export type SystemPromptPlacement = 'message'
+
+/**
+ * Where a model's system prompt goes, when not in the provider's system prompt field. The data carries this as
+ * `capabilities.systemPromptPlacement`, which `ModelCapabilities` does not carry.
+ *
+ * @internal
+ * @param modelId - The model id to look up
+ * @returns `'message'` when it goes at the start of the messages, undefined when the data does not say
+ */
+export function lookupSystemPromptPlacement(modelId: string): SystemPromptPlacement | undefined {
+  const key = lookupKey(modelId)
+  if (key === undefined) return undefined
+  return (data.models[key]?.capabilities as { systemPromptPlacement?: SystemPromptPlacement } | undefined)
+    ?.systemPromptPlacement
+}
+
+/**
+ * What the shared model info data knows about a model.
+ *
+ * @internal
+ * @param modelId - The model id to describe
+ * @returns What the data knows about the model; empty when it knows nothing
+ */
+export function lookupModelInfo(modelId: string): ModelInfo {
+  return ModelInfo.merge(lookupModel(modelId))
+}
+
+/**
+ * Looks up the context window limit for a model id.
+ *
+ * @internal
+ * @param modelId - The model id to look up
+ * @returns The context window limit in tokens, or undefined if not known
+ */
+export function getContextWindowLimit(modelId: string): number | undefined {
+  return lookupModelInfo(modelId).limits?.contextWindow
+}

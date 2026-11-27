@@ -1,30 +1,39 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import {
   Agent,
+  type BaseModelConfig,
   BeforeModelCallEvent,
   FileStorage as SessionFileStorage,
   type InterventionHandler,
   McpClient,
   MemoryManager,
+  type Message,
+  Model,
   ModelRouter,
+  type ModelStreamEvent,
   type Plugin,
   SessionManager,
   Tool,
   tool,
   type ToolContext,
 } from '@strands-agents/sdk'
+// harness-ts installs the SDK from its lockfile, which predates the './context-manager' subpath
+// and the archive rename, so these stay on names both versions resolve.
 import { ContextManager } from '@strands-agents/sdk/experimental'
+import { AgentSpec } from '@strands-agents/sdk/multiagent'
+import { InMemoryStorage } from '@strands-agents/sdk/storage'
 import { BedrockModel } from '@strands-agents/sdk/models/bedrock'
+import { BedrockAgentCoreClient } from '@aws-sdk/client-bedrock-agentcore'
 import { DockerSandbox } from '@strands-agents/sdk/sandbox/docker'
 import { makeFileEditor } from '@strands-agents/sdk/vended-tools/file-editor'
 import { makeShell } from '@strands-agents/sdk/vended-tools/shell'
 import { makeShell as makeShellFactory } from '@strands-agents/sdk/vended-tools/bash'
-import { ContextOffloader, FileStorage } from '@strands-agents/sdk/vended-plugins/context-offloader'
+import { makeSubagent } from '@strands-agents/sdk/vended-tools/subagent'
 import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 import { HumanInTheLoop } from '@strands-agents/sdk/vended-interventions/hitl'
 import { z } from 'zod'
@@ -34,7 +43,8 @@ import { HARNESS_CONTRACT } from '../src/prompt.js'
 import { configureLogging, resetWarnOnce } from '../src/logging.js'
 import { makeProgrammaticToolCaller } from '../src/tools/programmatic-tool-caller.js'
 import { buildDefaultSubagent } from '../src/builtin-tools.js'
-import { AgentSpec, makeSubagent } from '../src/tools/subagent.js'
+import { DEFAULT_SUBAGENT_MAX_DEPTH } from '../src/defaults.js'
+import { exaWebSearch } from '../src/tools/web-search.js'
 import type { HarnessAgentOptions } from '../src/agent.js'
 import { storeOf } from './memory-internals.js'
 
@@ -47,8 +57,8 @@ vi.mock('../src/tools/programmatic-tool-caller.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/tools/programmatic-tool-caller.js')>()
   return { ...actual, makeProgrammaticToolCaller: vi.fn(actual.makeProgrammaticToolCaller) }
 })
-vi.mock('../src/tools/subagent.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/tools/subagent.js')>()
+vi.mock('@strands-agents/sdk/vended-tools/subagent', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@strands-agents/sdk/vended-tools/subagent')>()
   return { ...actual, makeSubagent: vi.fn(actual.makeSubagent) }
 })
 
@@ -73,10 +83,6 @@ function plugins(agent: Agent): Plugin[] {
   return [...registry._plugins.values(), ...(registry._pending ?? [])]
 }
 
-function offloaders(agent: Agent): ContextOffloader[] {
-  return plugins(agent).filter((p): p is ContextOffloader => p instanceof ContextOffloader)
-}
-
 function skills(agent: Agent): AgentSkills[] {
   return plugins(agent).filter((p): p is AgentSkills => p instanceof AgentSkills)
 }
@@ -93,10 +99,6 @@ function interventionHandlers(agent: Agent): InterventionHandler[] {
     .handlers
 }
 
-function offloadDir(offloader: ContextOffloader): string {
-  return (offloader as unknown as { _storage: { _artifactDir: string } })._storage._artifactDir
-}
-
 function writeSkill(skillsDir: string, name: string): void {
   const skill = join(skillsDir, name)
   mkdirSync(skill, { recursive: true })
@@ -104,6 +106,62 @@ function writeSkill(skillsDir: string, name: string): void {
     join(skill, 'SKILL.md'),
     `---\nname: ${name}\ndescription: A ${name} skill.\n---\nDo the ${name} thing.\n`
   )
+}
+
+const LARGE_RESULT = Array.from({ length: 400 }, (_, lineIndex) => `Line ${lineIndex}: quarterly budget notes.`).join(
+  '\n'
+)
+
+const readLargeTool = tool({
+  name: 'read_large',
+  description: 'Read a large document.',
+  inputSchema: z.object({}),
+  callback: () => LARGE_RESULT,
+})
+
+/** Calls `read_large`, then `retrieve_context` on the archive reference it gets back, recording each tool result. */
+class RetrievingModel extends Model {
+  readonly seenToolResults: string[] = []
+  private _config: BaseModelConfig = { modelId: 'retrieving-model', contextWindowLimit: 1_000_000 }
+
+  updateConfig(modelConfig: BaseModelConfig): void {
+    this._config = { ...this._config, ...modelConfig }
+  }
+
+  getConfig(): BaseModelConfig {
+    return this._config
+  }
+
+  async *stream(messages: Message[]): AsyncGenerator<ModelStreamEvent> {
+    const toolResult = messages.at(-1)?.content.find((block) => block.type === 'toolResultBlock')
+    if (toolResult === undefined) {
+      yield* this._toolUse('read_large', {})
+      return
+    }
+    const resultText = toolResult.content
+      .map((item) => (item.type === 'textBlock' ? item.text : JSON.stringify(item)))
+      .join('\n')
+    this.seenToolResults.push(resultText)
+    const reference = /\[ref: ([^\]\s]+)\]/.exec(resultText)?.[1]
+    if (this.seenToolResults.length === 1 && reference !== undefined) {
+      yield* this._toolUse('retrieve_context', { reference })
+      return
+    }
+    yield { type: 'modelMessageStartEvent', role: 'assistant' }
+    yield { type: 'modelContentBlockStartEvent' }
+    yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'done' } }
+    yield { type: 'modelContentBlockStopEvent' }
+    yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' }
+  }
+
+  private async *_toolUse(name: string, input: object): AsyncGenerator<ModelStreamEvent> {
+    const toolUseId = `tooluse-${this.seenToolResults.length}`
+    yield { type: 'modelMessageStartEvent', role: 'assistant' }
+    yield { type: 'modelContentBlockStartEvent', start: { type: 'toolUseStart', name, toolUseId } }
+    yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'toolUseInputDelta', input: JSON.stringify(input) } }
+    yield { type: 'modelContentBlockStopEvent' }
+    yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' }
+  }
 }
 
 const tempDirs: string[] = []
@@ -119,6 +177,8 @@ afterEach(() => {
     rmSync(dir, { recursive: true, force: true })
   }
   resetWarnOnce()
+  vi.restoreAllMocks()
+  vi.unstubAllEnvs()
 })
 
 describe('createHarness', () => {
@@ -129,7 +189,7 @@ describe('createHarness', () => {
       expect(toolNames(agent)).toContain(name)
     }
     expect(agent.systemPrompt).toBe(HARNESS_CONTRACT)
-    expect(conversationManagerName(agent)).toBe('SummarizingConversationManager')
+    expect(agent.contextManager).toBeInstanceOf(ContextManager)
   })
 
   it('attaches a ModelRouter through the model parameter', async () => {
@@ -144,11 +204,23 @@ describe('createHarness', () => {
 
   it('backgrounds the subagent and leaves other compatible tools agent-selectable', async () => {
     const agent = await createHarness()
+    await agent.initialize()
 
+    expect(toolNames(agent)).toContain('manage_background_task')
     expect([...backgroundTaskPolicy(agent)!]).toEqual([
       ['*', 'agentic'],
       ['subagent', 'always'],
     ])
+  })
+
+  it('uses the harness management tool name when the supplied name is undefined', async () => {
+    const agent = await createHarness({
+      // @ts-expect-error JavaScript callers can pass undefined explicitly.
+      backgroundTasks: { manageToolName: undefined },
+    })
+    await agent.initialize()
+
+    expect(toolNames(agent)).toContain('manage_background_task')
   })
 
   it('treats backgroundTasks true the same as the default', async () => {
@@ -163,12 +235,15 @@ describe('createHarness', () => {
   it('keeps the subagent backgrounded under a custom policy', async () => {
     const agent = await createHarness({
       backgroundTasks: {
+        manageToolName: 'task_admin',
         always: ['sample_tool', 'subagent'],
         never: ['*', 'subagent'],
         waitForCompletion: false,
       },
     })
+    await agent.initialize()
 
+    expect(toolNames(agent)).toContain('task_admin')
     expect([...backgroundTaskPolicy(agent)!]).toEqual([
       ['sample_tool', 'always'],
       ['subagent', 'always'],
@@ -228,11 +303,7 @@ describe('createHarness', () => {
 
   it('starts from nothing when the builtinTools mapping sets "*" to false', async () => {
     const agent = await createHarness({ builtinTools: { '*': false, read: true, web_fetch: {} } })
-    expect(
-      toolNames(agent)
-        .filter((name) => name !== 'todo_write')
-        .sort()
-    ).toEqual(['read', 'web_fetch'])
+    expect(toolNames(agent).sort()).toEqual(['read', 'web_fetch'])
   })
 
   it('rejects an unknown name in a builtinTools mapping', async () => {
@@ -274,7 +345,7 @@ describe('createHarness', () => {
   it.each([
     ['shell', makeShellFactory, [{}]],
     ['programmatic_tool_caller', makeProgrammaticToolCaller, [{}]],
-    ['subagent', makeSubagent, [expect.not.objectContaining({ maxDepth: expect.anything() })]],
+    ['subagent', makeSubagent, [expect.objectContaining({ maxDepth: DEFAULT_SUBAGENT_MAX_DEPTH })]],
   ] as const)('builds %s from its factory with no config when enabled with true', async (name, factory, args) => {
     vi.mocked(factory).mockClear()
     await createHarness({ builtinTools: { [name]: true } })
@@ -332,17 +403,97 @@ describe('createHarness', () => {
     expect(params.tools).toEqual([{ type: 'web_search' }])
   })
 
-  it('warns with the opt-in but builds when default web_search hits the default bedrock model', async () => {
-    const warn = vi.fn()
-    configureLogging({ debug: () => {}, info: () => {}, warn, error: () => {} })
+  it('serves web_search on bedrock from the AgentCore tool, by default and when named', async () => {
+    // The default Claude model runs on Anthropic's Bedrock client. Search resolves its region from the
+    // same environment, with or without an endpoint override on the model.
+    vi.stubEnv('AWS_REGION', 'eu-west-1')
+    const regions: string[] = []
+    vi.spyOn(BedrockAgentCoreClient.prototype, 'send').mockImplementation(async function (
+      this: BedrockAgentCoreClient
+    ) {
+      regions.push(await this.config.region())
+      return { results: [] }
+    } as never)
+    const search = (a: Agent): Promise<string> =>
+      (
+        a.tools.find((t) => t.name === 'web_search') as unknown as {
+          invoke: (input: unknown, context: unknown) => Promise<string>
+        }
+      ).invoke({ query: 'q' }, {})
     const agent = await createHarness()
+    expect(toolNames(agent)).toContain('web_search')
+    expect(agent.tools.find((t) => t.name === 'web_search')).not.toBe(exaWebSearch)
+    vi.stubEnv('AWS_ENDPOINT_URL_BEDROCK_RUNTIME', 'https://proxy.example')
+    expect([await search(agent), await search(await createHarness())]).toEqual(['No results.', 'No results.'])
+    expect(regions).toEqual(['eu-west-1', 'eu-west-1'])
+    const named = await createHarness({
+      model: 'bedrock/us.amazon.nova-2-lite-v1:0',
+      builtinTools: ['read', 'web_search'],
+    })
+    expect(toolNames(named)).toContain('web_search')
+  })
+
+  it('serves web_search on an all-Bedrock ModelRouter and names the router when it cannot', async () => {
+    const router = new ModelRouter([new BedrockModel({ modelId: 'fast' }), new BedrockModel({ modelId: 'deep' })])
+    expect(toolNames(await createHarness({ model: router }))).toContain('web_search')
+    const info = vi.fn()
+    configureLogging({ debug: () => {}, info, warn: () => {}, error: () => {} })
+    const mixed = new ModelRouter([new BedrockModel({ modelId: 'fast' }), new RetrievingModel()])
+    expect(toolNames(await createHarness({ model: mixed }))).not.toContain('web_search')
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('A pre-built ModelRouter has no built-in web search'))
+  })
+
+  it('serves web_search on a BedrockModel instance from AgentCore, taking nothing from the model', async () => {
+    vi.stubEnv('AWS_REGION', 'us-east-2')
+    const regions: string[] = []
+    vi.spyOn(BedrockAgentCoreClient.prototype, 'send').mockImplementation(async function (
+      this: BedrockAgentCoreClient
+    ) {
+      regions.push(await this.config.region())
+      return { results: [] }
+    } as never)
+    const agent = await createHarness({ model: new BedrockModel({ modelId: 'x', region: 'eu-west-1' }) })
+    const search = agent.tools.find((t) => t.name === 'web_search') as unknown as {
+      invoke: (input: unknown, context: unknown) => Promise<string>
+    }
+    expect(await search.invoke({ query: 'q' }, {})).toBe('No results.')
+    expect(regions).toEqual(['us-east-2'])
+  })
+
+  it('collides with a passed web_search tool on bedrock, like any built-in', async () => {
+    const mine = tool({
+      name: 'web_search',
+      description: 'Search.',
+      inputSchema: z.object({ query: z.string() }),
+      callback: ({ query }) => query,
+    })
+    await expect(createHarness({ tools: [mine] })).rejects.toThrow('registered more than once')
+    const agent = await createHarness({ tools: [mine], builtinTools: { web_search: false } })
+    expect(agent.tools.find((t) => t.name === 'web_search')).toBe(mine)
+  })
+
+  it('serves an explicit Exa selection on bedrock instead of AgentCore', async () => {
+    const agent = await createHarness({ builtinTools: { web_search: 'exa' } })
+    expect(agent.tools.find((t) => t.name === 'web_search')).toBe(exaWebSearch)
+  })
+
+  it('logs info, not a warning, and builds when default web_search hits a model without search', async () => {
+    const warn = vi.fn()
+    const info = vi.fn()
+    configureLogging({ debug: () => {}, info, warn, error: () => {} })
+    const agent = await createHarness({ model: 'ollama/llama3' })
     expect(toolNames(agent)).not.toContain('web_search')
-    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/has no native web search.*web_search: 'exa'/))
+    expect(info).toHaveBeenCalledWith(expect.stringMatching(/has no built-in web search.*web-access\/#web_search/))
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('has no built-in web search'))
   })
 
   it('throws when web_search is explicitly selected on an unsupported provider', async () => {
-    await expect(createHarness({ builtinTools: ['read', 'web_search'] })).rejects.toThrow('has no native web search')
-    await expect(createHarness({ builtinTools: { web_search: true } })).rejects.toThrow('has no native web search')
+    await expect(createHarness({ model: 'ollama/llama3', builtinTools: ['read', 'web_search'] })).rejects.toThrow(
+      'has no built-in web search'
+    )
+    await expect(createHarness({ model: new RetrievingModel(), builtinTools: { web_search: true } })).rejects.toThrow(
+      'has no built-in web search'
+    )
   })
 
   it('builds the Exa tool for the fallback and warns about the third party', async () => {
@@ -351,16 +502,17 @@ describe('createHarness', () => {
     const agent = await createHarness({ builtinTools: { web_search: 'exa' } })
     expect(toolNames(agent)).toContain('web_search')
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('Exa (exa.ai), a third-party service'))
-    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('has no native web search'))
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('has no built-in web search'))
   })
 
-  it('lets native search win over the Exa fallback', async () => {
+  it('lets an explicit Exa selection win over native search', async () => {
+    // https://github.com/strands-agents/harness-sdk/issues/4480
     const agent = await createHarness({
       model: 'openai/gpt-5.6-sol',
       builtinTools: { web_search: 'exa' },
     })
-    expect(toolNames(agent)).not.toContain('web_search')
-    expect((agent.model.getConfig().params as { tools: unknown }).tools).toEqual([{ type: 'web_search' }])
+    expect(toolNames(agent)).toContain('web_search')
+    expect(agent.model.getConfig().params).not.toHaveProperty('tools')
   })
 
   it('serves the Exa fallback on a Model instance', async () => {
@@ -371,18 +523,43 @@ describe('createHarness', () => {
     expect(toolNames(agent)).toContain('web_search')
   })
 
-  it('only offers Bedrock Web Search on GPT-5 and GPT-6 Mantle models', async () => {
-    const warn = vi.fn()
-    configureLogging({ debug: () => {}, info: () => {}, warn, error: () => {} })
+  it('enables Anthropic native web search from the default set', async () => {
+    const agent = await createHarness({ model: 'anthropic/claude-opus-4-8' })
+    expect(toolNames(agent)).not.toContain('web_search')
+    expect(agent.model.getConfig().anthropicTools).toEqual([
+      { type: 'web_search_20260318', name: 'web_search', allowed_callers: ['direct'] },
+    ])
+  })
+
+  it('uses Bedrock Web Search on GPT-5/GPT-6 Mantle models and AgentCore on other Mantle models', async () => {
     let agent = await createHarness({ model: 'bedrock-mantle/openai.gpt-5.6-luna' })
     expect(toolNames(agent)).not.toContain('web_search')
     expect((agent.model.getConfig().params as { tools: unknown }).tools).toEqual([
       { type: 'web_search', external_web_access: true },
     ])
     agent = await createHarness({ model: 'bedrock-mantle/openai.gpt-oss-120b-1:0' })
-    expect(toolNames(agent)).not.toContain('web_search')
+    expect(toolNames(agent)).toContain('web_search')
     expect(agent.model.getConfig().params).not.toHaveProperty('tools')
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('has no native web search'))
+  })
+
+  it('serves web_search from AgentCore for an AnthropicModel on a Bedrock client', async () => {
+    const { AnthropicModel } = await import('@strands-agents/sdk/models/anthropic')
+    vi.stubEnv('AWS_REGION', 'us-east-2')
+    const regions: string[] = []
+    vi.spyOn(BedrockAgentCoreClient.prototype, 'send').mockImplementation(async function (
+      this: BedrockAgentCoreClient
+    ) {
+      regions.push(await this.config.region())
+      return { results: [] }
+    } as never)
+    // Stands in for `AnthropicBedrock` from @anthropic-ai/bedrock-sdk: what matters is its default Bedrock host.
+    const client = { baseURL: 'https://bedrock-runtime.eu-west-1.amazonaws.com', messages: {} } as never
+    const agent = await createHarness({ model: new AnthropicModel({ modelId: 'claude', client }) })
+    const search = agent.tools.find((t) => t.name === 'web_search') as unknown as {
+      invoke: (input: unknown, context: unknown) => Promise<string>
+    }
+    expect(await search.invoke({ query: 'q' }, {})).toBe('No results.')
+    expect(regions).toEqual(['us-east-2'])
   })
 
   it('enables web_search when explicitly selected on a supported provider', async () => {
@@ -399,6 +576,24 @@ describe('createHarness', () => {
   it('enables caching by default on anthropic direct', async () => {
     const agent = await createHarness({ model: 'anthropic/claude-opus-4-8' })
     expect(agent.model.getConfig().cacheConfig).toEqual({ strategy: 'auto' })
+  })
+
+  it.each(
+    ['openai/gpt-5.6-sol', 'bedrock-mantle/openai.gpt-6-luna'].flatMap((model) =>
+      ([undefined, 'auto', true, false, null] as const).map((caching) => ({ model, caching }))
+    )
+  )('configures $model caching=$caching', async ({ model, caching }) => {
+    const agent = await createHarness({
+      model,
+      ...(caching !== undefined && { caching }),
+      session: false,
+      memory: false,
+      skills: false,
+      builtinTools: [],
+    })
+    expect(agent.model.getConfig().cacheConfig).toEqual(
+      caching === false || caching === null ? undefined : { strategy: 'auto' }
+    )
   })
 
   it('builds silently with default caching on a Model instance', async () => {
@@ -438,24 +633,23 @@ describe('createHarness', () => {
 
   it('uses the default strategy when contextManager is auto', async () => {
     const agent = await createHarness({ contextManager: 'auto' })
-    expect(conversationManagerName(agent)).toBe('SummarizingConversationManager')
+    expect(agent.contextManager).toBeInstanceOf(ContextManager)
   })
 
   it('disables context management when contextManager is null', async () => {
     const agent = await createHarness({ contextManager: null })
     expect(conversationManagerName(agent)).toBe('NullConversationManager')
-    expect(offloaders(agent)).toHaveLength(0)
   })
 
-  it('uses the recommended level when effort is auto', async () => {
+  it("uses the default model's vendor default level when effort is auto", async () => {
     const agent = await createHarness({ effort: 'auto' })
-    const fields = agent.model.getConfig().additionalRequestFields as { output_config: { effort: string } }
-    expect(fields.output_config.effort).toBe('high')
+    const params = agent.model.getConfig().params as { output_config: { effort: string } }
+    expect(params.output_config.effort).toBe('medium')
   })
 
   it('sends no reasoning fields when effort is off', async () => {
     const agent = await createHarness({ effort: 'off' })
-    expect(agent.model.getConfig().additionalRequestFields).toBeUndefined()
+    expect(agent.model.getConfig().params).toBeUndefined()
   })
 
   it('lets an explicit context manager win', async () => {
@@ -545,30 +739,64 @@ describe('createHarness', () => {
     expect(sm.sessionId ?? sm._sessionId).toBe('myproj-v2')
   })
 
-  it('uses a temp dir for offloading when the session is disabled', async () => {
-    const agent = await createHarness({ session: false })
-    const offs = offloaders(agent)
-    expect(offs).toHaveLength(1)
-    expect(offloadDir(offs[0]).startsWith(tmpdir())).toBe(true)
-  })
-
-  it('disables the offloader when context management is off', async () => {
-    const agent = await createHarness({ contextManager: false })
-    expect(offloaders(agent)).toHaveLength(0)
-  })
-
-  it('offloads under the session dir by default', async () => {
+  // https://github.com/strands-agents/harness-sdk/issues/4685
+  it('returns an offloaded tool result to the model in full on retrieval', async () => {
     const dir = makeTempDir()
-    const agent = await createHarness({ session: { dir } })
-    const offs = offloaders(agent)
-    expect(offs).toHaveLength(1)
-    expect(offloadDir(offs[0])).toBe(`${dir}/offloaded`)
+    const model = new RetrievingModel()
+    const agent = await createHarness({
+      model,
+      tools: [readLargeTool],
+      session: { id: 'retrieval', dir },
+      builtinTools: [],
+      builtinPlugins: [],
+      memory: false,
+      skills: false,
+      printer: false,
+    })
+    await agent.invoke('Read the document.', { limits: { turns: 4 } })
+
+    expect(model.seenToolResults).toEqual([expect.stringMatching(/^\[Truncated:/), LARGE_RESULT])
+    expect(agent.contextManager?.stashIsDurable).toBe(true)
+    const agentScope = join('scopes', 'agent', agent.id)
+    const snapshot = JSON.parse(
+      readFileSync(join(dir, 'retrieval', agentScope, 'snapshots', 'snapshot_latest.json'), 'utf8')
+    )
+    expect(snapshot.data.archive ?? snapshot.data.stash).toEqual({
+      location: 'external',
+      storageType: 'LocalFileStorage',
+    })
+    expect(existsSync(join(dir, 'retrieval', 'context', 'retrieval', agentScope, 'tooluse-0_0'))).toBe(true)
+    // Every folder under the session dir is read as a session, so the archive stays inside this one.
+    expect(readdirSync(dir)).toEqual(['retrieval'])
   })
 
-  it('does not double-add an offloader supplied via plugins', async () => {
-    const existing = new ContextOffloader({ storage: new FileStorage({ artifactDir: makeTempDir() }) })
-    const agent = await createHarness({ plugins: [existing] })
-    expect(offloaders(agent)).toEqual([existing])
+  it.each([
+    ['without a session', (): HarnessAgentOptions => ({ session: false })],
+    [
+      'with a SessionManager instance as the session',
+      (): HarnessAgentOptions => ({
+        session: new SessionManager({ storage: { snapshot: new SessionFileStorage(makeTempDir()) } }),
+      }),
+    ],
+    [
+      'with an explicit sessionManager',
+      (): HarnessAgentOptions => ({
+        sessionManager: new SessionManager({ storage: { snapshot: new SessionFileStorage(makeTempDir()) } }),
+      }),
+    ],
+  ])('keeps the archive in memory %s', async (_, buildOptions) => {
+    const agent = await createHarness(buildOptions())
+    await agent.initialize()
+    expect(agent.storage).toBeUndefined()
+    expect(agent.contextManager?.stashIsDurable).toBe(false)
+  })
+
+  it('backs the archive with an explicit storage', async () => {
+    const storage = new InMemoryStorage()
+    const agent = await createHarness({ storage, session: { dir: makeTempDir() } })
+    await agent.initialize()
+    expect(agent.storage).toBe(storage)
+    expect(agent.contextManager?.stashIsDurable).toBe(false)
   })
 
   it('loads skills from the skills directory', async () => {
@@ -674,6 +902,11 @@ describe('createHarness', () => {
 
   it('frees a built-in plugin tool name when the plugin is dropped', async () => {
     const agent = await createHarness({ builtinPlugins: [], tools: [todoWriteTool] })
+    expect(toolNames(agent)).toContain('todo_write')
+  })
+
+  it('leaves the plugin tool name free when the defaults are used', async () => {
+    const agent = await createHarness({ tools: [todoWriteTool] })
     expect(toolNames(agent)).toContain('todo_write')
   })
 
@@ -832,13 +1065,13 @@ describe('createHarness', () => {
 })
 
 describe('subagent delegate (built child)', () => {
-  // Build a real delegate through the default builder — the SubagentTool holds it as `builder` — and
-  // assert the guarantees on the constructed child, mirroring the Python child tests.
+  // Build a real delegate through the default builder — the SDK's subagent tool holds it as `_builder` —
+  // and assert the guarantees on the constructed child, mirroring the Python child tests.
   function buildChildFrom(parent: Agent, spec: AgentSpec): Promise<Agent> {
     const subagentTool = parent.tools.find((t) => t.name === 'subagent') as unknown as {
-      builder: (spec: AgentSpec) => Promise<Agent>
+      _builder: (spec: AgentSpec) => Promise<Agent>
     }
-    return subagentTool.builder(spec)
+    return subagentTool._builder(spec)
   }
 
   async function buildChild(options: HarnessAgentOptions, spec: AgentSpec): Promise<Agent> {
@@ -846,7 +1079,7 @@ describe('subagent delegate (built child)', () => {
   }
 
   it('narrows the built child to the requested subset, dropping the rest', async () => {
-    const spec = new AgentSpec('x')
+    const spec = new AgentSpec({ name: 'x' })
     spec.tools = ['read']
     const child = await buildChild({ builtinTools: ['read', 'shell', 'subagent'] }, spec)
     expect(toolNames(child)).toContain('read')
@@ -854,36 +1087,36 @@ describe('subagent delegate (built child)', () => {
   })
 
   it('hands the built child every consumer tool when the model does not narrow', async () => {
-    const child = await buildChild({ tools: [sampleTool] }, new AgentSpec('x'))
+    const child = await buildChild({ tools: [sampleTool] }, new AgentSpec({ name: 'x' }))
     expect(toolNames(child)).toContain('sample_tool')
   })
 
   it('gives the built child a recall-only (non-writable) memory view', async () => {
-    const child = await buildChild({ memory: { dir: makeTempDir() } }, new AgentSpec('x'))
+    const child = await buildChild({ memory: { dir: makeTempDir() } }, new AgentSpec({ name: 'x' }))
     expect(child.memoryManager).toBeInstanceOf(MemoryManager)
     expect(storeOf(child.memoryManager as MemoryManager).writable).toBe(false)
   })
 
   it('builds the child with sessions forced off', async () => {
-    const child = await buildChild({ session: { dir: makeTempDir() } }, new AgentSpec('x'))
+    const child = await buildChild({ session: { dir: makeTempDir() } }, new AgentSpec({ name: 'x' }))
     expect(child.sessionManager).toBeUndefined()
   })
 
   it('registers the inherited interventions gate on the built child', async () => {
-    const child = await buildChild({ interventions: 'ask' }, new AgentSpec('x'))
+    const child = await buildChild({ interventions: 'ask' }, new AgentSpec({ name: 'x' }))
     expect(interventionHandlers(child)).toHaveLength(1)
     expect(interventionHandlers(child)[0]).toBeInstanceOf(HumanInTheLoop)
   })
 
   it('keeps its own subagent tool so a delegate can sub-delegate', async () => {
-    const child = await buildChild({}, new AgentSpec('x'))
+    const child = await buildChild({}, new AgentSpec({ name: 'x' }))
     expect(toolNames(child)).toContain('subagent')
   })
 
   it('carries explicit web_search onto a narrowed delegate', async () => {
     // web_search is never in the tools enum; a narrowed selection drops it, but the builder carries
     // the parent's setting onto the delegate, which resolves it for its own model.
-    const spec = new AgentSpec('x')
+    const spec = new AgentSpec({ name: 'x' })
     spec.tools = ['read']
     const child = await buildChild(
       { model: 'openai/gpt-5.6-sol', builtinTools: ['read', 'web_search', 'subagent'] },
@@ -893,140 +1126,88 @@ describe('subagent delegate (built child)', () => {
   })
 
   it('keeps native search on a narrowed delegate of a default-configured parent', async () => {
-    const spec = new AgentSpec('x')
+    const spec = new AgentSpec({ name: 'x' })
     spec.tools = ['read']
     const child = await buildChild({ model: 'openai/gpt-5.6-sol' }, spec)
     expect((child.model.getConfig().params as { tools: unknown }).tools).toEqual([{ type: 'web_search' }])
   })
 
+  it('gives delegates of a default bedrock parent AgentCore web search', async () => {
+    const spec = new AgentSpec({ name: 'x' })
+    spec.tools = ['read']
+    for (const child of [await buildChild({}, spec), await buildChild({}, new AgentSpec({ name: 'x' }))]) {
+      expect(toolNames(child)).toContain('web_search')
+      expect(child.tools.find((t) => t.name === 'web_search')).not.toBe(exaWebSearch)
+    }
+  })
+
+  it("hands delegates the caller's web_search when the built-in is off", async () => {
+    const mine = tool({
+      name: 'web_search',
+      description: 'Search.',
+      inputSchema: z.object({ query: z.string() }),
+      callback: ({ query }) => query,
+    })
+    const parent = await createHarness({ tools: [mine], builtinTools: { web_search: false } })
+    expect(
+      (await buildChildFrom(parent, new AgentSpec({ name: 'x' }))).tools.find((t) => t.name === 'web_search')
+    ).toBe(mine)
+    const spec = new AgentSpec({ name: 'x' })
+    spec.tools = ['read']
+    expect(toolNames(await buildChildFrom(parent, spec))).not.toContain('web_search')
+  })
+
   it('carries the Exa fallback onto a narrowed delegate', async () => {
-    const spec = new AgentSpec('x')
+    const spec = new AgentSpec({ name: 'x' })
     spec.tools = ['read']
     const child = await buildChild({ builtinTools: { web_search: 'exa' } }, spec)
     expect(toolNames(child)).toContain('web_search')
   })
 
-  it('inherits the parent MCP tools via the shared clients, narrowable per server', async () => {
-    // A delegate shares the parent's connected MCP clients, keyed by server name; an omitted
-    // mcp_servers selection grants every server, an empty one drops them, a named one grants it.
+  it('inherits every parent MCP server, also on a narrowed delegate', async () => {
     const server = fileURLToPath(new URL('./tools/echo-mcp-server.mjs', import.meta.url))
     const parent = await createHarness({ mcpServers: { srv: { command: 'node', args: [server] } } })
     try {
       await parent.initialize()
       expect(toolNames(parent)).toContain('srv_echo')
+      const subagentTool = parent.tools.find((t) => t.name === 'subagent')!
+      expect(subagentTool.toolSpec.inputSchema!.properties).not.toHaveProperty('mcp_servers')
 
-      const inheritAll = await buildChildFrom(parent, new AgentSpec('x'))
+      const inheritAll = await buildChildFrom(parent, new AgentSpec({ name: 'x' }))
       await inheritAll.initialize()
       expect(toolNames(inheritAll)).toContain('srv_echo')
 
-      const none = new AgentSpec('x')
-      none.mcpServers = []
-      const narrowed = await buildChildFrom(parent, none)
+      const narrowed = await buildChildFrom(parent, new AgentSpec({ name: 'x', tools: ['read'] }))
       await narrowed.initialize()
-      expect(toolNames(narrowed)).not.toContain('srv_echo')
-
-      const one = new AgentSpec('x')
-      one.mcpServers = ['srv', 'srv'] // a repeated name (array-of-enum axis) must not forward a client twice
-      const selected = await buildChildFrom(parent, one)
-      await selected.initialize()
-      expect(toolNames(selected)).toContain('srv_echo')
-
-      // The parent's servers become the mcp_servers enum on the delegation tool's schema.
-      const subagentTool = parent.tools.find((t) => t.name === 'subagent')!
-      const schema = subagentTool.toolSpec.inputSchema as { properties: { mcp_servers: { items: { enum: string[] } } } }
-      expect(schema.properties.mcp_servers.items.enum).toEqual(['srv'])
+      expect(toolNames(narrowed)).toEqual(expect.arrayContaining(['read', 'srv_echo']))
     } finally {
       const clients = (parent as unknown as { _mcpClients: McpClient[] })._mcpClients
       await Promise.all(clients.map((client) => client.disconnect()))
     }
   })
 
-  it('offers MCP clients passed in `tools` on the mcp_servers axis', async () => {
-    // Connected clients handed in via `tools` (how the CLI passes servers) are offered to delegates too,
-    // each under its own clientName.
+  it('hands MCP clients passed in `tools` to a narrowed delegate without offering them as tools', async () => {
+    // Connected clients handed in via `tools` (how the CLI passes servers), named or not.
     const server = fileURLToPath(new URL('./tools/echo-mcp-server.mjs', import.meta.url))
-    const clients = await McpClient.loadServers(
-      { alpha: { command: 'node', args: [server] }, beta: { command: 'node', args: [server] } },
-      undefined,
-      { prefixWithServerName: true }
-    )
+    const clients = [
+      ...(await McpClient.loadServers({ alpha: { command: 'node', args: [server] } }, undefined, {
+        prefixWithServerName: true,
+      })),
+      new McpClient({ transport: new StdioClientTransport({ command: 'node', args: [server] }), prefix: 'bare' }),
+    ]
     const parent = await createHarness({ tools: clients })
     try {
       await parent.initialize()
-      expect(toolNames(parent)).toEqual(expect.arrayContaining(['alpha_echo', 'beta_echo']))
       const subagentTool = parent.tools.find((t) => t.name === 'subagent')!
-      const schema = subagentTool.toolSpec.inputSchema as { properties: { mcp_servers: { items: { enum: string[] } } } }
-      expect(schema.properties.mcp_servers.items.enum).toEqual(['alpha', 'beta'])
       const toolsAxis = (subagentTool.toolSpec.inputSchema as { properties: { tools: { items: { enum: string[] } } } })
         .properties.tools.items.enum
-      expect(toolsAxis).not.toEqual(expect.arrayContaining(['alpha'])) // servers never pose as tools
+      expect(toolsAxis).not.toEqual(expect.arrayContaining(['alpha']))
 
-      // Narrowing both axes at once: the tools split must not drop the selected servers.
-      const spec = new AgentSpec('x')
-      spec.tools = ['read']
-      spec.mcpServers = ['beta']
-      const child = await buildChildFrom(parent, spec)
+      const child = await buildChildFrom(parent, new AgentSpec({ name: 'x', tools: ['read'] }))
       await child.initialize()
-      expect(toolNames(child)).toEqual(expect.arrayContaining(['read', 'beta_echo']))
-      expect(toolNames(child)).not.toContain('alpha_echo')
+      expect(toolNames(child)).toEqual(expect.arrayContaining(['read', 'alpha_echo', 'bare_echo']))
     } finally {
       await Promise.all(clients.map((client) => client.disconnect()))
-    }
-  })
-
-  it('warns when two MCP clients share a clientName and offers only the first', async () => {
-    // Two clients answering to the same clientName can't both sit behind one enum value: the first is
-    // offered, the second is dropped from delegation, and the collapse is warned about.
-    const warn = vi.fn()
-    configureLogging({ debug: () => {}, info: () => {}, warn, error: () => {} })
-    const server = fileURLToPath(new URL('./tools/echo-mcp-server.mjs', import.meta.url))
-    const clients = await McpClient.loadServers(
-      { alpha: { command: 'node', args: [server] }, beta: { command: 'node', args: [server] } },
-      { applicationName: 'shared' }, // a shared default name overrides the per-key naming
-      { prefixWithServerName: true }
-    )
-    const parent = await createHarness({ tools: clients })
-    try {
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('share the name "shared"'))
-      await parent.initialize()
-      expect(toolNames(parent)).toEqual(expect.arrayContaining(['alpha_echo', 'beta_echo'])) // the parent keeps both
-      const subagentTool = parent.tools.find((t) => t.name === 'subagent')!
-      const schema = subagentTool.toolSpec.inputSchema as { properties: { mcp_servers: { items: { enum: string[] } } } }
-      expect(schema.properties.mcp_servers.items.enum).toEqual(['shared'])
-      const spec = new AgentSpec('x')
-      spec.mcpServers = ['shared']
-      const child = await buildChildFrom(parent, spec)
-      await child.initialize()
-      expect(toolNames(child)).toContain('alpha_echo')
-      expect(toolNames(child)).not.toContain('beta_echo')
-    } finally {
-      await Promise.all(clients.map((client) => client.disconnect()))
-    }
-  })
-
-  it('warns about an MCP client without applicationName and leaves it off the mcp_servers axis', async () => {
-    // A hand-built client has no name the model could pick, so it stays out of the axis (and out of
-    // delegates) with a warning telling the caller how to fix it.
-    const warn = vi.fn()
-    configureLogging({ debug: () => {}, info: () => {}, warn, error: () => {} })
-    const server = fileURLToPath(new URL('./tools/echo-mcp-server.mjs', import.meta.url))
-    const bare = new McpClient({
-      transport: new StdioClientTransport({ command: 'node', args: [server] }),
-      prefix: 'bare',
-    })
-    const parent = await createHarness({ tools: [bare] })
-    try {
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('has no applicationName'))
-      await parent.initialize()
-      expect(toolNames(parent)).toContain('bare_echo')
-      const subagentTool = parent.tools.find((t) => t.name === 'subagent')!
-      const schema = subagentTool.toolSpec.inputSchema as { properties: Record<string, unknown> }
-      expect(schema.properties).not.toHaveProperty('mcp_servers') // no offerable server, so no axis at all
-      const child = await buildChildFrom(parent, new AgentSpec('x'))
-      await child.initialize()
-      expect(toolNames(child)).not.toContain('bare_echo')
-    } finally {
-      await bare.disconnect()
     }
   })
 
@@ -1036,42 +1217,13 @@ describe('subagent delegate (built child)', () => {
     const parent = await createHarness({ mcpServers: { srv: { command: 'node', args: [server] } } })
     try {
       await parent.initialize()
-      const child = await buildChildFrom(parent, new AgentSpec('x'))
+      const child = await buildChildFrom(parent, new AgentSpec({ name: 'x' }))
       await child.initialize()
       expect(toolNames(child)).toContain('srv_echo')
 
-      const grandchild = await buildChildFrom(child, new AgentSpec('x'))
+      const grandchild = await buildChildFrom(child, new AgentSpec({ name: 'x' }))
       await grandchild.initialize()
       expect(toolNames(grandchild)).toContain('srv_echo')
-    } finally {
-      const clients = (parent as unknown as { _mcpClients: McpClient[] })._mcpClients
-      await Promise.all(clients.map((client) => client.disconnect()))
-    }
-  })
-
-  it('propagates MCP narrowing through a grandchild', async () => {
-    // A child restricted to no MCP servers can't pass any to a grandchild; a granted server carries on.
-    const server = fileURLToPath(new URL('./tools/echo-mcp-server.mjs', import.meta.url))
-    const parent = await createHarness({ mcpServers: { srv: { command: 'node', args: [server] } } })
-    try {
-      await parent.initialize()
-
-      const starvedSpec = new AgentSpec('x')
-      starvedSpec.mcpServers = []
-      const starved = await buildChildFrom(parent, starvedSpec)
-      await starved.initialize()
-      expect(toolNames(starved)).not.toContain('srv_echo')
-      const starvedGrandchild = await buildChildFrom(starved, new AgentSpec('x'))
-      await starvedGrandchild.initialize()
-      expect(toolNames(starvedGrandchild)).not.toContain('srv_echo')
-
-      const grantedSpec = new AgentSpec('x')
-      grantedSpec.mcpServers = ['srv']
-      const granted = await buildChildFrom(parent, grantedSpec)
-      await granted.initialize()
-      const grantedGrandchild = await buildChildFrom(granted, new AgentSpec('x'))
-      await grantedGrandchild.initialize()
-      expect(toolNames(grantedGrandchild)).toContain('srv_echo')
     } finally {
       const clients = (parent as unknown as { _mcpClients: McpClient[] })._mcpClients
       await Promise.all(clients.map((client) => client.disconnect()))

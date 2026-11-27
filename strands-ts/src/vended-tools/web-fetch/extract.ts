@@ -4,8 +4,11 @@
  * Delegates HTML-to-markdown conversion to turndown with ATX headings and
  * fenced code blocks. Non-content elements (scripts, styles, media, forms,
  * etc.) are dropped entirely. `data:` URI images are replaced with their alt
- * text (or nothing) to avoid enormous blobs in the output. `javascript:`
- * hrefs and src values are stripped silently.
+ * text (or nothing) to avoid enormous blobs in the output. Images with a
+ * `javascript:` or `vbscript:` source are dropped, and links with a
+ * `javascript:`, `vbscript:`, or `data:` href are reduced to their text.
+ * Body text, the page title, image alt text, and link titles and URLs are
+ * escaped so they cannot change the structure of the output.
  *
  * Requires `turndown` as an optional peer dependency.
  */
@@ -35,9 +38,48 @@ const DROPPED_ELEMENTS = [
   'nav',
 ]
 
-// Strip invisible characters before URL scheme detection.
-function _stripInvisible(value: string): string {
-  return value.replace(/^[\p{Cc}\p{Cf}\p{Zs}]+/u, '')
+// Read the scheme after stripping leading whitespace and invisible characters, and tab/CR/LF anywhere as browsers do.
+// The rest of the URL is not parsed: a malformed host must not hide the scheme.
+function _urlScheme(url: string): string {
+  const stripped = url.replace(/^[\p{Cc}\p{Cf}\p{Zs}\p{Zl}\p{Zp}]+/u, '').replace(/[\t\n\r]/g, '')
+  return /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(stripped)?.[1]?.toLowerCase() ?? ''
+}
+
+// Strip what URL parsers strip from both ends of a URL. trim() differs from Python's strip().
+function _trimC0ControlOrSpace(value: string): string {
+  let start = 0
+  let end = value.length
+  while (start < end && value.charCodeAt(start) <= 0x20) start++
+  while (end > start && value.charCodeAt(end - 1) <= 0x20) end--
+  return value.slice(start, end)
+}
+
+// Collapse whitespace and control characters, and escape markdown and HTML syntax, so the text is plain text.
+// A "(" can only open a link destination after a "]", so it is escaped only there.
+function _escapeText(text: string): string {
+  return text
+    .replace(/[\s\p{Cc}]+/gu, ' ')
+    .replace(/[\\[\]`~]/g, '\\$&')
+    .replace(/(\\\] ?)\(/g, '$1\\(')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+// Image alt text can directly follow a "![" or a "]": a "^" or "(" at its start is escaped too.
+function _escapeAltText(text: string): string {
+  return _escapeText(text).replace(/^(?=\^)|^ ?(?=\()/, '$&\\')
+}
+
+// Drop tabs and newlines as URL parsers do, and percent-encode what a markdown parser could read as syntax.
+function _escapeUrl(url: string): string {
+  let stripped = url.replace(/[\t\n\r]/g, '')
+  // URL parsers read "\" as "/" before the query of a relative URL and of an http(s), ftp, ws(s) or file URL.
+  if (/^(?:(?:https?|ftp|wss?|file):|(?![a-z][a-z0-9+.-]*:))/i.test(stripped)) {
+    stripped = stripped.replace(/^[^?#]*/, (path) => path.replace(/\\/g, '/'))
+  }
+  return stripped
+    .replace(/[\s\p{Cc}<>\\"`]/gu, (char) => encodeURIComponent(char))
+    .replace(/[()']/g, (char) => `%${char.charCodeAt(0).toString(16)}`)
 }
 
 async function loadTurndown(): Promise<typeof TurndownService> {
@@ -63,48 +105,56 @@ async function _createTurndownService(): Promise<TurndownService> {
   // Cast needed because svg/noscript/template are absent from HTMLElementTagNameMap.
   td.remove(DROPPED_ELEMENTS as unknown as import('turndown').Filter)
 
+  // turndown escapes "1. " at the start of text but not "1) ", which starts an ordered list too.
+  const escape = td.escape.bind(td)
+  td.escape = (text: string): string => escape(text).replace(/^(\d+)\) /, '$1\\) ')
+
   // Render the <title> as a top-level heading so it appears in the document
   // body rather than being silently dropped (turndown ignores <head> elements).
   td.addRule('title', {
     filter: 'title',
     replacement: (_content, node) => {
-      const text = (node as HTMLElement).textContent?.trim() ?? ''
-      return text ? `# ${text}\n\n` : ''
+      // The title is one line of plain text. "*" and "_" are escaped as they are in body text.
+      const text = _escapeText((node as HTMLElement).textContent ?? '')
+        .replace(/[*_]/g, '\\$&')
+        .trim()
+      return text ? `\n\n# ${text}\n\n` : ''
     },
   })
 
   // Replace data: URI images with alt text only (they can be enormous blobs).
-  // Strip javascript: src values entirely.
+  // Strip javascript: and vbscript: src values entirely.
   td.addRule('safeImage', {
     filter: 'img',
     replacement: (_content, node) => {
       const element = node as HTMLImageElement
-      const src = (element.getAttribute('src') ?? '').trim()
-      const alt = element.getAttribute('alt') ?? ''
-      if (!src) return alt
-      try {
-        const scheme = new URL(_stripInvisible(src)).protocol
-        if (scheme === 'javascript:') return ''
-        if (scheme === 'data:') return alt
-      } catch {
-        // not an absolute URL — pass through as-is
-      }
-      return `![${alt}](${src})`
+      const src = _trimC0ControlOrSpace(element.getAttribute('src') ?? '')
+      const alt = _escapeAltText(element.getAttribute('alt') ?? '')
+      // Written as bare text, a trailing "!" would turn a link that follows into an image, and a block marker at
+      // the start could start a heading, list or quote. "*" and "_" are escaped as they are in body text.
+      const bareAlt = alt
+        .replace(/!(?= ?$)/, '\\!')
+        .replace(/[*_]/g, '\\$&')
+        .replace(/^ ?(?=[-=>]|(?:\+|#{1,6}|[0-9]+[.)])(?: |$))[0-9]*/, '$&\\')
+      if (!src) return bareAlt
+      const scheme = _urlScheme(src)
+      if (scheme === 'javascript' || scheme === 'vbscript') return ''
+      if (scheme === 'data') return bareAlt
+      return `![${alt}](${_escapeUrl(src)})`
     },
   })
 
-  // Strip javascript: hrefs — render link text only.
+  // Render only the link text for javascript:, vbscript:, and data: hrefs, and for a link with no href.
   td.addRule('safeLink', {
-    filter: (node) => {
-      if (node.nodeName !== 'A') return false
-      const href = ((node as HTMLAnchorElement).getAttribute('href') ?? '').trim()
-      try {
-        return new URL(_stripInvisible(href)).protocol === 'javascript:'
-      } catch {
-        return false
-      }
+    filter: 'a',
+    replacement: (content, node) => {
+      const element = node as HTMLAnchorElement
+      const href = _trimC0ControlOrSpace(element.getAttribute('href') ?? '')
+      const scheme = _urlScheme(href)
+      if (!href || scheme === 'javascript' || scheme === 'vbscript' || scheme === 'data') return content
+      const title = _escapeText(element.getAttribute('title') ?? '').replace(/"/g, '\\"')
+      return `[${content}](${_escapeUrl(href)}${title && ` "${title}"`})`
     },
-    replacement: (content) => content,
   })
 
   return td

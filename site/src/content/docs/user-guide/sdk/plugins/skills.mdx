@@ -10,6 +10,8 @@ sourceLinks:
 addedDate: 2026-03-11
 ---
 
+import Diagram from '@components/Diagram.astro'
+
 Skills give your agent on-demand access to specialized instructions without bloating the system prompt. Instead of front-loading every possible instruction into a single prompt, you define modular skill packages that the agent discovers and activates only when relevant.
 
 The `AgentSkills` plugin follows the [Agent Skills specification](https://agentskills.io/specification) and uses progressive disclosure: lightweight metadata (name and description) is injected into the system prompt, and full instructions are loaded on-demand when the agent activates a skill through a tool call. This keeps the context window lean while giving the agent access to deep, specialized knowledge.
@@ -28,24 +30,10 @@ Skills solve this by breaking instructions into self-contained packages. The age
 
 The `AgentSkills` plugin operates in three phases:
 
-```mermaid
-sequenceDiagram
-    participant D as Developer
-    participant P as AgentSkills Plugin
-    participant A as Agent
-    participant S as Skills Tool
-
-    D->>P: AgentSkills(skills=["./skills/pdf-processing"])
-    P->>P: Load skill metadata (name + description)
-    D->>A: Agent(plugins=[plugin])
-    P->>A: Inject metadata XML into system prompt
-
-    Note over A: Agent sees available skills<br/>in system prompt
-
-    A->>S: skills(skill_name="pdf-processing")
-    S->>A: Return full instructions + resource listing
-    Note over A: Agent follows skill instructions
-```
+<Diagram
+  name="skills-progressive-disclosure"
+  alt="How skills load. Discovery: the developer configures skill sources and registers the AgentSkills plugin, which injects only each skill's name and description into the agent's system prompt. Activation: when a task needs a skill, the agent calls the skills tool, which returns the full instructions and resource listing. Execution: the agent uses the skill."
+/>
 
 1. **Discovery**: On initialization, the plugin reads skill metadata (name and description) and injects it as an XML block into the agent's system prompt. The agent can see what skills are available without loading their full instructions.
 

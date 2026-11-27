@@ -1,26 +1,32 @@
 ---
-title: "Lesson 5: Control Your Agent With Hooks"
+title: "Lesson 5: Control your agent with hooks"
 description: "Hooks fire at the same event points as callbacks (before/after tool calls, before/after model calls, cycle boundaries) but they can modify or cancel what's about to happen."
 redirectFrom:
   - docs/community/learning/lesson5-control-your-agent-with-hooks
 ---
 
-<YouTube id="Zamh36RWKz8" title="Lesson 5: Control Your Agent With Hooks" />
-*[Watch on YouTube](https://www.youtube.com/watch?v=Zamh36RWKz8&list=PLDzwjhH-4yhU&index=5)*
+import CourseNotice from '../../../components/CourseNotice.astro'
 
-:::note[About this lesson]
-The videos in this course are a snapshot in time. Strands is under active development, so the code featured on this page reflects the most up-to-date patterns, but the concepts covered in the video still apply. When in doubt, trust the code.
-:::
+<CourseNotice title="Before you follow along">
+
+This video is a snapshot in time. Some APIs and examples have changed since
+recording. Follow the code on this page, and look for "Changed since recording"
+notices below.
+
+</CourseNotice>
+
+<YouTube id="Zamh36RWKz8" title="Lesson 5: Control your agent with hooks" />
+*[Watch on YouTube](https://www.youtube.com/watch?v=Zamh36RWKz8&list=PLDzwjhH-4yhU&index=5)*
 
 *Code for this lesson: [`samples/05-hooks`](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/05-hooks)*
 
-## Rules That Don't Depend on the Model
+## Rules that don't depend on the model
 
-Hooks inject code at lifecycle events (before/after tool calls, before/after the agent loop) without changing the agent's logic. Unlike tools, which the model decides to use, hooks fire automatically every time regardless of what the model reasons. That's the key distinction: a prompt is a request, a hook is a guarantee.
+Hooks inject code at lifecycle events (before/after tool calls, before/after the agent loop) without changing the agent's logic. Unlike tools, which the model decides to use, hooks fire automatically every time regardless of what the model reasons. The hook applies a programmed check at the event where you register it.
 
-A runaway loop could call the same tool dozens of times. A model might attempt a destructive operation without asking. Prompting asks the model to behave. Hooks guarantee it.
+A runaway loop could call the same tool dozens of times. A model might attempt a destructive operation without asking. The hooks below block the specific tool calls they check; other tools need their own checks.
 
-## Hook Architecture
+## Hook architecture
 
 - Subclass `HookProvider` to define hooks
 - Register callbacks for lifecycle events in `register_hooks()`
@@ -28,7 +34,7 @@ A runaway loop could call the same tool dozens of times. A model might attempt a
 - `event.interrupt()` pauses the loop for human input
 - `event.cancel_tool` blocks tool execution and feeds a message back to the model explaining why
 
-## Example: Human Approval for Deletions
+## Example: human approval for deletions
 
 ```python
 from strands import Agent, tool
@@ -62,10 +68,12 @@ agent = Agent(
 
 `event.interrupt()` pauses agent execution and returns control to the caller. That's what makes approval workflows possible: the agent doesn't proceed until a human answers.
 
-## Example: Rate Limiting Tool Calls
+## Example: rate limiting tool calls
 
 ```python
+from strands import Agent
 from strands.hooks import BeforeInvocationEvent, BeforeToolCallEvent, HookProvider, HookRegistry
+from rate_limiter import get_weather
 
 class LimitToolCounts(HookProvider):
     def __init__(self, max_calls: int = 3):
@@ -93,9 +101,10 @@ agent = Agent(tools=[get_weather], hooks=[LimitToolCounts(max_calls=3)])
 
 📂 [rate_limiter.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/05-hooks/rate_limiter.py)
 
-Notice the counter resets on `BeforeInvocationEvent`. Rate limits are per request, not for the agent's lifetime. And because `cancel_tool` sends a message back to the model, the model learns why the call was blocked and stops retrying.
+Notice the counter resets on `BeforeInvocationEvent`. Rate limits are per request, not for the agent's lifetime. And because `cancel_tool` sends a message back to the model, the model receives feedback about why the call was blocked. The hook continues to block
+excess calls even if the model retries.
 
-## When to Use Hooks
+## When to use hooks
 
 - Rate limit tool usage to prevent runaway loops
 - Require human approval before destructive operations

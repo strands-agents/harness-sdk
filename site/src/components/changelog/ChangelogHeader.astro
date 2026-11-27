@@ -10,24 +10,26 @@ const languages = Object.keys(LANGUAGE_META) as Language[]
   <div>
     <h1 class="cl-title">Changelog</h1>
     <p class="cl-subtitle">
-      Every release across the Strands Agents SDKs ·
+      Every release across Strands Agents products ·
       <a href={pathWithBase('/changelog/feed.xml')}>RSS</a>
     </p>
   </div>
   <div class="cl-controls">
     <div class="cl-control-row">
-      <span class="cl-control-label" id="cl-sdk-label">SDK</span>
+      <span class="cl-control-label" id="cl-sdk-label">Product</span>
       <div class="cl-sdk" role="group" aria-labelledby="cl-sdk-label" data-cl-sdk>
         {sdks.map((sdk, i) => (
           <button type="button" data-cl-sdk-btn={sdk} aria-pressed={i === 0 ? 'true' : 'false'}>
             {SDK_META[sdk].label}
-            <span class="cl-langs" title={`Available in ${SDK_META[sdk].languages.map((l) => LANGUAGE_META[l].label).join(', ')}`}>
-              {SDK_META[sdk].languages.map((lang) => (
-                <svg class="cl-icon" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true">
-                  {ICONS[lang].map((p) => <path fill="currentColor" d={p} />)}
-                </svg>
-              ))}
-            </span>
+            {SDK_META[sdk].languages.length > 0 && (
+              <span class="cl-langs" title={`Available in ${SDK_META[sdk].languages.map((l) => LANGUAGE_META[l].label).join(', ')}`}>
+                {SDK_META[sdk].languages.map((lang) => (
+                  <svg class="cl-icon" width="13" height="13" viewBox="0 0 24 24" aria-hidden="true">
+                    {ICONS[lang].map((p) => <path fill="currentColor" d={p} />)}
+                  </svg>
+                ))}
+              </span>
+            )}
           </button>
         ))}
       </div>

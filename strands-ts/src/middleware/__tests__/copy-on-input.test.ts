@@ -174,7 +174,16 @@ describe('InvokeModelStage copy-on-input isolation', () => {
       await agent.invoke('Hello')
 
       expect(contextKeys.sort()).toEqual(
-        ['agent', 'invocationState', 'messages', 'model', 'projectedInputTokens', 'systemPrompt', 'toolSpecs'].sort()
+        [
+          'agent',
+          'invocationContext',
+          'invocationState',
+          'messages',
+          'model',
+          'projectedInputTokens',
+          'systemPrompt',
+          'toolSpecs',
+        ].sort()
       )
     })
 

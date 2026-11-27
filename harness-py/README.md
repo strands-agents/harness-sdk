@@ -1,7 +1,10 @@
 <div align="center">
   <div>
     <a href="https://strandsagents.com">
-      <img src="https://strandsagents.com/latest/assets/logo-github.svg" alt="Strands Agents" width="55px" height="105px">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="https://strandsagents.com/latest/assets/wordmark-github-dark.svg">
+        <img src="https://strandsagents.com/latest/assets/wordmark-github-light.svg" alt="Strands" width="320">
+      </picture>
     </a>
   </div>
 
@@ -55,7 +58,7 @@ agent("Find the slowest test in this repo and explain why it's slow")
 
 ```python
 create_harness(
-    model="bedrock/global.anthropic.claude-opus-4-8",  # "provider/name", a bare Bedrock id, or a Model instance
+    model="bedrock/global.anthropic.claude-opus-5-5",  # "provider/name", a bare Bedrock id, or a Model instance
     effort="auto",                          # "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
     instructions=None,                      # domain text appended to the system prompt
     tools=None,                             # your tools, added alongside the built-ins
@@ -63,7 +66,7 @@ create_harness(
     plugins=None,                           # your Strands plugins, added alongside the built-in ones
     builtin_tools=None,                     # None = the harness's defaults; a list pins names; a mapping edits (see below)
     background_tasks=None,                  # SDK Background Tasks policy; False to disable
-    builtin_plugins=["todos", "environment"],  # built-in feature plugins by name; [] for none
+    builtin_plugins=["environment"],        # built-in feature plugins by name; [] for none
     caching="auto",                         # cache system prompt, tools & history where supported; False off
     context_manager="auto",                 # "auto" | "agentic" | a ContextManager config/instance | False
     session=True,                           # True | {"id": ..., "dir": ...} | a SessionManager | False
@@ -90,7 +93,8 @@ or wrong-language references fail instead of being ignored.
 pip install strands-harness
 ```
 
-The default agent runs on Amazon Bedrock. To use another provider, grab the matching extra:
+The default agent runs on Amazon Bedrock (Claude through Anthropic's Bedrock client, which the harness
+installs). To use another provider, grab the matching extra:
 
 ```bash
 pip install "strands-harness[openai]"      # or [anthropic], [gemini] (the `google` provider), [ollama], [litellm]
@@ -101,7 +105,7 @@ pip install "strands-harness[openai]"      # or [anthropic], [gemini] (the `goog
 Out of the box, `create_harness()` gives you an agent that:
 
 - **Runs on frontier models with reasoning on**, across Amazon Bedrock, Anthropic, OpenAI, and
-  Google. The default is Claude Opus 4.8 on Amazon Bedrock, behind a tuned system prompt: explore
+  Google. The default is Claude Opus 5.5 on Amazon Bedrock, behind a tuned system prompt: explore
   before changing things, confirm before anything irreversible, verify before calling a task done.
 - **Comes with working tools**: a shell, file tools (`read`, `write`, `edit`), web access, and
   `programmatic_tool_caller`, a sandbox where it writes code that chains, loops over, and
@@ -122,10 +126,10 @@ Everything above is a default, not a constraint. Here's how to adjust each piece
 Pass a `provider/model` string, a bare model id, or a ready-made `Model` instance:
 
 ```python
-create_harness(model="anthropic/claude-opus-4-8")  # Anthropic's API directly
+create_harness(model="anthropic/claude-opus-5-5")  # Anthropic's API directly
 create_harness(model="openai/gpt-5.6-sol")         # OpenAI
 create_harness(model="google/gemini-3.5-flash")    # Google
-create_harness(model="bedrock/global.anthropic.claude-opus-4-8")  # the default, spelled out
+create_harness(model="bedrock/global.anthropic.claude-opus-5-5")  # the default, spelled out
 create_harness(model="bedrock-mantle/openai.gpt-5.6-sol")  # Bedrock's OpenAI-compatible endpoint
 
 from strands.models.openai import OpenAIModel
@@ -139,7 +143,7 @@ for every provider:
 
 ```python
 create_harness(effort="high")     # minimal | low | medium | high | xhigh | max, as the provider offers them
-create_harness(effort="auto")     # the provider's recommended level (high where supported), the default
+create_harness(effort="auto")     # the model vendor's default level (e.g. medium on Opus 5.5, else high), the default
 create_harness(effort="off")      # no reasoning
 ```
 
@@ -186,7 +190,7 @@ create_harness(builtin_tools={"*": False, "read": True, "web_fetch": {}})   # pi
 
 `BUILTIN_TOOL_NAMES` (exported from the package root) is the full list. Prefer the mapping form
 for "the defaults minus X" (`{"subagent": False}`); a list pins every name it contains, so listing
-`web_search` on a model without native search raises instead of quietly staying off (opt into the
+`web_search` on a model without search raises instead of quietly staying off (opt into the
 Exa fallback with `{"web_search": "exa"}`).
 
 `subagent` always runs in the background. By default, the model may also select background
@@ -221,10 +225,12 @@ create_harness(builtin_tools=["shell", "read", "write", "edit"])   # no subagent
 The tool's model-facing parameters are derived from configuration. For a fully configured tool
 (custom roles, model tiers, fixed prompts), build one with `make_subagent` and pass it via `tools`
 with `subagent` dropped from `builtin_tools`. You supply the `builder`, a function that turns a
-resolved `AgentSpec` into the child agent (typically calling `create_harness`); this is the seam
-that makes the child a harness member. Delegation depth is bounded at two levels by default; pass
-`max_depth` to change it. Each axis (`instructions`, `tools`, `mcp_servers`, `model`, `context`)
-becomes a parameter, or not, depending on whether it is `Fixed`, `Inherit`, `Open`, or `Choice`:
+resolved `AgentSpec` into the child agent (typically calling `create_harness`, sync or async); this
+is the seam that makes the child a harness member. `make_subagent` is the SDK's vended subagent tool,
+re-exported here. Delegation depth is bounded at two levels by default; pass `max_depth` to change it.
+Each axis (`instructions`, `tools`, `model`, `context`) becomes a parameter, or not, depending on
+whether it is `Fixed`, `Inherit`, `Open`, or `Choice`. See [docs/subagent.md](docs/subagent.md) for
+what the default wiring adds and what changed when the harness moved to the SDK tool:
 
 ```python
 from strands_harness import create_harness
@@ -302,16 +308,18 @@ create_harness(builtin_tools={"web_fetch": {"model": "anthropic/claude-haiku-4-5
 ```
 
 `web_search` is the other one: it lets the agent look things up on the web mid-answer. Where the
-model provider has its own search (OpenAI, Google, GPT-5/GPT-6 models on `bedrock-mantle` via
-Bedrock Web Search, and Anthropic in Python; TypeScript Anthropic support follows in a coming
-`@strands-agents/sdk` release) the harness turns that on and there is no extra service involved. Elsewhere (Amazon Bedrock
-Converse, other Mantle models, a `Model` instance) `web_search` is off by default with a logged
-warning, and naming it explicitly raises. To search there anyway, opt into the Exa fallback with
-`{"web_search": "exa"}`: the model gets a `web_search` tool backed by Exa's hosted search. It is
-keyless to start; `EXA_API_KEY` in the environment lifts the rate limit. On a model with native
-search the same setting keeps using the provider's search. Bedrock Web Search also needs the
-`bedrock-websearch` IAM actions (in `AmazonBedrockFullAccess`); without them the request succeeds but
-each search fails.
+model provider has its own search (OpenAI, Google, Anthropic, and GPT-5, GPT-6, and Daybreak models on
+`bedrock-mantle` via Bedrock Web Search) the harness turns that on by default. Other
+Amazon Bedrock models get a `web_search` tool backed by
+[Amazon Bedrock AgentCore web search](https://docs.aws.amazon.com/bedrock-agentcore/latest/APIReference/API_InvokeWebSearch.html)
+instead. In case of no native search (a `Model` instance from another provider) `web_search` is
+off by default. To enable web search for these providers, you can opt into Exa with
+`{"web_search": "exa"}`. The model then gets a `web_search` tool backed by Exa's hosted search. It
+works keyless, but adding a `EXA_API_KEY` in the environment lifts the rate limit. You can
+override a provider's native web search by adding `"exa"` explicitly to any model. If you are
+using Bedrock Web Search, you'll need the `bedrock-websearch` IAM action (in
+`AmazonBedrockFullAccess`) to avoid failing search; AgentCore web search needs
+`bedrock-agentcore:InvokeWebSearch`.
 
 > [!WARNING]
 > Web search through Exa sends every search query the model writes to Exa (exa.ai), a third-party
@@ -320,7 +328,8 @@ each search fails.
 
 ```python
 create_harness(model="openai/gpt-5.6-sol")                 # native search on, it's in the defaults
-create_harness(builtin_tools={"web_search": "exa"})  # Bedrock: search through Exa (third party)
+create_harness()                                           # Bedrock: AgentCore web search, also a default
+create_harness(builtin_tools={"web_search": "exa"})        # any model: search through Exa (third party)
 ```
 
 ## Caching reused context
@@ -328,7 +337,8 @@ create_harness(builtin_tools={"web_search": "exa"})  # Bedrock: search through E
 `caching` is on by default. The stable parts of a conversation (system prompt, tool definitions,
 earlier turns) are cached where the provider supports it, so you're not billed to reprocess them
 on every turn. The harness configures Amazon Bedrock and Anthropic direct with automatic cache points and cached
-tool definitions; OpenAI, Gemini, Bedrock Mantle, and LiteLLM cache server-side on their own, so
+tool definitions, and OpenAI and Bedrock Mantle with the SDK cache config (a per-session cache key,
+plus cache points on GPT-5.6+ models listed in the SDK model info); Gemini and LiteLLM cache server-side on their own, so
 there's nothing to configure or turn off. The only targets that can't cache are `ollama` and a
 pre-built `Model` instance (its provider is unknown): there the default is a no-op with a warning
 logged through Python's `logging`, but asking for caching explicitly (`caching=True`) raises for
@@ -413,10 +423,12 @@ directories are skipped.
 
 ## Built-in plugins
 
-The harness ships two built-in feature plugins, both on by default:
+The harness ships two built-in feature plugins. `environment` is on by default; `todos` is opt-in:
 
 - **`todos`** lets the agent keep a structured task list and re-surfaces it before each step so it
   stays on plan through longer tasks. The list lives in agent state, never in durable history.
+  Because it re-injects on every turn, it costs tokens and breaks the cached prefix on providers
+  without explicit cache points — enable it where the task tracking earns that.
 - **`environment`** injects a short context block before each turn: the platform, current date,
   working directory, the project's `AGENTS.md` contents, and links to other `AGENTS.md`/`README.md`
   files a couple of levels down (links, not contents, so the block stays small). Everything is read
@@ -442,7 +454,11 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318  # where your collector
 
 Set headers, protocol, and the rest through the other `OTEL_EXPORTER_OTLP_*` variables. With
 `OTEL_TRACES_EXPORTER` unset, the harness touches telemetry not at all: no exporter, no cost. If your
-process already configures a tracer, the harness uses it. Disable with `OTEL_SDK_DISABLED=true`.
+process already installed a tracer provider (for example ADOT auto-instrumentation on AgentCore Runtime),
+or you named one in `OTEL_PYTHON_TRACER_PROVIDER`, the harness leaves it alone — `OTEL_TRACES_EXPORTER` is then
+that owner's to honor. The harness never changes propagators either way; pick them with the standard
+`OTEL_PROPAGATORS`.
+Disable with `OTEL_SDK_DISABLED=true`.
 
 ## Requiring approval for tool calls
 
@@ -526,6 +542,14 @@ prompt = build_system_prompt(
     context_parts=[f"Current time: {now}"],
 )
 ```
+
+## Versioning
+
+Strands harness is 0.x and versioned separately from the Strands Harness SDK. Patch releases
+(0.x.Y) carry bug fixes and new features, including new built-in tools; minor releases (0.X.0)
+carry breaking changes and say so in the release notes. Pin to a minor (`strands-harness~=0.1.0`)
+to avoid breaking changes; patch releases still add features and tools. Full policy:
+[Versioning and Support](https://strandsagents.com/docs/user-guide/harness/versioning/).
 
 ## Contributing ❤️
 

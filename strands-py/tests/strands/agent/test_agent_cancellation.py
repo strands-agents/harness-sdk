@@ -7,8 +7,9 @@ from unittest.mock import ANY
 
 import pytest
 
-from strands import Agent, tool
+from strands import Agent, LocalAgent, ToolContext, tool
 from strands.hooks import AfterModelCallEvent, BeforeModelCallEvent, BeforeToolCallEvent, BeforeToolsEvent
+from strands.tools.executors import ConcurrentToolExecutor, SequentialToolExecutor
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 # Default agent response for simple tests
@@ -519,6 +520,55 @@ async def test_tool_context_cancel_signal_set_by_external_signal():
     assert result.stop_reason == "cancelled"
 
 
+@pytest.mark.parametrize("executor_cls", [SequentialToolExecutor, ConcurrentToolExecutor])
+@pytest.mark.parametrize("external_signal", [False, True])
+@pytest.mark.asyncio
+async def test_cancel_during_before_tool_call_hook_skips_the_tool(external_signal, executor_cls):
+    """A cancellation that lands while a BeforeToolCallEvent hook runs skips the tool (#5665)."""
+    ran = []
+    cancel_signal = threading.Event()
+
+    @tool
+    def write_marker() -> str:
+        """Record that the tool ran."""
+        ran.append("write_marker")
+        return "wrote"
+
+    def cancel_during_hook(event: BeforeToolCallEvent):
+        if external_signal:
+            cancel_signal.set()
+        else:
+            agent.cancel()
+
+    tool_use_response = {
+        "role": "assistant",
+        "content": [{"toolUse": {"toolUseId": "tool_1", "name": "write_marker", "input": {}}}],
+    }
+    agent = Agent(
+        model=MockedModelProvider([tool_use_response, DEFAULT_RESPONSE]),
+        tools=[write_marker],
+        tool_executor=executor_cls(),
+        callback_handler=None,
+    )
+    agent.add_hook(cancel_during_hook, BeforeToolCallEvent)
+
+    result = await agent.invoke_async("Use the tool", cancel_signal=cancel_signal)
+
+    tru_content = agent.messages[-1]["content"]
+    exp_content = [
+        {
+            "toolResult": {
+                "toolUseId": "tool_1",
+                "status": "error",
+                "content": [{"text": "Tool execution cancelled"}],
+            }
+        }
+    ]
+    assert ran == []
+    assert result.stop_reason == "cancelled"
+    assert tru_content == exp_content
+
+
 _CHARGE_TOOL_USE = {
     "role": "assistant",
     "content": [{"toolUse": {"toolUseId": "t1", "name": "charge_card", "input": {"amount": "$100"}}}],
@@ -575,7 +625,7 @@ async def test_hook_cancelled_tool_batch_does_not_replay_the_stored_tool_use():
 
 def _approver_agent(ran, cancel_on_first_run=False):
     @tool(context=True)
-    def approver(tool_context) -> str:
+    def approver(tool_context: ToolContext[LocalAgent]) -> str:
         """Require approval before doing the work."""
         tool_context.interrupt("approve", reason="proceed?")
         ran.append("executed")
@@ -630,3 +680,141 @@ async def test_cancel_while_tool_runs_does_not_re_execute_the_tool():
     agent._cancel_signal.clear()
     await agent.invoke_async(response)
     assert ran == ["executed"]
+
+
+def _tool_use_message(*tool_uses: tuple[str, str, dict]) -> dict:
+    return {
+        "role": "assistant",
+        "content": [
+            {"toolUse": {"toolUseId": tool_use_id, "name": name, "input": tool_input}}
+            for tool_use_id, name, tool_input in tool_uses
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_deferred_cancel_lets_sibling_tools_finish_and_sets_final_message():
+    executed = []
+
+    @tool
+    def save_file(name: str) -> str:
+        """Record a file save."""
+        executed.append(name)
+        return f"saved {name}"
+
+    @tool(context=True)
+    def finish(tool_context: ToolContext, summary: str) -> str:
+        """Stop the loop after this batch."""
+        tool_context.agent.cancel(message=summary, after_current_tools=True)
+        return summary
+
+    model = MockedModelProvider(
+        [_tool_use_message(("t1", "finish", {"summary": "all done"}), ("t2", "save_file", {"name": "a.txt"}))]
+    )
+    agent = Agent(model=model, tools=[save_file, finish])
+
+    result = await agent.invoke_async("Do the work")
+
+    assert executed == ["a.txt"]
+    assert result.stop_reason == "cancelled"
+    assert result.message["content"] == [{"text": "all done"}]
+    assert agent.messages[-1] is result.message
+    tool_results = [block["toolResult"] for block in agent.messages[-2]["content"]]
+    assert [tool_result["status"] for tool_result in tool_results] == ["success", "success"]
+    assert model.index == 1
+
+
+@pytest.mark.asyncio
+async def test_deferred_cancel_without_message_returns_model_message():
+    @tool(context=True)
+    def finish(tool_context: ToolContext) -> str:
+        """Stop the loop after this batch."""
+        tool_context.agent.cancel(after_current_tools=True)
+        return "ok"
+
+    agent = Agent(model=MockedModelProvider([_tool_use_message(("t1", "finish", {}))]), tools=[finish])
+
+    result = await agent.invoke_async("Go")
+
+    assert result.stop_reason == "cancelled"
+    assert "toolUse" in result.message["content"][0]
+    assert "toolResult" in agent.messages[-1]["content"][0]
+
+
+@pytest.mark.asyncio
+async def test_deferred_cancel_state_is_cleared_between_invocations():
+    @tool(context=True)
+    def finish(tool_context: ToolContext) -> str:
+        """Stop the loop after this batch."""
+        tool_context.agent.cancel(message="done", after_current_tools=True)
+        return "done"
+
+    agent = Agent(
+        model=MockedModelProvider([_tool_use_message(("t1", "finish", {})), DEFAULT_RESPONSE]),
+        tools=[finish],
+    )
+
+    first = await agent.invoke_async("Go")
+    second = await agent.invoke_async("Again")
+
+    assert first.stop_reason == "cancelled"
+    assert second.stop_reason == "end_turn"
+    assert second.message["content"] == DEFAULT_RESPONSE["content"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_message_last_write_wins():
+    @tool(context=True)
+    def first(tool_context: ToolContext) -> str:
+        """First stop request."""
+        tool_context.agent.cancel(message="first", after_current_tools=True)
+        return "first"
+
+    @tool(context=True)
+    def second(tool_context: ToolContext) -> str:
+        """Second stop request."""
+        tool_context.agent.cancel(message="second", after_current_tools=True)
+        return "second"
+
+    agent = Agent(
+        model=MockedModelProvider([_tool_use_message(("t1", "first", {}), ("t2", "second", {}))]),
+        tools=[first, second],
+    )
+
+    result = await agent.invoke_async("Go")
+
+    assert result.stop_reason == "cancelled"
+    assert result.message["content"] == [{"text": "second"}]
+
+
+@pytest.mark.asyncio
+async def test_immediate_cancel_message_becomes_final_message():
+    agent = Agent(model=MockedModelProvider([DEFAULT_RESPONSE]))
+
+    agent.cancel(message="shutting down")
+    result = await agent.invoke_async("Hello")
+
+    assert result.stop_reason == "cancelled"
+    assert result.message["content"] == [{"text": "shutting down"}]
+
+
+@pytest.mark.asyncio
+async def test_immediate_cancel_message_before_tools_becomes_final_message():
+    @tool
+    def noop() -> str:
+        """Never runs."""
+        return "ran"
+
+    agent = Agent(model=MockedModelProvider([_tool_use_message(("t1", "noop", {}))]), tools=[noop])
+
+    async def cancel_after_model(event: AfterModelCallEvent):
+        if event.stop_response and event.stop_response.stop_reason == "tool_use":
+            agent.cancel(message="aborted")
+
+    agent.add_hook(cancel_after_model, AfterModelCallEvent)
+
+    result = await agent.invoke_async("Go")
+
+    assert result.stop_reason == "cancelled"
+    assert result.message["content"] == [{"text": "aborted"}]
+    assert agent.messages[-2]["content"][0]["toolResult"]["status"] == "error"

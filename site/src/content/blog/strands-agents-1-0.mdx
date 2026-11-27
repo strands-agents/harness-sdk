@@ -72,12 +72,12 @@ In this abridged example, we define travel and research agents who have speciali
 
 ### Graceful completion
 
-Agents can use the SDK's experimental stop tool to end their event loop when the
+Agents can use the SDK's stop tool to end their event loop when the
 task is complete.
 
 ```python
 from strands import Agent
-from strands.experimental.tools import stop
+from strands.vended_tools import stop
 
 SYSTEM_PROMPT = """
 Answer the user's support query. Use the stop tool after providing the final answer.

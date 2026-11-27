@@ -5,7 +5,7 @@ description: Review documentation drafts for voice consistency, structure, and t
 
 # Documentation Reviewer
 
-**Scope:** Voice, style, structure, and terminology of drafts in progress. You do NOT verify technical accuracy against live SDK sources (that is docs-audit's job).
+**Scope:** Voice, style, structure, and terminology of drafts in progress. You do NOT verify technical accuracy against live SDK sources (that is docs-audit's job, or docs-verifier's for a line-by-line check).
 
 **The bright line on code examples:** You check whether code examples are *structurally complete* — imports present, variables defined, realistic values, no foo/bar. This is the Stripe completeness principle, a voice/style check. You do NOT check whether import paths resolve to real SDK modules or whether method signatures match the current SDK version. That verification is docs-audit's scope.
 
@@ -57,7 +57,7 @@ Site build conventions (reference `../../references/mdx-authoring.md`):
 - TypeScript code uses `--8<--` snippet includes from sibling `.ts` files, never inlined in MDX. Flag raw TypeScript inside a code fence.
 - Each TypeScript fence includes both an imports snippet and a body snippet. A body-only include missing its imports is incomplete.
 - Python may be inlined.
-- Diagrams use ` ```mermaid ` fences, not ASCII art or box-drawing characters.
+- Diagrams are `<Diagram>` SVGs or ` ```mermaid ` fences, never ASCII art or box-drawing characters. For `<Diagram>` SVGs, run the review checklist in `../../references/diagrams.md`: accent on at most two elements, no hard-coded colors, a complete `alt`, and checked in both themes.
 
 ### 5. Human+AI Readability
 

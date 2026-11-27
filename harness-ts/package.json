@@ -24,6 +24,8 @@
     }
   },
   "scripts": {
+    "prepare": "node -e \"require('node:fs').copyFileSync('../shared/model-info.json','src/model-info.json')\"",
+    "prebuild": "node -e \"require('node:fs').copyFileSync('../shared/model-info.json','src/model-info.json')\"",
     "build": "tsc --project src/tsconfig.json",
     "clean:dist": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "prepack": "npm run clean:dist && npm run build",
@@ -50,7 +52,7 @@
   "author": "AWS",
   "license": "Apache-2.0",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "repository": {
     "type": "git",
@@ -62,6 +64,9 @@
   },
   "homepage": "https://github.com/strands-agents/harness-sdk#readme",
   "dependencies": {
+    "@anthropic-ai/bedrock-sdk": "^1.1.2",
+    "@aws-sdk/client-bedrock-agentcore": "^3.1165.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1154.0",
     "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.219.0",
     "@opentelemetry/resources": "^2.8.0",
@@ -69,7 +74,6 @@
     "@opentelemetry/sdk-trace-base": "^2.6.1",
     "@opentelemetry/sdk-trace-node": "^2.6.1",
     "@pydantic/monty": "0.0.23",
-    "@strands-agents/sdk": ">=1.17.0 <1.18.0",
     "cjs-module-lexer": "^2.2.1",
     "esbuild": "^0.28.2",
     "import-meta-resolve": "^4.2.0",
@@ -77,15 +81,13 @@
     "zod": "^4.1.12"
   },
   "peerDependencies": {
-    "@anthropic-ai/sdk": "^0.109.1",
+    "@anthropic-ai/sdk": "^1.4.0",
     "@aws/bedrock-token-generator": "^1.1.0",
     "@google/genai": "^2.6.0",
+    "@strands-agents/sdk": ">=1.26.0 <2.0.0",
     "openai": "^6.45.0"
   },
   "peerDependenciesMeta": {
-    "@anthropic-ai/sdk": {
-      "optional": true
-    },
     "@aws/bedrock-token-generator": {
       "optional": true
     },
@@ -97,7 +99,7 @@
     }
   },
   "devDependencies": {
-    "@anthropic-ai/sdk": "^0.109.1",
+    "@anthropic-ai/sdk": "^1.4.0",
     "@aws/bedrock-token-generator": "^1.1.0",
     "@cedar-policy/cedar-wasm": "4.11.2",
     "@cedar-policy/mcp-schema-generator-wasm": "0.6.0",

@@ -48,13 +48,23 @@ interface OpenAIBaseConfig extends BaseModelConfig {
    *
    * Provider-managed fields cannot be overridden via `params` — use the dedicated
    * config properties instead. A warning is logged at config time if any are present:
-   * - Chat Completions: `model`, `messages`, `stream`, `stream_options`
+   * - Chat Completions: `model`, `messages`, `stream`
    * - Responses API: `model`, `input`, `stream`, `store`
+   *
+   * Chat Completions sends `stream_options: { include_usage: true }` unless `params` sets it,
+   * and omits any `params` key set to `null`, such as `stream_options: null` for compatible
+   * endpoints that reject the field. Without `include_usage`, the endpoint may not report usage.
    */
   params?: Record<string, unknown>
 
   /**
-   * Prompt-caching configuration. OpenAI routes cache reads on `cacheKey` and honors `ttl` when it names an OpenAI retention literal. Any other `ttl` and the placement fields have no effect here. An explicit `prompt_cache_key` / `prompt_cache_retention` in `params` takes precedence.
+   * Prompt-caching configuration. On the Responses API, models whose `modelInfo` says they take cache
+   * points (GPT-5.6 and later) cache durable conversation prefixes before temporary context;
+   * `messagesTTL: false` disables that placement. There, a `'30m'`/`'12h'` `messagesTTL` sets each
+   * checkpoint's `ttl` and such a `ttl` sets `prompt_cache_options.ttl`. Older models and Chat
+   * Completions use implicit caching. `cacheKey` maps to `prompt_cache_key`, and retention
+   * literals map to `prompt_cache_retention`. Native caching fields in `params` take precedence.
+   * Checkpoints do not remove injected content retained by stateful server-side conversations.
    */
   cacheConfig?: CacheConfig
 }

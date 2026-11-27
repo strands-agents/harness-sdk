@@ -1,0 +1,118 @@
+---
+interface Props {
+  command: string
+  label?: string
+  surface?: string
+}
+
+const { command, label = 'Copy command', surface = 'command' } = Astro.props
+---
+
+<div class="command-pill" data-command-pill data-command={command} data-surface={surface}>
+  <code class="command-pill__command">
+    <span class="command-pill__prompt" aria-hidden="true">$</span>
+    <span>{command}</span>
+  </code>
+  <button type="button" class="command-pill__copy" data-command-copy aria-label={label}>
+    <span data-command-copy-label>copy</span>
+  </button>
+</div>
+
+<style>
+  .command-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    width: fit-content;
+    max-width: 100%;
+    padding: 8px 8px 8px 14px;
+    background: var(--toggle-bg);
+    border: 1px solid var(--toggle-inactive-border);
+    border-radius: 999px;
+  }
+
+  .command-pill__command {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1 1 auto;
+    min-width: 0;
+    color: var(--fg);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 14px;
+    line-height: 1.3;
+    overflow-x: auto;
+    scrollbar-width: none;
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  .command-pill__command::-webkit-scrollbar {
+    display: none;
+  }
+
+  .command-pill__prompt {
+    flex: none;
+    color: var(--accent-green);
+  }
+
+  .command-pill__copy {
+    flex: none;
+    padding: 6px 14px;
+    border: 1px solid var(--toggle-inactive-border);
+    border-radius: 999px;
+    background: var(--toggle-inactive-bg);
+    color: var(--toggle-inactive-fg);
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 13px;
+    cursor: pointer;
+    transition:
+      color 0.15s ease,
+      background 0.15s ease;
+  }
+
+  .command-pill__copy:hover {
+    color: var(--toggle-hover-fg);
+  }
+
+  .command-pill__copy.is-copied {
+    border-color: transparent;
+    background: var(--toggle-active-bg);
+    color: var(--strands-black);
+  }
+
+  @media (max-width: 420px) {
+    .command-pill {
+      gap: 6px;
+      padding: 6px 6px 6px 10px;
+    }
+
+    .command-pill__command {
+      gap: 6px;
+      font-size: 12px;
+    }
+
+    .command-pill__copy {
+      padding: 5px 10px;
+      font-size: 11px;
+    }
+  }
+</style>
+
+<script>
+  import { attachCopyButton } from '../util/clipboard'
+
+  document.querySelectorAll<HTMLElement>('[data-command-pill]').forEach((root) => {
+    if (root.dataset.copyReady === 'true') return
+    root.dataset.copyReady = 'true'
+
+    const button = root.querySelector<HTMLButtonElement>('[data-command-copy]')
+    if (!button) return
+
+    attachCopyButton(button, {
+      label: root.querySelector<HTMLElement>('[data-command-copy-label]'),
+      getText: () => root.dataset.command ?? '',
+      track: { surface: root.dataset.surface ?? 'command' },
+    })
+  })
+</script>

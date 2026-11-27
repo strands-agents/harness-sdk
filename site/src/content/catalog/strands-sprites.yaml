@@ -1,0 +1,10 @@
+name: Sprites
+description: Run Strands shell commands and file tools in persistent Sprites Linux environments, with asynchronous output streaming and remote execution deadlines.
+integrationType: integration
+maintainedBy: partner
+languages:
+  python:
+    package: strands-sprites
+github: https://github.com/superfly/strands-sprites
+docsUrl: https://github.com/superfly/strands-sprites#readme
+addedDate: 2026-10-09

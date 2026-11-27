@@ -2,13 +2,14 @@
  * File-based memory resolution: build a `MemoryManager` over a local `FileMemoryStore`.
  *
  * Memory is on by default. Facts the agent learns are distilled every few turns into markdown
- * files under `memory.dir` (default `./.agent/memory`), searched and injected before each turn
+ * files under `memory.dir` (default `./.agent/memory`), searched and injected before each user turn
  * so a returning agent recalls them without re-asking. Persistence is plain files, independent of
  * any session: memory survives across sessions and works with sessions off.
  *
  * Extraction is background and turn-triggered, so a short run can end with the latest turns unsaved.
- * The owner of the agent's lifecycle flushes at shutdown (`await agent.memoryManager?.flush()`) to
- * persist what's pending; the harness's CLI does this, and a library consumer should do the same.
+ * Binding the agent with `await using` runs its shutdown on scope exit, or the owner of the agent's
+ * lifecycle calls `await agent.shutdown()` at shutdown, to persist what's pending; the harness's CLI
+ * flushes at that boundary for you, and a library consumer should do one of these.
  *
  * A consumer can swap the backend by passing their own `stores`; the harness still owns the manager, so
  * its injection/tool policy (injection on, `search_memory` on, `add_memory` off) applies either way.
@@ -52,7 +53,7 @@ export interface ResolveMemoryOptions {
 /**
  * Build the memory manager: a `MemoryManager` wrapping either the consumer's `stores` or a default
  * `FileMemoryStore` writing to `dir`, with the SDK's tool defaults (`search_memory` on, no
- * `add_memory` write tool) and injection on every turn.
+ * `add_memory` write tool) and injection on each user turn.
  *
  * The default store's keys are pre-namespaced to `dir` itself, so files land at
  * `dir/<slug>.md` without the store's own `memory/<name>/` scoping doubling the path.
@@ -69,9 +70,8 @@ export async function resolveMemory(options: ResolveMemoryOptions = {}): Promise
     supplied.length > 0
       ? supplied.map((store) => (writable ? store : toReadOnly(store)))
       : [await buildDefaultStore(model, dir, webFetch?.model, writable)]
-  // Inject on every model call, not only on a fresh user ask: the harness runs multi-step tool loops, so an
-  // autonomous step (or a delegate) consults memory at each turn rather than only when the user speaks.
-  return new MemoryManager({ stores: list, injection: { trigger: 'everyTurn' } })
+  // No injection override: the SDK's `userTurn` default is the harness policy.
+  return new MemoryManager({ stores: list })
 }
 
 /** The default file-backed store, writing markdown directly under `dir`. */
@@ -96,7 +96,7 @@ async function buildDefaultStore(
  * A recall-only view of a store: the same backend, still searchable, but with every write path
  * (`add`/`addMessages`) and its extraction config dropped so the delegate's manager can neither
  * extract nor write. `getTools` is omitted too, since a store-native tool is an unbounded surface
- * we can't guarantee is read-only; the delegate still recalls through `search_memory` and injection.
+ * we can't guarantee is read-only; the delegate still recalls through `search_memory`.
  */
 function toReadOnly(store: MemoryStore): MemoryStore {
   return {

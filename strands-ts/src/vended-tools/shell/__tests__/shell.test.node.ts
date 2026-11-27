@@ -1,20 +1,21 @@
 import { describe, it, expect } from 'vitest'
 import { makeBash, makeShell, ShellTimeoutError, ShellExecutionError, type ShellOutput } from '../index.js'
 import { BashTimeoutError, BashSessionError } from '../../bash/types.js'
-import type { ToolContext } from '../../../index.js'
+import { Agent, TextBlock, ToolResultBlock, type ToolContext } from '../../../index.js'
 import { createMockAgent } from '../../../__fixtures__/agent-helpers.js'
+import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { TestSandbox } from '../../../__fixtures__/test-sandbox.node.js'
+import type { ExecuteOptions } from '../../../sandbox/base.js'
+import type { ExecutionResult } from '../../../sandbox/types.js'
+import { SandboxAbortError } from '../../../sandbox/errors.js'
 import { mkdtempSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
 describe.skipIf(process.platform === 'win32')('makeShell', () => {
-  const createSandboxShell = (): { sandboxShell: ReturnType<typeof makeShell>; context: ToolContext } => {
-    const workDir = mkdtempSync(join(tmpdir(), 'shell-sandbox-test-'))
-    const sandbox = new TestSandbox(workDir)
-    const sandboxShell = makeShell(sandbox)
+  const createContext = (): ToolContext => {
     const agent = createMockAgent()
-    const context: ToolContext = {
+    return {
       toolUse: { name: 'shell', toolUseId: 'test-id', input: {} },
       agent,
       invocationState: {},
@@ -23,7 +24,11 @@ describe.skipIf(process.platform === 'win32')('makeShell', () => {
         throw new Error('interrupt not available in mock context')
       },
     }
-    return { sandboxShell, context }
+  }
+
+  const createSandboxShell = (): { sandboxShell: ReturnType<typeof makeShell>; context: ToolContext } => {
+    const workDir = mkdtempSync(join(tmpdir(), 'shell-sandbox-test-'))
+    return { sandboxShell: makeShell(new TestSandbox(workDir)), context: createContext() }
   }
 
   it('executes command via sandbox', async () => {
@@ -96,6 +101,41 @@ describe.skipIf(process.platform === 'win32')('makeShell', () => {
     expect(JSON.parse(text.split('\n')[1]!)).toStrictEqual({ output: 'partial\n', error: '', exit_code: 124 })
   })
 
+  it('stops the command when the tool call is cancelled', async () => {
+    const { sandboxShell, context } = createSandboxShell()
+    const controller = new AbortController()
+    setTimeout(() => controller.abort(), 300)
+
+    const error = await sandboxShell
+      .invoke({ command: 'echo partial; echo warn >&2; sleep 60' }, { ...context, cancelSignal: controller.signal })
+      .catch((e) => e)
+
+    // SandboxAbortError, not ShellExecutionError: cancellation is not a shell failure.
+    expect(error).toBeInstanceOf(SandboxAbortError)
+    const partial = { output: 'partial\n', error: 'warn\n', exit_code: 130 }
+    expect(error.message).toBe(`Execution aborted\n${JSON.stringify(partial)}`)
+  })
+
+  it('agent.cancel() stops a running command', async () => {
+    const { sandboxShell } = createSandboxShell()
+    const toolUse = { type: 'toolUseBlock' as const, name: 'shell', toolUseId: 't1', input: { command: 'sleep 60' } }
+    const agent = new Agent({ model: new MockMessageModel().addTurn(toolUse), tools: [sandboxShell], printer: false })
+    setTimeout(() => agent.cancel(), 300)
+
+    const result = await agent.invoke('go')
+
+    expect(result.stopReason).toBe('cancelled')
+    const partial = JSON.stringify({ output: '', error: '', exit_code: 130 })
+    expect(agent.messages[2]!.content).toEqual([
+      new ToolResultBlock({
+        toolUseId: 't1',
+        status: 'error',
+        content: [new TextBlock(`Error: Execution aborted\n${partial}`)],
+        error: expect.any(SandboxAbortError),
+      }),
+    ])
+  })
+
   it('timeout error still matches the pre-rename BashTimeoutError', async () => {
     const { sandboxShell, context } = createSandboxShell()
     await expect(sandboxShell.invoke({ command: 'sleep 10', timeout: 0.1 }, context)).rejects.toThrow(BashTimeoutError)
@@ -104,11 +144,56 @@ describe.skipIf(process.platform === 'win32')('makeShell', () => {
   it('ShellExecutionError still matches the pre-rename BashSessionError', () => {
     expect(new ShellExecutionError('boom')).toBeInstanceOf(BashSessionError)
   })
+
+  describe('defaultTimeout', () => {
+    class RecordingSandbox extends TestSandbox {
+      timeouts: (number | undefined)[] = []
+
+      override execute(command: string, options?: ExecuteOptions): Promise<ExecutionResult> {
+        this.timeouts.push(options?.timeout)
+        return super.execute(command, options)
+      }
+    }
+
+    it.each([
+      [{}, 120],
+      [{ defaultTimeout: 300 }, 300],
+    ])('shows the model the default in the schema (%o)', (options, expected) => {
+      const schema = makeShell(options).toolSpec.inputSchema as {
+        properties: Record<string, unknown>
+        required: string[]
+      }
+      expect(schema.required).toEqual(['command'])
+      expect(schema.properties.timeout).toEqual({
+        type: 'number',
+        exclusiveMinimum: 0,
+        default: expected,
+        description: 'Optional per-execution timeout in seconds.',
+      })
+    })
+
+    it('reaches the sandbox when the model omits timeout', async () => {
+      const sandbox = new RecordingSandbox(mkdtempSync(join(tmpdir(), 'shell-sandbox-test-')))
+      await makeShell(sandbox, { defaultTimeout: 300 }).invoke({ command: 'true' }, createContext())
+      expect(sandbox.timeouts).toEqual([300])
+    })
+
+    it('loses to an explicit timeout from the model', async () => {
+      const sandbox = new RecordingSandbox(mkdtempSync(join(tmpdir(), 'shell-sandbox-test-')))
+      await makeShell(sandbox, { defaultTimeout: 300 }).invoke({ command: 'true', timeout: 7 }, createContext())
+      expect(sandbox.timeouts).toEqual([7])
+    })
+
+    // Infinity would reach setTimeout, which clamps the overflow to 1 ms and times out every call.
+    it.each([0, -1, Infinity, NaN])('rejects a non-positive or non-finite default (%s) at construction', (value) => {
+      expect(() => makeShell({ defaultTimeout: value })).toThrow('defaultTimeout must be a positive finite number')
+    })
+  })
 })
 
 describe('deprecated makeBash alias', () => {
   // Consumers key registries, hooks, and defaults lists on the runtime name, so an
-  // alias that returned a tool named 'shell' would still break them (see awsarron/stan#6).
+  // alias that returned a tool named 'shell' would still break them.
   it('keeps the pre-rename tool name', () => {
     expect(makeBash().name).toBe('bash')
   })

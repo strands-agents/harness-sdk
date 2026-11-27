@@ -65,14 +65,14 @@ The default tool, produced by `makeWebFetch()` with `mode: 'agentic'` and defaul
 
 ### `makeWebFetch(options?)`
 
-| Option            | Type                      | Default       | Description                                                                             |
-| ----------------- | ------------------------- | ------------- | --------------------------------------------------------------------------------------- |
-| `mode`            | `'markdown' \| 'agentic'` | `'agentic'`   | Extraction mode (see below).                                                            |
-| `name`            | `string`                  | `'web_fetch'` | Tool name shown to the model.                                                           |
-| `description`     | `string`                  | (built-in)    | Tool description shown to the model. Defaults to a mode-appropriate description.        |
-| `maxBytes`        | `number`                  | `5242880`     | Maximum response body size in bytes (5 MiB).                                            |
-| `maxContentChars` | `number`                  | `50000`       | Maximum characters of extracted content delivered to the model.                         |
-| `model`           | `Model`                   |               | Analyst model for agentic mode. Falls back to the host agent's model when not provided. |
+| Option            | Type                      | Default       | Description                                                                                  |
+| ----------------- | ------------------------- | ------------- | -------------------------------------------------------------------------------------------- |
+| `mode`            | `'markdown' \| 'agentic'` | `'agentic'`   | Extraction mode (see below).                                                                 |
+| `name`            | `string`                  | `'web_fetch'` | Tool name shown to the model.                                                                |
+| `description`     | `string`                  | (built-in)    | Tool description shown to the model. Defaults to a mode-appropriate description.             |
+| `maxBytes`        | `number`                  | `5242880`     | Maximum response body size in bytes (5 MiB).                                                 |
+| `maxContentChars` | `number`                  | `50000`       | Maximum characters of extracted content delivered to the model.                              |
+| `model`           | `Model`                   |               | Analyst model for agentic mode. Falls back to the host agent's `auxModel` when not provided. |
 
 Throws if `maxBytes` or `maxContentChars` is not a positive number.
 

@@ -11,7 +11,7 @@ import bisect
 import inspect
 import logging
 from collections.abc import Awaitable, Generator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import groupby
 from typing import TYPE_CHECKING, Any, Generic, Protocol, runtime_checkable
 
@@ -22,6 +22,7 @@ from ._type_inference import infer_event_types
 
 if TYPE_CHECKING:
     from ..agent import Agent
+    from ..agent.invocation_context import InvocationContext
     from ..types.agent import LocalAgent
 
 logger = logging.getLogger(__name__)
@@ -51,7 +52,15 @@ class _CallbackEntry:
 
 @dataclass
 class BaseHookEvent:
-    """Base class for all hook events."""
+    """Base class for all hook events.
+
+    Attributes:
+        invocation_context: The request this event belongs to (``None`` outside one); pass it as
+            ``invocation_context`` to a nested call to join that request. Kept out of equality
+            and repr.
+    """
+
+    invocation_context: "InvocationContext | None" = field(default=None, kw_only=True, compare=False, repr=False)
 
     @property
     def should_reverse_callbacks(self) -> bool:
@@ -174,6 +183,10 @@ class HookCallback(Protocol, Generic[TEvent]):
         ...
 
 
+def _is_coroutine_callable(callback: HookCallback) -> bool:
+    return inspect.iscoroutinefunction(callback) or inspect.iscoroutinefunction(callback.__call__)
+
+
 class HookRegistry:
     """Registry for managing hook callbacks associated with event types.
 
@@ -258,7 +271,7 @@ class HookRegistry:
         # Register callback for each event type
         for resolved_event_type in unique_event_types:
             # Related issue: https://github.com/strands-agents/harness-sdk/issues/330
-            if resolved_event_type.__name__ == "AgentInitializedEvent" and inspect.iscoroutinefunction(callback):
+            if resolved_event_type.__name__ == "AgentInitializedEvent" and _is_coroutine_callable(callback):
                 raise ValueError("AgentInitializedEvent can only be registered with a synchronous callback")
 
             entries = self._registered_callbacks.setdefault(resolved_event_type, [])
@@ -335,10 +348,9 @@ class HookRegistry:
 
         for callback in self.get_callbacks_for(event):
             try:
-                if inspect.iscoroutinefunction(callback):
-                    await callback(event)
-                else:
-                    callback(event)
+                result = callback(event)
+                if inspect.isawaitable(result):
+                    await result
 
             except InterruptException as exception:
                 interrupt = exception.interrupt
@@ -369,7 +381,7 @@ class HookRegistry:
             The event dispatched to registered callbacks and any interrupts raised by the user.
 
         Raises:
-            RuntimeError: If at least one callback is async.
+            RuntimeError: If at least one callback is async, or a synchronous callback returns a coroutine.
             ValueError: If interrupt name is used more than once.
 
         Example:
@@ -381,12 +393,19 @@ class HookRegistry:
         callbacks = list(self.get_callbacks_for(event))
         interrupts: dict[str, Interrupt] = {}
 
-        if any(inspect.iscoroutinefunction(callback) for callback in callbacks):
+        if any(_is_coroutine_callable(callback) for callback in callbacks):
             raise RuntimeError(f"event=<{event}> | use invoke_callbacks_async to invoke async callback")
 
         for callback in callbacks:
             try:
-                callback(event)
+                result = callback(event)
+                # A coroutine cannot run without being awaited, unlike an already-scheduled awaitable.
+                if inspect.iscoroutine(result):
+                    result.close()
+                    raise RuntimeError(
+                        f"event=<{event}> | callback returned a coroutine but this event requires a "
+                        "synchronous callback"
+                    )
             except InterruptException as exception:
                 interrupt = exception.interrupt
                 if interrupt.name in interrupts:

@@ -160,7 +160,9 @@ describe('generateSummary', () => {
           .fn()
           .mockResolvedValueOnce({ done: false, value: undefined })
           .mockResolvedValueOnce({ done: true, value: { message } }),
-        [Symbol.asyncIterator]: vi.fn(),
+        [Symbol.asyncIterator]() {
+          return this
+        },
       })),
     }
   }
@@ -213,7 +215,9 @@ describe('generateSummary', () => {
     const model = {
       streamAggregated: vi.fn(() => ({
         next: vi.fn().mockResolvedValueOnce({ done: true, value: undefined }),
-        [Symbol.asyncIterator]: vi.fn(),
+        [Symbol.asyncIterator]() {
+          return this
+        },
       })),
     }
 
@@ -232,7 +236,9 @@ describe('generateSummary', () => {
     const model = {
       streamAggregated: vi.fn(() => ({
         next: vi.fn().mockResolvedValueOnce({ done: true, value: { message } }),
-        [Symbol.asyncIterator]: vi.fn(),
+        [Symbol.asyncIterator]() {
+          return this
+        },
       })),
     }
 

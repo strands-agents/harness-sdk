@@ -2,6 +2,15 @@ name: "Docs: Deploy to GitHub Pages"
 
 on:
   workflow_dispatch:
+    inputs:
+      skip_changelog_check:
+        description: 'Deploy even if a published release has no changelog entry yet'
+        type: boolean
+        default: false
+      content_ref_overrides:
+        description: 'Emergency only: source-id=<40-character SHA>, comma-separated'
+        type: string
+        default: ''
 
 permissions:
   contents: write
@@ -23,15 +32,85 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: '22'
+          node-version-file: .node-version
 
       - name: Install dependencies
         run: npm ci
 
+      - name: Resolve documentation source refs
+        id: content_refs
+        env:
+          CONTENT_REF_OVERRIDES: ${{ inputs.content_ref_overrides }}
+        run: npm run content-refs:resolve
+
+      - name: Checkout samples
+        uses: actions/checkout@v7
+        with:
+          repository: strands-agents/samples
+          ref: ${{ steps.content_refs.outputs.samples_ref }}
+          path: samples-source
+          persist-credentials: false
+
+      # Releases must ship with their changelog: merge the open
+      # "docs(changelog): sync release notes" PR first (see CHANGELOG-SYNC.md).
+      - name: Check every release has a changelog entry
+        if: ${{ !inputs.skip_changelog_check }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          missing=0 unverified=0
+          for repo in strands-agents/harness-sdk strands-agents/evals strands-agents/box strands-agents/shell; do
+            code=0
+            npm run -s changelog:sync -- --check --source-repo "$repo" || code=$?
+            if [ "$code" = 1 ]; then missing=1; elif [ "$code" != 0 ]; then unverified=1; fi
+          done
+          if [ "$missing" = 1 ]; then
+            echo "::error::Merge the open changelog PR before deploying: https://github.com/strands-agents/harness-sdk/pulls?q=is%3Apr+is%3Aopen+head%3Achangelog%2Fsync"
+          fi
+          if [ "$unverified" = 1 ]; then
+            echo "::error::Could not list releases from GitHub; re-run the deploy, or check skip_changelog_check if the API is down."
+          fi
+          [ "$missing" = 0 ] && [ "$unverified" = 0 ]
+
+      - name: Resolve samples revision
+        id: samples_snapshot
+        env:
+          REQUESTED_SAMPLES_REF: ${{ steps.content_refs.outputs.samples_ref }}
+        run: |
+          samples_revision="$(git -C "$GITHUB_WORKSPACE/samples-source" rev-parse HEAD)"
+          if [ "$REQUESTED_SAMPLES_REF" != "main" ] && [ "$samples_revision" != "$REQUESTED_SAMPLES_REF" ]; then
+            echo "::error::Samples checkout resolved $samples_revision, but the override requires $REQUESTED_SAMPLES_REF"
+            exit 1
+          fi
+          echo "revision=$samples_revision" >> "$GITHUB_OUTPUT"
+
       - name: Build CMS
         run: npm run cms:build
         env:
+          EXTERNAL_DOCS_REF_OVERRIDES: ${{ steps.content_refs.outputs.external_docs_ref_overrides }}
+          SAMPLES_SOURCE_DIR: ${{ github.workspace }}/samples-source
+          SAMPLES_REQUIRE_SOURCE: '1'
           SITE_DOMAIN: https://strandsagents.com
+
+      - name: Record documentation inputs snapshot
+        id: content_snapshot
+        env:
+          SAMPLES_REVISION: ${{ steps.samples_snapshot.outputs.revision }}
+        run: |
+          content_snapshot="$(node -e '
+            const fs = require("node:fs")
+            const { products } = require("./external-docs.config.json")
+            const revisions = products.map(({ id }) => {
+              const navigation = JSON.parse(
+                fs.readFileSync(`.build/external-docs/${id}/navigation.json`, "utf8")
+              )
+              return `${id}@${navigation.revision}`
+            })
+            revisions.push(`samples@${process.env.SAMPLES_REVISION}`)
+            process.stdout.write(revisions.join(", "))
+          ')"
+          echo "snapshot=$content_snapshot" >> "$GITHUB_OUTPUT"
+          printf 'Documentation snapshot: `%s`\n' "$content_snapshot" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Create latest/ symlinks for llms.txt files
         run: |
@@ -41,6 +120,9 @@ jobs:
 
       - name: Deploy to gh-pages branch
         working-directory: .
+        env:
+          CONTENT_SNAPSHOT: ${{ steps.content_snapshot.outputs.snapshot }}
+          SITE_REVISION: ${{ github.sha }}
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
@@ -49,5 +131,5 @@ jobs:
           rsync -a --delete --exclude='.git' --exclude='CNAME' site/dist/ gh-pages-deploy/
           cd gh-pages-deploy
           git add -A
-          git diff --cached --quiet || git commit -m "Deploy to GitHub Pages from ${{ github.sha }}"
+          git diff --cached --quiet || git commit -m "Deploy to GitHub Pages from $SITE_REVISION ($CONTENT_SNAPSHOT)"
           git push origin HEAD:gh-pages

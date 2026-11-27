@@ -87,7 +87,7 @@ async with ClientSession(
 *How it works in Strands' threaded setup*: 
 
 1. **Main thread calls** `client.call_tool_sync()` and blocks on `invoke_future.result()`
-2. **Background thread** submits the tool request to MCP server via `asyncio.run_coroutine_threadsafe()`
+2. **Main thread** queues the call with `loop.call_soon_threadsafe()`. The background loop creates the request task only while the session is open.
 3. **Server times out** and sends an exception message back to the MCP client
 4. **Without message handler**: MCP SDK silently ignores the exception, never calls `Future.set_result()` or `Future.set_exception()`
 5. **Main thread hangs forever** waiting for `invoke_future.result()` that will never complete
@@ -113,6 +113,8 @@ async def run_async() -> T:
 ```
 
 *How it works*: All tool calls race against `close_future`. When the background thread dies from 5xx errors, `close_future` completes and pending operations immediately fail with a clear error message instead of hanging.
+
+Calls queued during shutdown also fail, and their undispatched coroutines are closed. Submission and cancellation coordinate ownership so that a coroutine already assigned to a task is cancelled through that task instead of being closed directly.
 
 ### Defense Against Premature Connection Collapse
 

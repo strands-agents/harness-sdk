@@ -89,6 +89,7 @@ export function createMockAgent(data?: MockAgentData): MockAgent {
     // No-op so plugins that register middleware in initAgent (e.g. MemoryManager injection) work
     // out of the box. Tests that inspect registrations override this via `extra.addMiddleware`.
     addMiddleware: () => () => {},
+    auxModel: data?.extra?.auxModel ?? data?.extra?.model,
     ...data?.extra,
     trackedHooks,
   } as unknown as MockAgent

@@ -33,8 +33,14 @@ class ToolRegistry:
     This class manages tool registration, validation, discovery, and invocation.
     """
 
-    def __init__(self) -> None:
-        """Initialize the tool registry."""
+    def __init__(self, *, sort_tool_specs: bool = False) -> None:
+        """Initialize the tool registry.
+
+        Args:
+            sort_tool_specs: Return tool specs sorted by name from `get_all_tool_specs`. Defaults to False, which
+                keeps registration order.
+        """
+        self.sort_tool_specs = sort_tool_specs
         self.registry: dict[str, AgentTool] = {}
         self.dynamic_tools: dict[str, AgentTool] = {}
         self.tool_config: dict[str, Any] | None = None
@@ -53,7 +59,7 @@ class ToolRegistry:
                 1. Local file path to a module based tool: `./path/to/module/tool.py`
                 2. Module import path
 
-                    2.1. Path to a module based tool: `strands_tools.file_read`
+                    2.1. Path to a module based tool: `my_package.my_tool`
                     2.2. Path to a module with multiple AgentTool instances (@tool decorated):
                         `tests.fixtures.say_tool`
                     2.3. Path to a module and a specific function: `tests.fixtures.say_tool:say`
@@ -312,6 +318,17 @@ class ToolRegistry:
         elif tool_name in self.dynamic_tools:
             del self.dynamic_tools[tool_name]
 
+    def remove(self, tool_name: str) -> None:
+        """Remove a tool by its registered name, including any dynamic registration.
+
+        Does nothing if the tool does not exist.
+
+        Args:
+            tool_name: Name of the tool to remove.
+        """
+        self.registry.pop(tool_name, None)
+        self.dynamic_tools.pop(tool_name, None)
+
     def get_tools_dirs(self) -> list[Path]:
         """Get all tool directory paths.
 
@@ -549,14 +566,15 @@ class ToolRegistry:
                 logger.debug("tool_name=<%s> | import error | %s", tool_name, error)
 
     def get_all_tool_specs(self) -> list[ToolSpec]:
-        """Get all the tool specs for all tools in this registry..
+        """Get all the tool specs for all tools in this registry.
 
         Returns:
-            A list of ToolSpecs.
+            A list of ToolSpecs, sorted by name when `sort_tool_specs` is set, otherwise in registration order.
         """
-        all_tools = self.get_all_tools_config()
-        tools: list[ToolSpec] = [tool_spec for tool_spec in all_tools.values()]
-        return tools
+        tool_specs = list(self.get_all_tools_config().values())
+        if self.sort_tool_specs:
+            tool_specs.sort(key=lambda tool_spec: tool_spec["name"])
+        return tool_specs
 
     def register_dynamic_tool(self, tool: AgentTool) -> None:
         """Register a tool dynamically for temporary use.
