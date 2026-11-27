@@ -1157,7 +1157,10 @@
           "video/3gpp",
           "video/webm",
           "video/x-ms-wmv",
-          "audio/*"
+          "audio/*",
+          "text/csv",
+          "application/json",
+          "application/xml"
         ]
       }
     },
@@ -1185,7 +1188,10 @@
           "video/3gpp",
           "video/webm",
           "video/x-ms-wmv",
-          "audio/*"
+          "audio/*",
+          "text/csv",
+          "application/json",
+          "application/xml"
         ]
       }
     },
@@ -1213,7 +1219,10 @@
           "video/3gpp",
           "video/webm",
           "video/x-ms-wmv",
-          "audio/*"
+          "audio/*",
+          "text/csv",
+          "application/json",
+          "application/xml"
         ]
       }
     },
@@ -1286,7 +1295,10 @@
           "video/3gpp",
           "video/webm",
           "video/x-ms-wmv",
-          "audio/*"
+          "audio/*",
+          "text/csv",
+          "application/json",
+          "application/xml"
         ]
       }
     },
@@ -1315,7 +1327,10 @@
           "video/3gpp",
           "video/webm",
           "video/x-ms-wmv",
-          "audio/*"
+          "audio/*",
+          "text/csv",
+          "application/json",
+          "application/xml"
         ]
       }
     },
@@ -1343,7 +1358,10 @@
           "video/3gpp",
           "video/webm",
           "video/x-ms-wmv",
-          "audio/*"
+          "audio/*",
+          "text/csv",
+          "application/json",
+          "application/xml"
         ]
       }
     },
@@ -1372,7 +1390,10 @@
           "video/3gpp",
           "video/webm",
           "video/x-ms-wmv",
-          "audio/*"
+          "audio/*",
+          "text/csv",
+          "application/json",
+          "application/xml"
         ]
       }
     },
@@ -1401,7 +1422,10 @@
           "video/3gpp",
           "video/webm",
           "video/x-ms-wmv",
-          "audio/*"
+          "audio/*",
+          "text/csv",
+          "application/json",
+          "application/xml"
         ]
       }
     },
@@ -1430,7 +1454,10 @@
           "video/3gpp",
           "video/webm",
           "video/x-ms-wmv",
-          "audio/*"
+          "audio/*",
+          "text/csv",
+          "application/json",
+          "application/xml"
         ]
       }
     },
@@ -1459,7 +1486,10 @@
           "video/3gpp",
           "video/webm",
           "video/x-ms-wmv",
-          "audio/*"
+          "audio/*",
+          "text/csv",
+          "application/json",
+          "application/xml"
         ]
       }
     },
@@ -1488,7 +1518,10 @@
           "video/3gpp",
           "video/webm",
           "video/x-ms-wmv",
-          "audio/*"
+          "audio/*",
+          "text/csv",
+          "application/json",
+          "application/xml"
         ]
       }
     },
@@ -1865,7 +1898,10 @@
           "video/3gpp",
           "video/webm",
           "video/x-ms-wmv",
-          "audio/*"
+          "audio/*",
+          "text/csv",
+          "application/json",
+          "application/xml"
         ]
       }
     },
@@ -1893,7 +1929,10 @@
           "video/3gpp",
           "video/webm",
           "video/x-ms-wmv",
-          "audio/*"
+          "audio/*",
+          "text/csv",
+          "application/json",
+          "application/xml"
         ]
       }
     },
@@ -1921,7 +1960,10 @@
           "video/3gpp",
           "video/webm",
           "video/x-ms-wmv",
-          "audio/*"
+          "audio/*",
+          "text/csv",
+          "application/json",
+          "application/xml"
         ]
       }
     },
@@ -1949,7 +1991,10 @@
           "video/3gpp",
           "video/webm",
           "video/x-ms-wmv",
-          "audio/*"
+          "audio/*",
+          "text/csv",
+          "application/json",
+          "application/xml"
         ]
       }
     },
@@ -1977,7 +2022,10 @@
           "video/3gpp",
           "video/webm",
           "video/x-ms-wmv",
-          "audio/*"
+          "audio/*",
+          "text/csv",
+          "application/json",
+          "application/xml"
         ]
       }
     },

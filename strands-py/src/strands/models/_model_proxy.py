@@ -225,7 +225,7 @@ def _without_offload_marks(messages: Messages) -> Messages:
 
 # The MIME type ModelInfo.accepts checks for each media format; audio is ``audio/<format>``.
 _MEDIA_MIME_TYPES: dict[str, dict[str, str]] = {
-    "image": {"png": "image/png", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"},
+    "image": {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"},
     "document": {
         "pdf": "application/pdf",
         "csv": "text/csv",
@@ -296,7 +296,7 @@ def _omitted_media(block: ContentBlock, info: ModelInfo) -> ContentBlock:
     if kind is None:
         return block
     media: dict[str, Any] = cast(dict[str, Any], block)[kind]
-    media_format = media.get("format", "")
+    media_format = str(media.get("format", "")).lower()
     mime_type = f"audio/{media_format}" if kind == "audio" else _MEDIA_MIME_TYPES[kind].get(media_format)
     if mime_type is None or info.accepts(mime_type):
         return block

@@ -19,6 +19,7 @@ import {
 } from '../../types/messages.js'
 
 import { AudioBlock, DocumentBlock, ImageBlock, VideoBlock } from '../../types/media.js'
+import type { ImageFormat } from '../../mime.js'
 
 function userMessage(text: string): Message {
   return new Message({ role: 'user', content: [new TextBlock(text)] })
@@ -224,6 +225,39 @@ describe('ModelProxy', () => {
       const message = new Message({ role: 'user', content: [gif, docx, mp4] })
 
       expect((await sent([message]))[0]).toBe(message)
+    })
+
+    it('counts the placeholder it would send', async () => {
+      const model = new MockMessageModel()
+      model.updateConfig({ modelInfo: { capabilities: { acceptedMimeTypes: ['image/png'] } } })
+      const countSpy = vi.spyOn(model, 'countTokens').mockResolvedValue(1)
+
+      await new ModelProxy(model).countTokens([new Message({ role: 'user', content: [gif] })])
+
+      expect(countSpy.mock.calls[0]![0][0]!.content).toEqual([
+        new TextBlock("[image omitted: this model can't read image/gif]"),
+      ])
+    })
+
+    it('keeps a tool result error and status, and a block whose format has no MIME type', async () => {
+      const heic = new ImageBlock({ format: 'heic' as ImageFormat, source: { bytes } })
+      const failed = new ToolResultBlock({
+        toolUseId: 't-1',
+        status: 'error',
+        content: [gif],
+        error: new Error('boom'),
+      })
+      const [message] = await sent([new Message({ role: 'user', content: [heic, failed] })], [])
+
+      expect(message!.content[0]).toBe(heic)
+      expect(message!.content[1]).toEqual(
+        new ToolResultBlock({
+          toolUseId: 't-1',
+          status: 'error',
+          content: [new TextBlock("[image omitted: this model can't read image/gif]")],
+          error: failed.error!,
+        })
+      )
     })
 
     it('replaces audio by its audio/* type', async () => {

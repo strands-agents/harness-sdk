@@ -1729,6 +1729,19 @@ describe('AnthropicModel', () => {
         expect(captured.options).toBeUndefined()
       })
 
+      it('receives a JSON document through the proxy, which it sends as text', async () => {
+        const { captured, mockClient } = setupCapture()
+        const proxy = new ModelProxy(new AnthropicModel({ client: mockClient, modelId: 'claude-sonnet-4-6' }))
+        const json = new DocumentBlock({ name: 'data', format: 'json', source: { text: '{"a": 1}' } })
+
+        // The capture client sends no response, so the aggregated stream ends in an error after the request.
+        await expect(
+          collectIterator(proxy.streamAggregated([new Message({ role: 'user', content: [json] })]))
+        ).rejects.toThrow()
+
+        expect(captured.request.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: '{"a": 1}' }] }])
+      })
+
       it('leaves cleared injected blocks out of the token estimate', async () => {
         const proxy = new ModelProxy(new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-opus-5-5' }))
         const conversation = (first: Message): Message[] => [

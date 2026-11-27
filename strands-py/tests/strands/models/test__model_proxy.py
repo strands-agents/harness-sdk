@@ -294,3 +294,30 @@ def test_prepare_replaces_audio_by_its_audio_type():
     sent, _ = ModelProxy(_accepting("image/*"))._prepare([user(audio)])
 
     assert sent == [user({"text": "[audio omitted: this model can't read audio/mp3]"})]
+
+
+@pytest.mark.asyncio
+async def test_count_tokens_counts_the_placeholder_it_would_send():
+    model = _accepting("image/png")
+    model.count_tokens = unittest.mock.AsyncMock(return_value=1)
+
+    await ModelProxy(model).count_tokens([user(_GIF)])
+
+    model.count_tokens.assert_awaited_once_with([user({"text": "[image omitted: this model can't read image/gif]"})])
+
+
+@pytest.mark.parametrize("image_format", ["jpg", "JPEG"])
+def test_prepare_reads_the_jpg_alias_and_any_case(image_format):
+    image = {"image": {"format": image_format, "source": {"bytes": b"1"}}}
+
+    sent, _ = ModelProxy(_accepting("image/png"))._prepare([user(image)])
+
+    assert sent == [user({"text": "[image omitted: this model can't read image/jpeg]"})]
+
+
+def test_prepare_keeps_a_block_whose_format_has_no_mime_type():
+    message = user({"image": {"format": "heic", "source": {"bytes": b"1"}}})
+
+    sent, _ = ModelProxy(_accepting())._prepare([message])
+
+    assert sent[0] is message
