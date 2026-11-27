@@ -62,6 +62,11 @@ _LITELLM_PROVIDERS = frozenset(str(getattr(provider, "value", provider)) for pro
 # See: https://ai.google.dev/gemini-api/docs/thought-signatures
 _THOUGHT_SIGNATURE_SEPARATOR = "__thought__"
 
+# Model ID markers for providers whose dialect carries reasoning blocks. LiteLLM translates a
+# thinking block to the native format for these providers, while the remaining OpenAI-compatible
+# providers reject that part type outright.
+_ANTHROPIC_MODEL_MARKERS = ("anthropic", "claude")
+
 T = TypeVar("T", bound=BaseModel)
 
 
@@ -147,6 +152,81 @@ class LiteLLMModel(OpenAIModel):
         )
 
     @override
+    def format_request(
+        self,
+        messages: Messages,
+        tool_specs: list[ToolSpec] | None = None,
+        system_prompt: str | None = None,
+        tool_choice: ToolChoice | None = None,
+        *,
+        system_prompt_content: list[SystemContentBlock] | None = None,
+        agent_metadata: AgentMetadata | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Format a LiteLLM chat streaming request.
+
+        Args:
+            messages: List of message objects to be processed by the model.
+            tool_specs: List of tool specifications to make available to the model.
+            system_prompt: System prompt to provide context for the agent.
+            tool_choice: Selection strategy for tool invocation.
+            system_prompt_content: Invoking agent's system prompt content.
+            agent_metadata: Invoking agent's metadata.
+            **kwargs: Additional keyword arguments for future extensibility.
+
+        Returns:
+            A LiteLLM compatible chat streaming request.
+        """
+        return super().format_request(
+            messages=self._prepare_reasoning_blocks(messages),
+            tool_specs=tool_specs,
+            system_prompt=system_prompt,
+            tool_choice=tool_choice,
+            system_prompt_content=system_prompt_content,
+            agent_metadata=agent_metadata,
+            **kwargs,
+        )
+
+    @override
+    @classmethod
+    def _preserves_reasoning_content(cls) -> bool:
+        """Whether reasoning blocks are handed to the formatter instead of being skipped."""
+        return True
+
+    def _prepare_reasoning_blocks(self, messages: Messages) -> Messages:
+        """Rewrite reasoning blocks into a part type the target provider accepts.
+
+        LiteLLM translates a thinking block to the native format for Anthropic-family models, but
+        the remaining OpenAI-compatible providers reject that part type, so their reasoning is
+        replayed as plain text.
+        """
+        if self._replays_reasoning_as_thinking():
+            return messages
+
+        prepared: list[Message] = []
+        for message in messages:
+            content: list[ContentBlock] = []
+            for block in message["content"]:
+                if "reasoningContent" not in block:
+                    content.append(block)
+                    continue
+
+                reasoning = block["reasoningContent"]
+                if "reasoningText" not in reasoning:
+                    continue
+
+                content.append({"text": reasoning["reasoningText"]["text"]})
+
+            prepared.append({**message, "content": content})
+
+        return prepared
+
+    def _replays_reasoning_as_thinking(self) -> bool:
+        """Whether the target provider accepts a thinking block."""
+        model_id = self.get_config()["model_id"].lower()
+        return any(marker in model_id for marker in _ANTHROPIC_MODEL_MARKERS)
+
+    @override
     @classmethod
     def format_request_message_content(cls, content: ContentBlock, **kwargs: Any) -> dict[str, Any]:
         """Format a LiteLLM content block.
@@ -162,11 +242,22 @@ class LiteLLMModel(OpenAIModel):
             TypeError: If the content block type cannot be converted to a LiteLLM-compatible format.
         """
         if "reasoningContent" in content:
-            return {
-                "signature": content["reasoningContent"]["reasoningText"]["signature"],
-                "thinking": content["reasoningContent"]["reasoningText"]["text"],
-                "type": "thinking",
-            }
+            reasoning = content["reasoningContent"]
+            reasoning_text = reasoning.get("reasoningText", {})
+            if "text" in reasoning_text:
+                return {
+                    "signature": reasoning_text.get("signature"),
+                    "thinking": reasoning_text["text"],
+                    "type": "thinking",
+                }
+
+            if redacted_content := reasoning.get("redactedContent"):
+                return {
+                    "data": base64.b64encode(redacted_content).decode("utf-8"),
+                    "type": "redacted_thinking",
+                }
+
+            return {"text": "", "type": "text"}
 
         if "video" in content:
             return {
