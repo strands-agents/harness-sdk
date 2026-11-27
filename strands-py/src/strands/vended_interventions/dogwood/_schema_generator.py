@@ -32,13 +32,7 @@ _CEDAR_INTERNAL_PREFIX = "__cedar"
 
 
 def generate_action_schema(tools: list[AgentTool | ToolSpec]) -> str:
-    """Generate a Cedar action schema from tool specs.
-
-    Args:
-        tools: The tools the actions are generated from, as tools or their specs.
-
-    Returns:
-        Cedar action schema text, declared under :data:`GENERATED_NAMESPACE`.
+    """Cedar action schema text for ``tools``, declared under :data:`GENERATED_NAMESPACE`.
 
     Raises:
         DogwoodError: If a tool spec is not a manifest the converter accepts.
@@ -50,28 +44,15 @@ def generate_action_schema(tools: list[AgentTool | ToolSpec]) -> str:
 
 
 def specs_of(tools: list[AgentTool | ToolSpec]) -> list[ToolSpec]:
-    """The specs of ``tools``, which may be the tools themselves or already their specs.
-
-    Args:
-        tools: The tools to read specs from.
-
-    Returns:
-        One spec per tool, in order.
-    """
+    """The specs of ``tools``, which may be the tools themselves or already their specs."""
     return [tool.tool_spec if isinstance(tool, AgentTool) else tool for tool in tools]
 
 
 def decimal_parameters(specs: list[ToolSpec]) -> dict[str, frozenset[str]]:
-    """The parameters a generated schema declares ``decimal``, by tool name.
+    """The ``number`` parameters, by tool name, omitting the tools that declare none.
 
-    Only a tool's own parameters: a parameter nested in an object is generated as an entity type,
-    which a raw JSON argument never matches whatever its numbers are.
-
-    Args:
-        specs: The tool specs the schema was generated from.
-
-    Returns:
-        Tool name to its ``number`` parameter names, omitting the tools that declare none.
+    Only a tool's own parameters: one nested in an object is generated as an entity type, which a
+    raw JSON argument never matches whatever its numbers are.
     """
     by_tool = {}
     for spec in specs:
@@ -92,15 +73,7 @@ def _declares_number(declared: Any) -> bool:
 
 
 def apply_namespace(schema: str, namespace: str | None) -> str:
-    """Redeclare a generated schema under ``namespace``, or at the top level when there is none.
-
-    Args:
-        schema: Generated Cedar action schema text.
-        namespace: The namespace to declare, or None for the top level.
-
-    Returns:
-        The schema, requalified.
-    """
+    """Redeclare a generated schema under ``namespace``, or at the top level for None."""
     if namespace == GENERATED_NAMESPACE:
         return schema
 
@@ -119,9 +92,6 @@ def apply_namespace(schema: str, namespace: str | None) -> str:
 def assert_cedar_namespace(namespace: str | None) -> None:
     """Reject a namespace Cedar will not parse, which otherwise surfaces as a schema parse error.
 
-    Args:
-        namespace: The configured namespace, or None when there is none.
-
     Raises:
         ValueError: If the namespace is not ``::``-separated Cedar identifiers, or any segment is
             one Cedar reserves.
@@ -136,13 +106,9 @@ def assert_cedar_namespace(namespace: str | None) -> None:
 
 
 def namespace_prefix_of(actions: list[str]) -> str:
-    """The namespace the schema's actions live in, as a prefix ready to concatenate.
+    """The namespace the fully qualified ``actions`` live in, with its trailing ``::``.
 
-    Args:
-        actions: The fully qualified action ids the schema declares.
-
-    Returns:
-        The namespace with its trailing ``::``, or an empty string for a top-level schema.
+    Empty for a top-level schema, so it concatenates either way.
     """
     if not actions:
         return ""
@@ -157,10 +123,6 @@ def _rename_resource(schema: str) -> str:
     """Rename the generator's resource entity to the one ``CedarAuthorization`` uses.
 
     A policy naming the resource then reads the same against either handler.
-
-    Raises:
-        ValueError: If the generated schema does not declare the resource entity, or no action
-            applies to it.
     """
     declaration = f"entity {GENERATED_RESOURCE};"
     reference = f"resource: [{GENERATED_RESOURCE}]"
@@ -173,15 +135,10 @@ def _rename_resource(schema: str) -> str:
 
 
 def _assert_rewritable(schema: str, text: str, expected: int | None = None) -> None:
-    """Assert the generated schema carries text a rewrite below replaces.
+    """Assert the generated schema carries ``text``, ``expected`` times or at least once for None.
 
     A rewrite is a plain string replacement, so a generator that stops emitting the text would
     otherwise leave the schema declaring one name while policies are validated against another.
-
-    Args:
-        schema: Generated Cedar action schema text.
-        text: The text a rewrite replaces.
-        expected: The exact number of occurrences required, or None for at least one.
 
     Raises:
         ValueError: If the count does not match, which means the installed Dogwood emits a shape
@@ -202,16 +159,8 @@ def _allow_absent_input(schema: str, specs: list[ToolSpec]) -> str:
     """Declare ``input`` optional for every tool whose arguments are all optional.
 
     Dogwood drops an empty record from an event, so a tool the model calls with no arguments
-    arrives with no ``input`` group at all, and the required group generation declares then denies
-    the call. A tool with a required parameter keeps it required: an empty call there is a genuine
-    mismatch.
-
-    Args:
-        schema: Generated Cedar action schema text.
-        specs: The tool specs the schema was generated from.
-
-    Returns:
-        The schema, with ``input`` optional on the actions whose arguments may be absent.
+    arrives with no ``input`` group at all, which the generated declaration then denies. A tool
+    with a required parameter keeps it required: an empty call there is a genuine mismatch.
 
     Raises:
         ValueError: If a tool's ``input`` declaration is not found exactly once, which means the
@@ -242,28 +191,25 @@ def _required_parameters(spec: ToolSpec) -> list[str]:
 
 
 def _drop_enum_constraints(spec: ToolSpec | dict[str, Any]) -> dict[str, Any]:
-    """Drop every ``enum`` constraint from a tool spec, so a Cedar condition can compare the value.
+    """Copy a tool spec without its ``enum`` constraints, so a Cedar condition can compare a value.
 
     An ``enum`` parameter is generated as an entity type, so comparing it to a string type-checks
     and then never fires; without the constraint it generates ``String``. Dogwood's own generator
     config turns this off and ``mcp_to_cedar_schema`` takes no config argument, so the spec is
     rewritten on the way in instead.
-
-    Args:
-        spec: A tool spec.
-
-    Returns:
-        A copy of the spec, carrying no ``enum`` constraint.
     """
-    dropped: dict[str, Any] = {}
-    for key, value in spec.items():
+    return {
         # Only a list-valued `enum`, so a parameter *named* `enum` is untouched.
-        if key == "enum" and isinstance(value, list):
-            continue
-        if isinstance(value, dict):
-            dropped[key] = _drop_enum_constraints(value)
-        elif isinstance(value, list):
-            dropped[key] = [_drop_enum_constraints(item) if isinstance(item, dict) else item for item in value]
-        else:
-            dropped[key] = value
-    return dropped
+        key: _without_enum_constraints(value)
+        for key, value in spec.items()
+        if not (key == "enum" and isinstance(value, list))
+    }
+
+
+def _without_enum_constraints(value: Any) -> Any:
+    """``value`` with the ``enum`` constraints dropped from every spec nested in it."""
+    if isinstance(value, dict):
+        return _drop_enum_constraints(value)
+    if isinstance(value, list):
+        return [_without_enum_constraints(item) for item in value]
+    return value

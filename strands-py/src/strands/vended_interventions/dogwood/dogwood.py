@@ -34,9 +34,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# The binding ships its types in a stub only, so importing one at runtime raises ImportError and
-# nothing introspecting a public signature annotated with it can resolve it. Only a private
-# signature annotates the import above; the types the public surface needs are declared here.
+# The binding ships its types in a stub only, so importing one at runtime raises ImportError and a
+# public signature annotated with it cannot be resolved. Only a private signature annotates the
+# import above.
 
 DogwoodValue = None | bool | int | float | str | Decimal | Sequence["DogwoodValue"] | Mapping[str, "DogwoodValue"]
 """A value Dogwood accepts in an event. ``{"__entity": EntityRef}`` and ``{"__decimal": "1.50"}``
@@ -80,19 +80,12 @@ EventGroups = dict[str, dict[str, DogwoodValue]]
 
 @dataclass(frozen=True)
 class _AllowedCall:
-    """What recording a tool's result needs, captured when the call was allowed."""
+    """What recording a tool's result needs, as the request was decided: never re-resolved later."""
 
     tool_name: str
-    """The tool the allow was decided for."""
-
     action: str
-    """The action id the request event was recorded under."""
-
     principal: EntityRef
-    """The principal the request event was recorded under."""
-
     logged: EventGroups
-    """The fields the request event logged."""
 
 
 class DogwoodAuthorization(InterventionHandler):
@@ -101,22 +94,20 @@ class DogwoodAuthorization(InterventionHandler):
     Evaluates a Dogwood policy set before each tool call, and records the result afterward so
     temporal rules work.
 
-    Each tool maps to: Action = ``Action::<tool name>``, qualified by the schema's namespace when
-    it has one, Principal = the configured/resolved user, Resource = the gateway, and ``input`` =
-    the tool arguments in both the Cedar context and the temporal record.
+    A call on tool ``search`` is decided as action ``Action::"search"`` — qualified by the schema's
+    namespace when it has one — against the configured principal and the gateway resource, with the
+    tool arguments in ``context.input``. Arguments are compared as the model emitted them: an enum
+    parameter as a string, a number as a Cedar ``decimal``, so a condition on one reads
+    ``context.input.amount.lessThan(decimal("10.0"))``.
 
-    Holds temporal history, so one instance is one ordered history. Every temporal predicate is
-    pinned to the deciding principal, so one instance serves many principals without their
-    histories mixing. History is never pruned; :meth:`reset` drops every principal's at once.
-
-    A tool's result is not recorded, only the fact that it returned, so a predicate on a result
-    field (``response{ output.x: ... }``) type-checks and then never matches. Arguments are
-    compared as the model emitted them: an enum parameter as a string, a number as a Cedar
-    ``decimal``, so a condition on one reads ``context.input.amount.lessThan(decimal("10.0"))``.
+    One instance is one ordered temporal history, with every predicate pinned to the deciding
+    principal, so many principals can share it without their histories mixing. History is never
+    pruned; :meth:`reset` drops every principal's at once. A result's fields are not recorded, only
+    that the call returned, so a predicate on one type-checks and then never matches.
 
     Dogwood checks a call against the schema before it will decide, so an argument the tool does
-    not declare — or a required one the model left out — denies the call rather than reaching the
-    tool. The denial names the mismatch, which a model can act on when it retries.
+    not declare — or a required one the model left out — denies the call. The denial names the
+    mismatch, which a model can act on when it retries.
 
     Requires the ``dogwood-aws`` package.
 
@@ -164,17 +155,15 @@ class DogwoodAuthorization(InterventionHandler):
                 no attributes and no membership, so an entity carrying either fails conformance at
                 decision time and denies every call.
             namespace: Namespace for a generated action schema, qualifying every action and entity
-                it declares — ``Acme::Action::"<tool>"``, and a principal given as
-                ``{'type': 'Acme::User', 'id': 'alice'}``. Omit it and they are declared at the top
-                level, so a policy names ``Action::"<tool>"`` and the default principal is
-                ``User::"anonymous"``. Only valid with ``tools``.
+                it declares, as in ``Acme::Action::"search"`` and ``Acme::User``. Omit it and they
+                are declared at the top level. Only valid with ``tools``.
             principal: Static principal, ``User::"anonymous"`` by default, qualified by the
                 schema's namespace when it declares one. Against a generated schema the type must
                 be ``User``. Mutually exclusive with ``principal_resolver``.
             principal_resolver: Dynamic principal resolver for multi-tenant agents. Return None to
                 deny (fail-closed). Mutually exclusive with ``principal``.
             context_enricher: Adds fields to the ``session`` group of the Cedar request context,
-                read by a policy as ``context.session.<field>``, for ``invocation_state`` values a
+                read by a policy as ``context.session.tenant``, for ``invocation_state`` values a
                 tool's arguments do not carry. Dogwood checks a request's context against the
                 action's context type, so this requires an ``action_schema`` declaring ``session``
                 on every tool action. The fields reach a ``when`` condition only, never a temporal
@@ -198,8 +187,6 @@ class DogwoodAuthorization(InterventionHandler):
             raise ValueError("Provide either `principal` or `principal_resolver`, not both")
         if not action_schema and tools is None:
             raise ValueError("Provide either `action_schema` or `tools`")
-        # A generated schema declares its entities with no attributes and no membership, so an
-        # entity carrying either fails conformance and denies every call.
         if entities and not action_schema:
             raise ValueError("`entities` requires `action_schema`; a generated schema declares no entity attributes")
         if namespace is not None and action_schema:
@@ -214,8 +201,7 @@ class DogwoodAuthorization(InterventionHandler):
             if action_schema
             else apply_namespace(generate_action_schema(tools or []), namespace)
         )
-        # A hand-written schema's author chose what each parameter accepts, so no value is widened
-        # against that choice.
+        # A hand-written schema's author chose each parameter's type, so nothing is widened for it.
         self._decimal_parameters = {} if action_schema else decimal_parameters(specs_of(tools or []))
         errors = validate(self._policies, self._action_schema)["errors"]
         if errors:
@@ -229,7 +215,7 @@ class DogwoodAuthorization(InterventionHandler):
         self._declared_kinds = frozenset(self._authorizer.event_kinds)
         self._context_groups = _context_groups_of(self._policies, self._action_schema)
         self._resource: EntityRef = {"type": f"{prefix}{RESOURCE}", "id": "agent"}
-        # A hand-written schema may declare several principal types; a generated one declares `User`.
+        # None admits any type: a hand-written schema may declare several.
         self._principal_type = None if action_schema else f"{prefix}User"
         anonymous: EntityRef = {"type": f"{prefix}User", "id": "anonymous"}
         static_principal = anonymous if principal is None else principal
@@ -249,18 +235,16 @@ class DogwoodAuthorization(InterventionHandler):
         self._context_enricher = context_enricher
         self._entities = entities or []
         self._on_error = on_error
-        # Allowed calls by tool-use id, until their result is recorded. Captured rather than
-        # re-resolved so the after phase runs no user code: a resolver must not be asked twice and
-        # allowed to answer differently, or to raise after the tool has already run.
+        # Allowed calls by tool-use id, until their result is recorded.
         self._allowed_calls: dict[str, _AllowedCall] = {}
 
     def before_tool_call(self, event: BeforeToolCallEvent, **kwargs: Any) -> Proceed | Deny:
         """Decide a tool call against the policy set, and record the request event."""
         tool_name = event.tool_use["name"]
         tool_use_id = event.tool_use["toolUseId"]
-        # Resuming an interrupt re-fires this event; the call is already in the history, so
-        # deciding again would count it twice. The tool name is matched too, so an abandoned
-        # interrupt's entry cannot wave through a later call that reuses its id for another tool.
+        # Resuming an interrupt re-fires this event, and the call is already in the history. The
+        # tool name is matched too, so an abandoned interrupt cannot wave through a later call that
+        # reuses its id for another tool.
         allowed = self._allowed_calls.get(tool_use_id)
         if allowed is not None and allowed.tool_name == tool_name:
             return Proceed()
@@ -297,9 +281,9 @@ class DogwoodAuthorization(InterventionHandler):
                 }
             )
         except DogwoodError as error:
-            # Upstream's contract is that a failed call is *no decision*, which the host must treat
-            # as a deny. Tool arguments are model output, so letting it escape would give the model
-            # a fail-open path under `on_error='proceed'` by adding one junk argument.
+            # Upstream's contract is that a failed call is *no decision*, which the host must deny.
+            # Tool arguments are model output, so letting it escape would give the model a
+            # fail-open path under `on_error='proceed'` by adding one junk argument.
             return Deny(reason=f"Dogwood could not decide: {error}")
 
         denial = _denial_reason(decision, tool_name)
@@ -319,21 +303,18 @@ class DogwoodAuthorization(InterventionHandler):
         if allowed is None or allowed.tool_name != event.tool_use["name"]:
             return Proceed()
         self._allowed_calls.pop(tool_use_id)
-        # Set only when the tool never ran: a later handler blocked it, or an agent cancellation
-        # landed while the before hooks ran.
+        # Set only when the tool never ran, leaving no result to record.
         if event.cancel_message is not None:
             return Proceed()
 
-        # A tool that builds its own error result rather than raising still failed, so it is
-        # recorded under the kind a policy reads for a failure.
+        # A tool that returns an error result rather than raising still failed.
         kind = "error" if event.exception or event.result["status"] == "error" else "response"
         if kind not in self._declared_kinds:
             return Proceed()
 
         timestamp = self._timestamp()
         try:
-            # History-only: returns no verdict, so there is nothing to enforce. The principal and
-            # action are the ones the request was decided under, not freshly resolved ones.
+            # History-only: no verdict is returned, so there is nothing to enforce.
             self._authorizer.is_authorized(
                 {
                     "action": allowed.action,
@@ -347,8 +328,8 @@ class DogwoodAuthorization(InterventionHandler):
                 }
             )
         except DogwoodError as error:
-            # An unrecorded result cannot be enforced, but failing a tool call that already ran is
-            # worse.
+            # A later rule keyed on this result will not fire, but failing a call that already ran
+            # is worse.
             logger.warning(
                 "tool=<%s>, kind=<%s> | dogwood could not record a tool result, %s", allowed.tool_name, kind, error
             )
@@ -366,15 +347,11 @@ class DogwoodAuthorization(InterventionHandler):
         try:
             self._authorizer.reset()
         except DogwoodError as error:
-            # An authorizer that can no longer be reset denies every later call anyway, so there is
-            # no history left to protect and nothing for a caller to do about it.
+            # An authorizer that can no longer be reset denies every later call anyway.
             logger.warning("%s | dogwood could not drop its temporal history", error)
 
     def _declares_principal_type(self, principal_type: str) -> bool:
-        """Whether the schema admits ``principal_type`` as a principal.
-
-        Always true for a hand-written schema, which may declare several.
-        """
+        """Whether the schema admits ``principal_type``, always true for a hand-written one."""
         return self._principal_type is None or principal_type == self._principal_type
 
     def _declares_context_group(self, tool_name: str, group: str) -> bool:
@@ -384,8 +361,8 @@ class DogwoodAuthorization(InterventionHandler):
     def _tools_without_context_group(self, group: str) -> list[str]:
         """The tools whose action does not admit ``group``, sorted.
 
-        Only the actions a tool call can land on: the schema's gateway-level actions declare no
-        arguments, so no call is ever decided against one.
+        Only the actions a tool call can land on, told apart by declaring ``input``: no call is
+        ever decided against the schema's own gateway-level actions.
         """
         return sorted(
             tool
@@ -403,8 +380,8 @@ class DogwoodAuthorization(InterventionHandler):
         """
         logged: EventGroups = {INPUT_GROUP: self._widen_decimals(tool_name, tool_input or {})}
         context = self._context_of(tool_name, logged, timestamp)
-        # An action that declares no `session` group rejects an event carrying one, and no policy
-        # can read it there either, so the enricher is not asked for fields with nowhere to go.
+        # The enricher is not asked for fields with nowhere to go: an action declaring no `session`
+        # group rejects an event carrying one, and no policy can read it there either.
         if not self._context_enricher or not self._declares_context_group(tool_name, ENRICHED_GROUP):
             return logged, context
 
@@ -416,9 +393,9 @@ class DogwoodAuthorization(InterventionHandler):
     def _widen_decimals(self, tool_name: str, tool_input: Any) -> Any:
         """Widen the whole numbers a model sent for a ``decimal`` parameter.
 
-        A ``number`` parameter is generated as ``decimal``, which Dogwood matches against a float
-        but not against the ``int`` a model sends for a whole value. Only a declared ``decimal``
-        parameter is widened: an ``integer`` one is generated as ``Long``, which a float fails.
+        Dogwood matches ``decimal`` against a float but not against the ``int`` a model sends for a
+        whole value. An ``integer`` parameter is generated as ``Long``, which a float fails, so
+        only a declared ``decimal`` is widened.
         """
         decimals = self._decimal_parameters.get(tool_name)
         if not decimals or not isinstance(tool_input, dict):
@@ -428,8 +405,7 @@ class DogwoodAuthorization(InterventionHandler):
     def _context_of(self, tool_name: str, logged: EventGroups, timestamp: int) -> EventGroups:
         """The Cedar request context for an event, carrying only groups the action declares.
 
-        Dogwood checks an event's context against the action's context type, so an undeclared
-        group is rejected outright and a missing required one fails conformance.
+        Dogwood rejects an undeclared group outright, and a missing required one fails conformance.
         """
         context: EventGroups = {
             group: fields for group, fields in logged.items() if self._declares_context_group(tool_name, group)
@@ -439,11 +415,7 @@ class DogwoodAuthorization(InterventionHandler):
         return context
 
     def _timestamp(self) -> int:
-        """Epoch seconds, never going backwards.
-
-        The authorizer rejects a timestamp before the previous event's, and a system clock can step
-        back.
-        """
+        """Epoch seconds, never going backwards: the authorizer rejects an out-of-order event."""
         return max(int(time.time()), self._authorizer.last_timestamp or 0)
 
 
@@ -497,13 +469,8 @@ def _denial_reason(decision: AuthorizerDecision | None, tool_name: str) -> str |
 def _context_groups_of(policies: str, action_schema: str) -> dict[str, frozenset[str]]:
     """The context groups each action declares, by unqualified action name.
 
-    Read from the lowered Cedar schema, so the handler sends a context the action's type admits:
-    Dogwood rejects an event carrying an undeclared group, and one missing a required group fails
-    conformance. An action name is the tool name, so the schema's own gateway-level actions are in
-    the map too, told apart by declaring no ``input`` group.
-
-    Returns:
-        Declared context group names by action name, empty when the schema declares no actions.
+    Read from the lowered Cedar schema, which is where an action's declared context type lives. An
+    action name is the tool name, so the schema's own gateway-level actions are in the map too.
     """
     schema = json.loads(lower(policies, action_schema)["cedar_schema_json"])
     return {
