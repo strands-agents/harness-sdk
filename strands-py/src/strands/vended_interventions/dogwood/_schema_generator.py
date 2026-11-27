@@ -166,7 +166,7 @@ def _allow_absent_input(schema: str, specs: list[ToolSpec]) -> str:
         ValueError: If a tool's ``input`` declaration is not found exactly once, which means the
             installed Dogwood generates a shape this does not recognize.
     """
-    for name in [spec["name"] for spec in specs if not _required_parameters(spec)]:
+    for name in [spec["name"] for spec in specs if not _input_schema(spec).get("required")]:
         # Matched whole: `input: aInput` is also a prefix of a tool named `aInput`'s own
         # `input: aInputInput`, and relaxing that one would admit a call missing a required argument.
         schema, found = re.subn(rf"\binput: {re.escape(name)}Input(?=[,\s])", f"input?: {name}Input", schema)
@@ -183,11 +183,6 @@ def _input_schema(spec: ToolSpec) -> dict[str, Any]:
     input_schema = spec.get("inputSchema") or {}
     json_schema: dict[str, Any] = input_schema.get("json", input_schema)
     return json_schema
-
-
-def _required_parameters(spec: ToolSpec) -> list[str]:
-    """The parameters a tool requires, empty when every one is optional."""
-    return _input_schema(spec).get("required") or []
 
 
 def _drop_enum_constraints(spec: ToolSpec | dict[str, Any]) -> dict[str, Any]:
