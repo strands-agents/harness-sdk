@@ -79,7 +79,7 @@ describe('product identity wiring', () => {
 
     const decider = products.find((product) => product.label === 'Decider')
     expect(decider?.href).toBe('/decider/')
-    expect(decider?.docsHref).toBe('/docs/labs/strands-decider/overview/')
+    expect(decider?.docsHref).toBe('/docs/labs/strands-decider/quickstart/')
   })
 })
 
@@ -108,7 +108,7 @@ describe('docs footer links', () => {
   })
 
   it('routes Decider issues to the strands-labs repository', () => {
-    const pageUrl = 'https://strandsagents.com/docs/labs/strands-decider/overview/'
+    const pageUrl = 'https://strandsagents.com/docs/labs/strands-decider/quickstart/'
     const url = new URL(documentationIssueHref(issueRepositoryForProduct('Decider'), pageUrl))
     expect(url.pathname).toBe('/strands-labs/strands-decider/issues/new')
     expect(url.searchParams.get('body')).toContain(pageUrl)

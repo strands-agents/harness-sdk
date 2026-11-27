@@ -13,7 +13,7 @@ describe('findProductNavGroup', () => {
     const decider: SidebarGroup = {
       label: 'Strands Decider',
       items: [
-        { label: 'Overview', slug: 'docs/labs/strands-decider/overview' },
+        { label: 'Quickstart', slug: 'docs/labs/strands-decider/quickstart' },
         { label: 'Inference', slug: 'docs/labs/strands-decider/inference' },
       ],
     }
@@ -30,7 +30,7 @@ describe('findProductNavGroup', () => {
       },
     ]
 
-    expect(findProductNavGroup(sidebar, 'docs/labs/strands-decider/overview', ['Decider', 'Strands Decider'])).toBe(
+    expect(findProductNavGroup(sidebar, 'docs/labs/strands-decider/quickstart', ['Decider', 'Strands Decider'])).toBe(
       decider
     )
   })

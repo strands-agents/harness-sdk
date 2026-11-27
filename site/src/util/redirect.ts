@@ -36,8 +36,8 @@ export const STATIC_SLUG_REDIRECTS: Record<string, string> = {
   'docs/user-guide/box/guides/run-pi': 'docs/user-guide/box/profiles',
   'docs/user-guide/box/security/agent-and-tool-containment': 'docs/user-guide/box/security',
 
-  // Preserve the product root as the short route to Decider's landing page.
-  'docs/labs/strands-decider': 'docs/labs/strands-decider/overview',
+  // Preserve the docs root as a link to Decider's product page.
+  'docs/labs/strands-decider': 'decider',
 
   // gemini was renamed to google (concepts/ was later consolidated under harness/)
   'docs/user-guide/concepts/model-providers/gemini': 'docs/user-guide/sdk/model-providers/google',
