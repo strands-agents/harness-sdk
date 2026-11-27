@@ -49,7 +49,7 @@ Write each section following the outline.
 - Match snippet length to the complexity of what's being demonstrated. Bias toward brevity. If setup machinery dwarfs the feature being shown, the snippet is overweight.
 - Snippets must be copy-paste-runnable: imports present, variables defined, no missing context.
 - Prefer prose over a snippet for trivial API surface. A single property, a single method call, or a one-line config change is often clearer as inline backtick code in a sentence than as a dedicated code block. Reach for a snippet when the shape, ordering, or interaction between calls carries the lesson.
-- Diagrams use ` ```mermaid ` fences (flowchart, sequence, etc.). Never use ASCII art or box-drawing characters for diagrams. The site renders mermaid natively.
+- Diagrams follow `../../references/diagrams.md`. Concept diagrams are hand-authored SVGs rendered with `<Diagram>`; use the `docs-diagrams` skill to draw them. ` ```mermaid ` fences are fine for quick or short-lived diagrams. Never use ASCII art or box-drawing characters for diagrams.
 
 ### Step 3b: Apply MDX formatting
 

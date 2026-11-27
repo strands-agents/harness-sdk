@@ -91,6 +91,13 @@ class Tracer:
     Both attributes are controlled by including "gen_ai_latest_experimental", "gen_ai_tool_definitions",
     or "gen_ai_use_latest_invocation_tokens", respectively, in the OTEL_SEMCONV_STABILITY_OPT_IN environment variable.
 
+    Including "gen_ai_usage_on_model_spans_only" records `gen_ai.usage.*` only on model invocation (`chat`) spans
+    and leaves it off the agent span, so each model call's tokens appear once in a trace. Use it with backends that
+    total token usage by summing every span (such as Opik and Datadog), where the agent span's accumulated usage
+    would otherwise count the same tokens twice. It takes precedence over "gen_ai_use_latest_invocation_tokens".
+    Python sets usage on no other container span today; one that adds it must respect this value too, as the
+    TypeScript multi-agent and node spans do.
+
     Including "gen_ai_span_attributes_only" records message content directly as span attributes instead of
     span events, for backends that cannot read span events. This applies to the aggregated content events
     (latest-convention "gen_ai.*" messages and the "memory.query"/"memory.content" events); the legacy
@@ -127,6 +134,11 @@ class Tracer:
         self.use_latest_genai_conventions = "gen_ai_latest_experimental" in opt_in_values
         self._include_tool_definitions = "gen_ai_tool_definitions" in opt_in_values
         self._use_latest_invocation_tokens = "gen_ai_use_latest_invocation_tokens" in opt_in_values
+        self._usage_on_model_spans_only = "gen_ai_usage_on_model_spans_only" in opt_in_values
+        if self._usage_on_model_spans_only and self._use_latest_invocation_tokens:
+            logger.warning(
+                "gen_ai_use_latest_invocation_tokens is ignored because gen_ai_usage_on_model_spans_only is set"
+            )
         self._span_attributes_only = self.is_langfuse or "gen_ai_span_attributes_only" in opt_in_values
 
         unredacted_token = next(
@@ -738,6 +750,8 @@ class Tracer:
         tools: list | None = None,
         custom_trace_attributes: Mapping[str, AttributeValue] | None = None,
         tools_config: dict | None = None,
+        system_prompt: str | None = None,
+        system_prompt_content: list | None = None,
         **kwargs: Any,
     ) -> Span:
         """Start a new span for an agent invocation.
@@ -749,6 +763,8 @@ class Tracer:
             tools: Optional list of tools being used.
             custom_trace_attributes: Optional mapping of custom trace attributes to include in the span.
             tools_config: Optional dictionary of tool configurations.
+            system_prompt: Optional system prompt string.
+            system_prompt_content: Optional list of system prompt content blocks.
             **kwargs: Additional attributes to add to the span.
 
         Returns:
@@ -782,9 +798,17 @@ class Tracer:
         # Add additional kwargs as attributes
         attributes.update({k: v for k, v in kwargs.items() if isinstance(v, (str, int, float, bool))})
 
+        if self.use_latest_genai_conventions and (system_prompt is not None or system_prompt_content is not None):
+            attributes["gen_ai.system_instructions"] = self._redact(
+                "gen_ai.system_instructions",
+                self._serialized_system_instructions(system_prompt, system_prompt_content),
+            )
+
         span = self._start_span(
             f"invoke_agent {agent_name}", attributes=attributes, span_kind=trace_api.SpanKind.INTERNAL
         )
+        if not self.use_latest_genai_conventions:
+            self._add_system_prompt_event(span, system_prompt, system_prompt_content)
         self._add_event_messages(span, messages)
 
         return span
@@ -831,9 +855,13 @@ class Tracer:
                     },
                 )
 
-            if hasattr(response, "metrics") and hasattr(response.metrics, "accumulated_usage"):
-                if self.is_langfuse:
-                    attributes.update({"langfuse.observation.type": "span"})
+            has_usage = hasattr(response, "metrics") and hasattr(response.metrics, "accumulated_usage")
+            # Stops Langfuse from making the agent span a generation that repeats its calls' tokens. Kept even with
+            # gen_ai_usage_on_model_spans_only, since older Langfuse versions would render it as an empty generation.
+            if has_usage and self.is_langfuse:
+                attributes.update({"langfuse.observation.type": "span"})
+            # With gen_ai_usage_on_model_spans_only, usage stays on the chat spans so summing every span counts it once.
+            if has_usage and not self._usage_on_model_spans_only:
                 if self._use_latest_invocation_tokens:
                     latest_invocation = response.metrics.latest_agent_invocation
                     if latest_invocation is None:
@@ -1304,17 +1332,17 @@ class Tracer:
         if system_prompt is None and system_prompt_content is None:
             return
 
-        content_blocks: list[ContentBlock] = (
-            system_prompt_content if system_prompt_content else [{"text": system_prompt or ""}]
-        )
-
         if self.use_latest_genai_conventions:
-            parts = self._map_content_blocks_to_otel_parts(content_blocks)
             # system prompts are sensitive and policed under gen_ai.system_instructions
             self._add_event(
                 span,
                 "gen_ai.client.inference.operation.details",
-                {"gen_ai.system_instructions": self._redact("gen_ai.system_instructions", serialize(parts))},
+                {
+                    "gen_ai.system_instructions": self._redact(
+                        "gen_ai.system_instructions",
+                        self._serialized_system_instructions(system_prompt, system_prompt_content),
+                    )
+                },
                 to_span_attributes=self._span_attributes_only,
             )
         else:
@@ -1322,8 +1350,24 @@ class Tracer:
             self._add_event(
                 span,
                 "gen_ai.system.message",
-                {"content": self._redact("gen_ai.system_instructions", serialize(content_blocks))},
+                {
+                    "content": self._redact(
+                        "gen_ai.system_instructions",
+                        serialize(self._system_prompt_content_blocks(system_prompt, system_prompt_content)),
+                    )
+                },
             )
+
+    def _system_prompt_content_blocks(
+        self, system_prompt: str | None, system_prompt_content: list | None
+    ) -> list[ContentBlock]:
+        """Return system prompt content blocks, preferring structured content."""
+        return system_prompt_content if system_prompt_content else [{"text": system_prompt or ""}]
+
+    def _serialized_system_instructions(self, system_prompt: str | None, system_prompt_content: list | None) -> str:
+        """Serialize system prompt content using the latest semantic-convention format."""
+        content_blocks = self._system_prompt_content_blocks(system_prompt, system_prompt_content)
+        return serialize(self._map_content_blocks_to_otel_parts(content_blocks))
 
     def _add_event_messages(self, span: Span, messages: Messages) -> None:
         """Adds messages as event to the provided span based on the current GenAI conventions.
@@ -1372,6 +1416,12 @@ class Tracer:
             elif "text" in block:
                 # Standard TextPart
                 parts.append({"type": "text", "content": block["text"]})
+            elif "injected" in block:
+                parts.append({"type": "text", "content": block["injected"]["text"]})
+            elif "reasoningContent" in block:
+                # Standard ReasoningPart; the signature and redacted content are not exported
+                text = (block["reasoningContent"].get("reasoningText") or {}).get("text")
+                parts.append({"type": "reasoning", "content": text} if text else {"type": "reasoningContent"})
             elif "toolUse" in block:
                 # Standard ToolCallRequestPart
                 tool_use = block["toolUse"]

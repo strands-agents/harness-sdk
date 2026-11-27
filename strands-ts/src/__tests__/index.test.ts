@@ -5,6 +5,7 @@ describe('index', () => {
   describe('when importing from main entry point', () => {
     it('exports error classes', () => {
       expect(SDK.ContextWindowOverflowError).toBeDefined()
+      expect(SDK.InterruptError).toBeDefined()
     })
 
     it('exports BedrockModel', () => {
@@ -32,6 +33,12 @@ describe('index', () => {
 
     it('does not export the internal ToolExecutor base', () => {
       expect(SDK).not.toHaveProperty('ToolExecutor')
+    })
+
+    it('exports ModelInfo.merge', () => {
+      expect(SDK.ModelInfo.merge({ limits: { contextWindow: 1 } }, { limits: { contextWindow: 2 } })).toEqual({
+        limits: { contextWindow: 2 },
+      })
     })
 
     it('exports model routing values', () => {

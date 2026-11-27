@@ -6,6 +6,7 @@
 import json
 import logging
 import uuid
+from collections import Counter
 from collections.abc import AsyncGenerator
 from typing import Any, TypeVar, cast
 
@@ -17,8 +18,16 @@ from ..types.content import ContentBlock, Messages
 from ..types.exceptions import ContextWindowOverflowException
 from ..types.streaming import StopReason, StreamEvent
 from ..types.tools import ToolChoice, ToolSpec
-from ._validation import _has_location_source, validate_config_keys, warn_on_tool_choice_not_supported
-from .model import BaseModelConfig, Model
+from ._model_info import SERVER_SIDE_SUMMARY_OFF, ModelInfo
+from ._native_output import with_schema_instructions
+from ._validation import (
+    _has_location_source,
+    _log_skipped_blocks,
+    validate_config_keys,
+    warn_on_cache_config_not_supported,
+    warn_on_tool_choice_not_supported,
+)
+from .model import BaseModelConfig, CacheConfig, Model
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +56,7 @@ class OllamaModel(Model):
 
         Attributes:
             additional_args: Any additional arguments to include in the request.
+            cache_config: Prompt caching settings. Ollama honors no cache fields, so any set field is ignored.
             keep_alive: Controls how long the model will stay loaded into memory following the request (default: "5m").
             max_tokens: Maximum number of tokens to generate in the response.
             model_id: Ollama model ID (e.g., "llama3", "mistral", "phi3").
@@ -57,7 +67,8 @@ class OllamaModel(Model):
         """
 
         additional_args: dict[str, Any] | None
-        keep_alive: str | None
+        cache_config: CacheConfig | None
+        keep_alive: float | str | None
         max_tokens: int | None
         model_id: str
         options: dict[str, Any] | None
@@ -95,6 +106,15 @@ class OllamaModel(Model):
         """
         validate_config_keys(model_config, self.OllamaConfig)
         self.config.update(model_config)
+
+    @property
+    @override
+    def model_info(self) -> ModelInfo:
+        """Reports server-side summary as off, which a ``model_info`` override still wins over.
+
+        Ollama has no server-side summary, including for Claude models served through it.
+        """
+        return ModelInfo.merge(super().model_info, SERVER_SIDE_SUMMARY_OFF, self.get_config().get("model_info"))
 
     @override
     def get_config(self) -> OllamaConfig:
@@ -170,14 +190,19 @@ class OllamaModel(Model):
         system_message = [{"role": "system", "content": system_prompt}] if system_prompt else []
 
         formatted_messages = []
+        skipped: Counter[str] = Counter()
         for message in messages:
             for content in message["content"]:
+                if "reasoningContent" in content:
+                    skipped["reasoningContent is not supported by Ollama | skipping content block"] += 1
+                    continue
                 # Check for location sources and skip with warning
                 if _has_location_source(content):
-                    logger.warning("Location sources are not supported by Ollama | skipping content block")
+                    skipped["Location sources are not supported by Ollama | skipping content block"] += 1
                     continue
                 formatted_messages.extend(self._format_request_message_contents(message["role"], content))
 
+        _log_skipped_blocks(logger, skipped)
         return system_message + formatted_messages
 
     def format_request(
@@ -197,7 +222,7 @@ class OllamaModel(Model):
             TypeError: If a message contains a content block type that cannot be converted to an Ollama-compatible
                 format.
         """
-        return {
+        request = {
             "messages": self._format_request_messages(messages, system_prompt),
             "model": self.config["model_id"],
             "options": {
@@ -225,13 +250,16 @@ class OllamaModel(Model):
                 }
                 for tool_spec in tool_specs or []
             ],
-            **({"keep_alive": self.config["keep_alive"]} if self.config.get("keep_alive") else {}),
+            **({"keep_alive": self.config["keep_alive"]} if self.config.get("keep_alive") is not None else {}),
             **(
                 self.config["additional_args"]
                 if "additional_args" in self.config and self.config["additional_args"] is not None
                 else {}
             ),
         }
+        # Ollama applies no CacheConfig fields; warn that any set field is ignored.
+        warn_on_cache_config_not_supported(self.config.get("cache_config"), "Ollama", supported=set(), stacklevel=3)
+        return request
 
     def format_chunk(self, event: dict[str, Any]) -> StreamEvent:
         """Format the Ollama response events into standardized message chunks.
@@ -251,7 +279,7 @@ class OllamaModel(Model):
                 return {"messageStart": {"role": "assistant"}}
 
             case "content_start":
-                if event["data_type"] == "text":
+                if event["data_type"] == "text" or event["data_type"] == "reasoning_content":
                     return {"contentBlockStart": {"start": {}}}
 
                 tool_name = event["data"].function.name
@@ -259,6 +287,9 @@ class OllamaModel(Model):
                 return {"contentBlockStart": {"start": {"toolUse": {"name": tool_name, "toolUseId": tool_use_id}}}}
 
             case "content_delta":
+                if event["data_type"] == "reasoning_content":
+                    return {"contentBlockDelta": {"delta": {"reasoningContent": {"text": event["data"]}}}}
+
                 if event["data_type"] == "text":
                     return {"contentBlockDelta": {"delta": {"text": event["data"]}}}
 
@@ -342,16 +373,36 @@ class OllamaModel(Model):
             yield self.format_chunk({"chunk_type": "message_start"})
             yield self.format_chunk({"chunk_type": "content_start", "data_type": "text"})
 
+            is_thinking = False
             async for event in response:
+                if event.message.thinking:
+                    if not is_thinking:
+                        is_thinking = True
+                        yield self.format_chunk({"chunk_type": "content_start", "data_type": "reasoning_content"})
+                    yield self.format_chunk(
+                        {
+                            "chunk_type": "content_delta",
+                            "data_type": "reasoning_content",
+                            "data": event.message.thinking,
+                        }
+                    )
+                if is_thinking and (not event.message.thinking or event.message.content or event.message.tool_calls):
+                    is_thinking = False
+                    yield self.format_chunk({"chunk_type": "content_stop", "data_type": "reasoning_content"})
+
                 for tool_call in event.message.tool_calls or []:
                     yield self.format_chunk({"chunk_type": "content_start", "data_type": "tool", "data": tool_call})
                     yield self.format_chunk({"chunk_type": "content_delta", "data_type": "tool", "data": tool_call})
                     yield self.format_chunk({"chunk_type": "content_stop", "data_type": "tool", "data": tool_call})
                     tool_requested = True
 
-                yield self.format_chunk(
-                    {"chunk_type": "content_delta", "data_type": "text", "data": event.message.content}
-                )
+                if event.message.content:
+                    yield self.format_chunk(
+                        {"chunk_type": "content_delta", "data_type": "text", "data": event.message.content}
+                    )
+
+            if is_thinking:
+                yield self.format_chunk({"chunk_type": "content_stop", "data_type": "reasoning_content"})
         except ollama.ResponseError as error:
             if any(message in str(error).lower() for message in self.OVERFLOW_MESSAGES):
                 raise ContextWindowOverflowException(str(error)) from error
@@ -384,8 +435,11 @@ class OllamaModel(Model):
         Raises:
             ContextWindowOverflowException: If the input exceeds the model's context window.
         """
-        formatted_request = self.format_request(messages=prompt, system_prompt=system_prompt)
-        formatted_request["format"] = output_model.model_json_schema()
+        schema = output_model.model_json_schema()
+        formatted_request = self.format_request(
+            messages=prompt, system_prompt=with_schema_instructions(system_prompt, schema)
+        )
+        formatted_request["format"] = schema
         formatted_request["stream"] = False
 
         client = ollama.AsyncClient(self.host, **self.client_args)

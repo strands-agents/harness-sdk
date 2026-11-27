@@ -1,0 +1,12 @@
+name: strands-you
+description: One-line You.com web search, cited research, finance, and docs tools for Strands agents via preconfigured MCP servers and bundled skills.
+integrationType: plugin
+maintainedBy: partner
+languages:
+  python:
+    package: strands-you
+  typescript:
+    package: "@youdotcom-oss/strands-agents"
+github: https://github.com/youdotcom-oss/agent-skills
+docsUrl: https://github.com/youdotcom-oss/agent-skills/blob/main/packages/strands-agents/README.md
+addedDate: 2026-10-10

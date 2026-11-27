@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 248" width="720" height="248">
+  <!-- Type: fan-out and join. Story: the coordinator's output goes to three workers that run in parallel, and the aggregator combines their results. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Edges: fan out from the coordinator, fan in to the aggregator -->
+  <path class="dg-edge" d="M168,108 H218 Q226,108 226,100 V52 Q226,44 234,44 H282" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M168,124 H282" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M168,140 H218 Q226,140 226,148 V196 Q226,204 234,204 H282" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M436,44 H486 Q494,44 494,52 V100 Q494,108 502,108 H550" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M436,124 H550" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M436,204 H486 Q494,204 494,196 V148 Q494,140 502,140 H550" marker-end="url(#arrow)"/>
+
+  <!-- Nodes -->
+  <rect class="dg-node" x="16" y="92" width="152" height="64" rx="6"/>
+  <text class="dg-name" x="92" y="121" text-anchor="middle">Coordinator</text>
+  <text class="dg-code" x="92" y="139" text-anchor="middle">coordinator</text>
+
+  <rect class="dg-node" x="284" y="16" width="152" height="56" rx="6"/>
+  <text class="dg-name" x="360" y="41" text-anchor="middle">Worker 1</text>
+  <text class="dg-code" x="360" y="59" text-anchor="middle">worker1</text>
+
+  <rect class="dg-node" x="284" y="96" width="152" height="56" rx="6"/>
+  <text class="dg-name" x="360" y="121" text-anchor="middle">Worker 2</text>
+  <text class="dg-code" x="360" y="139" text-anchor="middle">worker2</text>
+
+  <rect class="dg-node" x="284" y="176" width="152" height="56" rx="6"/>
+  <text class="dg-name" x="360" y="201" text-anchor="middle">Worker 3</text>
+  <text class="dg-code" x="360" y="219" text-anchor="middle">worker3</text>
+
+  <rect class="dg-node" x="552" y="92" width="152" height="64" rx="6"/>
+  <text class="dg-name" x="628" y="121" text-anchor="middle">Aggregator</text>
+  <text class="dg-code" x="628" y="139" text-anchor="middle">aggregator</text>
+</svg>

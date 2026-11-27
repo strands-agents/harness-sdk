@@ -11,6 +11,7 @@ contains shell-special characters, so e.g. ``cd /w`` here vs ``cd '/w'`` in the
 oracle. Expectations below assert the ``shlex`` form.
 """
 
+import threading
 import unittest.mock
 
 import pytest
@@ -21,6 +22,9 @@ from strands.vended_tools.shell.types import SANDBOX_SHELL_DESCRIPTION
 
 # Leading SSH flags shared by every invocation, with default host-key checking.
 BASE = ["-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes", "-p", "22"]
+# Trailing SSH flags appended after user-supplied ssh_options so a caller's
+# LogLevel takes precedence over this quiet default.
+TAIL = ["-o", "LogLevel=ERROR"]
 
 
 @pytest.fixture
@@ -85,7 +89,7 @@ def test_allow_unsafe_ssh_options_bypasses_validation():
 @pytest.mark.asyncio
 async def test_builds_default_args(mock_stream_process):
     await SshSandbox("user@server.com", working_dir="/remote/path").execute("echo hi")
-    assert _args(mock_stream_process) == BASE + ["--", "user@server.com", "cd /remote/path && echo hi"]
+    assert _args(mock_stream_process) == BASE + TAIL + ["--", "user@server.com", "cd /remote/path && echo hi"]
 
 
 @pytest.mark.asyncio
@@ -98,6 +102,8 @@ async def test_allow_unknown_hosts_disables_strict_checking(mock_stream_process)
         "BatchMode=yes",
         "-p",
         "22",
+        "-o",
+        "LogLevel=ERROR",
         "--",
         "h",
         "cd /w && ls",
@@ -107,7 +113,7 @@ async def test_allow_unknown_hosts_disables_strict_checking(mock_stream_process)
 @pytest.mark.asyncio
 async def test_includes_identity_file(mock_stream_process):
     await SshSandbox("h", working_dir="/w", identity_file="/home/user/.ssh/key").execute("ls")
-    assert _args(mock_stream_process) == BASE + ["-i", "/home/user/.ssh/key", "--", "h", "cd /w && ls"]
+    assert _args(mock_stream_process) == BASE + ["-i", "/home/user/.ssh/key"] + TAIL + ["--", "h", "cd /w && ls"]
 
 
 @pytest.mark.asyncio
@@ -120,6 +126,8 @@ async def test_uses_custom_port(mock_stream_process):
         "BatchMode=yes",
         "-p",
         "2222",
+        "-o",
+        "LogLevel=ERROR",
         "--",
         "h",
         "cd /w && ls",
@@ -134,6 +142,7 @@ async def test_appends_user_ssh_options(mock_stream_process):
         "ConnectTimeout=5",
         "-o",
         "ServerAliveInterval=30",
+    ] + TAIL + [
         "--",
         "h",
         "cd /w && ls",
@@ -145,7 +154,7 @@ async def test_quotes_cwd_with_special_characters(mock_stream_process):
     # A path with spaces and an embedded single quote exercises the shlex escaping path:
     # shlex closes the quote, inserts an escaped quote ('"'"'), and reopens.
     await SshSandbox("h", working_dir="/path/with spaces/and'quotes").execute("ls")
-    assert _args(mock_stream_process) == BASE + [
+    assert _args(mock_stream_process) == BASE + TAIL + [
         "--",
         "h",
         "cd '/path/with spaces/and'\"'\"'quotes' && ls",
@@ -155,13 +164,13 @@ async def test_quotes_cwd_with_special_characters(mock_stream_process):
 @pytest.mark.asyncio
 async def test_uses_cwd_option_when_provided(mock_stream_process):
     await SshSandbox("h", working_dir="/default").execute("ls", cwd="/override")
-    assert _args(mock_stream_process) == BASE + ["--", "h", "cd /override && ls"]
+    assert _args(mock_stream_process) == BASE + TAIL + ["--", "h", "cd /override && ls"]
 
 
 @pytest.mark.asyncio
 async def test_prefixes_command_with_env_vars(mock_stream_process):
     await SshSandbox("h", working_dir="/w").execute("echo $FOO", env={"FOO": "bar", "BAZ": "qux"})
-    assert _args(mock_stream_process) == BASE + ["--", "h", "cd /w && export FOO=bar BAZ=qux && echo $FOO"]
+    assert _args(mock_stream_process) == BASE + TAIL + ["--", "h", "cd /w && export FOO=bar BAZ=qux && echo $FOO"]
 
 
 @pytest.mark.asyncio
@@ -169,15 +178,17 @@ async def test_quotes_env_values_with_metacharacters(mock_stream_process):
     # An env value containing shell metacharacters must be quoted so it reaches the
     # remote shell literally, never expanded.
     await SshSandbox("h", working_dir="/w").execute("echo $FOO", env={"FOO": "$(whoami)"})
-    assert _args(mock_stream_process) == BASE + ["--", "h", "cd /w && export FOO='$(whoami)' && echo $FOO"]
+    assert _args(mock_stream_process) == BASE + TAIL + ["--", "h", "cd /w && export FOO='$(whoami)' && echo $FOO"]
 
 
 @pytest.mark.asyncio
-async def test_forwards_timeout_and_enoent_message(mock_stream_process):
-    await SshSandbox("h", working_dir="/w").execute("ls", timeout=5)
+async def test_forwards_timeout_cancel_signal_and_enoent_message(mock_stream_process):
+    cancel_signal = threading.Event()
+    await SshSandbox("h", working_dir="/w").execute("ls", timeout=5, cancel_signal=cancel_signal)
     assert mock_stream_process.call_args.kwargs == {
         "timeout": 5,
         "enoent_message": "ssh is not installed or not on PATH",
+        "cancel_signal": cancel_signal,
     }
 
 

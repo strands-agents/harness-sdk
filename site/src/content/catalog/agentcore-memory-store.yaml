@@ -3,6 +3,8 @@ description: Amazon Bedrock AgentCore Memory as a Strands MemoryStore, with long
 integrationType: memory-store
 maintainedBy: aws
 languages:
+  python:
+    package: bedrock-agentcore[strands-agents]
   typescript:
     package: bedrock-agentcore
 github: https://github.com/aws/bedrock-agentcore-sdk-typescript

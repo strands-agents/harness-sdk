@@ -1,0 +1,71 @@
+"""Strategy presets — named building blocks that resolve to concrete strategy configurations.
+
+Preset definitions (thresholds, methods, conditions) are internal defaults and may
+change between releases as we tune based on real-world usage data. Treat the preset
+name as the stable contract, not its expansion. Use raw ``Offload.*`` strategies when
+you need a specific, pinned configuration.
+"""
+
+from __future__ import annotations
+
+from .strategies.offload import Offload
+from .types import ContextStrategy
+
+StrategyPresetName = str
+"""Known preset name strings accepted in the strategies array.
+
+Preset names are the stable contract. The strategies they resolve to may change
+between releases.
+
+- ``'proactive_summarization'`` — batch summarize the oldest 30% of messages at 70% utilization
+- ``'large_tool_offloading'`` — truncate tool results over 2500 tokens to a 1000-token preview
+- ``'overflow_protection'`` — drop the oldest messages when the context window is full
+- ``'stale_tool_cleanup'`` — drop tool results outside the newest 5 tool-result messages
+"""
+
+STRATEGY_PRESET_NAMES: tuple[str, ...] = (
+    "proactive_summarization",
+    "large_tool_offloading",
+    "overflow_protection",
+    "stale_tool_cleanup",
+)
+
+
+def _resolve_preset(name: str) -> list[ContextStrategy]:
+    """Resolve a preset name to its default strategy array.
+
+    Args:
+        name: The preset name.
+
+    Returns:
+        The strategy array for the given preset.
+    """
+    # Defaults are tuning decisions, not API promises — adjust freely.
+    if name == "proactive_summarization":
+        return [Offload.summarize("*").when(context_utilization="70%", preserve_recent="70%")]
+    if name == "large_tool_offloading":
+        return [Offload.truncate("tool_results", {"preview_tokens": 1000}).when(block_threshold=2500)]
+    if name == "overflow_protection":
+        return [Offload.drop("*").when(context_utilization="100%", preserve_recent=4)]
+    if name == "stale_tool_cleanup":
+        return [Offload.drop("tool_results").when(preserve_recent=5)]
+    raise ValueError(f'Unknown strategy preset: "{name}". Valid presets: {", ".join(STRATEGY_PRESET_NAMES)}')
+
+
+def _resolve_strategies(entries: list[ContextStrategy | str]) -> list[ContextStrategy]:
+    """Resolve a mixed list of strategies and preset names into a flat strategy list.
+
+    Raises:
+        ValueError: When an entry is neither a strategy nor a known preset name.
+    """
+    strategies: list[ContextStrategy] = []
+    for entry in entries:
+        if isinstance(entry, str):
+            strategies.extend(_resolve_preset(entry))
+        # Asking for ``apply`` rather than ``isinstance(entry, ContextStrategy)``: a protocol check reads attributes
+        # statically, so it would reject a strategy that supplies them through ``__getattr__``.
+        elif callable(getattr(entry, "apply", None)):
+            strategies.append(entry)
+        else:
+            raise ValueError(f"Strategy entries must be a strategy or a preset name, got {entry!r}")
+    return strategies

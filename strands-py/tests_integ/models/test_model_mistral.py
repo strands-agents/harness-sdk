@@ -37,11 +37,6 @@ def non_streaming_model():
 
 
 @pytest.fixture()
-def system_prompt():
-    return "You are an AI assistant that provides helpful and accurate information."
-
-
-@pytest.fixture()
 def tools():
     @strands.tool
     def tool_time() -> str:

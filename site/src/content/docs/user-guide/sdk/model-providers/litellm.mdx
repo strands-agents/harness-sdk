@@ -1,0 +1,194 @@
+---
+title: LiteLLM
+description: 'Use LiteLLM with Strands agents to access models from OpenAI, Anthropic, Amazon, and more through one API. Install and configure LiteLLMModel.'
+tags: [structured-output]
+languages: Python
+integrationType: model-provider
+sourceLinks:
+  - path: strands-py/src/strands/models/litellm.py
+---
+
+[LiteLLM](https://docs.litellm.ai/docs/) is a unified interface for various LLM providers that allows you to interact with models from Amazon, Anthropic, OpenAI, and many others through a single API. The Strands Agents SDK implements a LiteLLM provider, allowing you to run agents against any model LiteLLM supports.
+
+## Installation
+
+LiteLLM is configured as an optional dependency in Strands Agents. To install, run:
+
+```bash
+pip install 'strands-agents[litellm]'
+```
+
+## Usage
+
+After installing `litellm`, you can import and initialize Strands Agents' LiteLLM provider as follows:
+
+```python
+from strands import Agent
+from strands.models.litellm import LiteLLMModel
+from strands.vended_tools import notebook
+
+model = LiteLLMModel(
+    client_args={
+        "api_key": "<KEY>",
+    },
+    # **model_config
+    model_id="anthropic/claude-3-7-sonnet-20250219",
+    params={
+        "max_tokens": 1000,
+        "temperature": 0.7,
+    }
+)
+
+agent = Agent(model=model, tools=[notebook])
+response = agent('Create a notebook named "ideas" and add three project ideas.')
+print(response)
+```
+
+## Using LiteLLM Proxy
+
+To use a [LiteLLM Proxy Server](https://docs.litellm.ai/docs/simple_proxy), you have two options:
+
+### Option 1: Use `use_litellm_proxy` parameter
+
+```python
+from strands import Agent
+from strands.models.litellm import LiteLLMModel
+
+model = LiteLLMModel(
+    client_args={
+        "api_key": "<PROXY_KEY>",
+        "api_base": "<PROXY_URL>",
+        "use_litellm_proxy": True
+    },
+    model_id="amazon.nova-lite-v1:0"
+)
+
+agent = Agent(model=model)
+response = agent("Tell me a story")
+```
+
+### Option 2: Use `litellm_proxy/` prefix in model ID
+
+```python
+model = LiteLLMModel(
+    client_args={
+        "api_key": "<PROXY_KEY>",
+        "api_base": "<PROXY_URL>"
+    },
+    model_id="litellm_proxy/amazon.nova-lite-v1:0"
+)
+```
+
+## Configuration
+
+### Client Configuration
+
+The `client_args` configure the underlying LiteLLM `completion` API. For a complete list of available arguments, please refer to the LiteLLM [docs](https://docs.litellm.ai/docs/completion/input).
+
+### Model Configuration
+
+The `model_config` configures the underlying model selected for inference. The supported configurations are:
+
+|  Parameter | Description | Example | Options |
+|------------|-------------|---------|---------|
+| `model_id` | ID of a model to use | `anthropic/claude-3-7-sonnet-20250219` | [reference](https://docs.litellm.ai/docs/providers)
+| `params` | Model specific parameters | `{"max_tokens": 1000, "temperature": 0.7}` | [reference](https://docs.litellm.ai/docs/completion/input)
+
+## Troubleshooting
+
+### Module Not Found
+
+If you encounter the error `ModuleNotFoundError: No module named 'litellm'`, this means you haven't installed the `litellm` dependency in your environment. To fix, run `pip install 'strands-agents[litellm]'`.
+
+## Advanced Features
+
+### Caching
+
+Set `cache_config` and Strands caches prompts for the backend LiteLLM routes to. What happens depends on that backend:
+
+| Backend | What `cache_config=CacheConfig()` does |
+|---|---|
+| Claude through `anthropic/`, `bedrock/` or `vertex_ai/` | Places cache points on the system prompt and the latest message, and on the tools when you set `tools_ttl`. LiteLLM translates them for the backend. |
+| OpenAI-family (`openai/`, `azure/`, ...) | Nothing extra: OpenAI caches repeated prefixes by itself. Strands sends `prompt_cache_key` to route requests to the same cache. |
+| Gemini | Nothing: Gemini caches repeated prefixes implicitly, and LiteLLM would turn a cache point into a billed cached-content resource. |
+
+```python
+from strands import Agent
+from strands.models import CacheConfig
+from strands.models.litellm import LiteLLMModel
+
+model = LiteLLMModel(
+    model_id="anthropic/claude-sonnet-4-6",
+    cache_config=CacheConfig(),
+)
+agent = Agent(model=model, system_prompt="You are a helpful assistant. ...")
+
+response = agent("Tell me about Python")
+# cacheWriteInputTokens and cacheReadInputTokens appear in response.metrics.accumulated_usage
+```
+
+#### Proxy aliases and gateways
+
+When the model id doesn't name the backend, such as a LiteLLM proxy alias (`litellm_proxy/my-claude`) or a gateway id (`openrouter/anthropic/...`), Strands can't tell that the backend takes cache points. Declare it through `model_info`:
+
+```python
+from strands.models import CacheConfig, ModelCapabilities, ModelInfo
+from strands.models.litellm import LiteLLMModel
+
+model = LiteLLMModel(
+    model_id="litellm_proxy/my-claude",
+    cache_config=CacheConfig(),
+    model_info=ModelInfo(capabilities=ModelCapabilities(prompt_caching="cache_points")),
+)
+```
+
+`CacheConfig(strategy="anthropic")` also places cache points without checking the model, but only where the backend can take them: Claude models on any provider (including `bedrock/` and `vertex_ai/`), `anthropic/`, and gateway ids that don't name their backend. Other backends behave as under `"auto"`, including OpenAI, Gemini on any provider, and non-Claude Bedrock models such as Nova, so one cache config can be shared across providers. Declaring the backend this way also stops Strands sending the session-derived `prompt_cache_key`, which non-OpenAI backends behind a proxy reject.
+
+#### Hand-placed cache points
+
+You can place cache points yourself with `SystemContentBlock(cachePoint={"type": "default"})` in the system prompt, or a `cachePoint` block in a message. Strands keeps their position. With `cache_config` set, message points take the messages TTL, since the backends reject a longer TTL after a shorter one; without it, your TTL is kept. On Bedrock, a point directly after a non-PDF document moves back over the document. On backends that don't take cache points, message cache points are dropped.
+
+> **Note**: Each backend has a minimum cacheable prompt size, and a prompt shorter than that is not cached. For example, Claude Haiku 4.5 needs about 4,096 tokens.
+
+### Structured Output
+
+LiteLLM supports structured output by proxying requests to underlying model providers that support tool calling. The availability of structured output depends on the specific model and provider you're using through LiteLLM.
+
+```python
+from pydantic import BaseModel, Field
+from strands import Agent
+from strands.models.litellm import LiteLLMModel
+
+class BookAnalysis(BaseModel):
+    """Analyze a book's key information."""
+    title: str = Field(description="The book's title")
+    author: str = Field(description="The book's author")
+    genre: str = Field(description="Primary genre or category")
+    summary: str = Field(description="Brief summary of the book")
+    rating: int = Field(description="Rating from 1-10", ge=1, le=10)
+
+model = LiteLLMModel(
+    model_id="bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0"
+)
+
+agent = Agent(model=model)
+
+result = agent.structured_output(
+    BookAnalysis,
+    """
+    Analyze this book: "The Hitchhiker's Guide to the Galaxy" by Douglas Adams.
+    It's a science fiction comedy about Arthur Dent's adventures through space
+    after Earth is destroyed. It's widely considered a classic of humorous sci-fi.
+    """
+)
+
+print(f"Title: {result.title}")
+print(f"Author: {result.author}")
+print(f"Genre: {result.genre}")
+print(f"Rating: {result.rating}")
+```
+
+## References
+
+- [Python API](@api/python/strands.models.model)
+- [LiteLLM](https://docs.litellm.ai/docs/)

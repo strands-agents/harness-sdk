@@ -1,0 +1,123 @@
+---
+title: Deploy to production
+description: "Take a Strands agent to production: pick a target such as Bedrock AgentCore, Lambda, Fargate, or EKS, and ship the agent you already built."
+sidebar:
+  label: Overview
+tags: [deployment]
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components'
+
+Getting an agent into production means choosing where it runs and wrapping it in
+the entry point that host expects. The agent you built in development is the one
+you ship: the same loop, tools, and model provider run unchanged behind whatever
+target you pick here. What changes between targets is the packaging around it, not
+the agent itself.
+
+## Deployment targets
+
+<CardGrid>
+  <LinkCard
+    title="Amazon Bedrock AgentCore"
+    href="deploy_to_bedrock_agentcore/"
+    description="Run on the managed AgentCore runtime for agents."
+  />
+  <LinkCard
+    title="AWS Lambda"
+    href="deploy_to_aws_lambda/"
+    description="Serverless, event-driven invocations with no servers to manage."
+  />
+  <LinkCard
+    title="AWS Fargate"
+    href="deploy_to_aws_fargate/"
+    description="Run containers on ECS without provisioning hosts."
+  />
+  <LinkCard
+    title="AWS App Runner"
+    href="deploy_to_aws_apprunner/"
+    description="Ship a container as a scaling web service from source or image."
+  />
+  <LinkCard
+    title="Amazon EKS"
+    href="deploy_to_amazon_eks/"
+    description="Run on managed Kubernetes when you need cluster control."
+  />
+  <LinkCard
+    title="Amazon EC2"
+    href="deploy_to_amazon_ec2/"
+    description="Run on instances you manage for full control of the host."
+  />
+  <LinkCard
+    title="Docker"
+    href="deploy_to_docker/"
+    description="Containerize the agent as the foundation for any host."
+  />
+  <LinkCard
+    title="Kubernetes"
+    href="deploy_to_kubernetes/"
+    description="Deploy the container to any Kubernetes cluster."
+  />
+  <LinkCard
+    title="Terraform"
+    href="deploy_to_terraform/"
+    description="Provision the agent's infrastructure as code."
+  />
+  <LinkCard
+    title="Nx Plugin for AWS"
+    href="deploy_with_nx_plugin_for_aws/"
+    description="Scaffold and deploy an agent project with the Nx tooling."
+  />
+</CardGrid>
+
+## A deploy-ready agent
+
+Most targets call the agent over HTTP: they send a request to an invocation
+route and check a health route to know the container is live. The agent behind
+those routes is the same one you build anywhere else.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from fastapi import FastAPI
+from strands import Agent
+
+app = FastAPI()
+agent = Agent()
+
+
+@app.post("/invocations")
+async def invoke(request: dict):
+    result = agent(request["prompt"])
+    return {"output": result.message}
+
+
+@app.get("/ping")
+def ping():
+    return {"status": "healthy"}
+```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/deploy/deploy_imports.ts:deploy_ready_agent_imports"
+
+--8<-- "user-guide/sdk/deploy/deploy.ts:deploy_ready_agent"
+```
+
+</Tab>
+</Tabs>
+
+Each target guide takes this shape and adds the packaging it needs: a container
+image, a Lambda handler, a Kubernetes manifest, or a Terraform module.
+
+## Where to go next
+
+New to deployment? Start with [Docker](deploy_to_docker/) to containerize the
+agent locally, then move the image to a cloud target. Already know where you are
+shipping? Pick that target from the grid above and follow its guide end to end.
+
+Before you ship, read [Operating agents in production](operating-agents-in-production/)
+for the practices that apply across every target: configuration, secrets,
+scaling, and observability.

@@ -45,15 +45,23 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            // Pass the exact commit this pull_request event fired on so the
+            // dispatched run acts on that commit instead of re-resolving the
+            // branch later. A later push just fires another event (a new run for
+            // the new commit).
+            const pr = context.payload.pull_request;
             await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner,
               repo: context.repo.repo,
               workflow_id: 'strands-command.yml',
               ref: 'main',
               inputs: {
-                issue_id: String(context.payload.pull_request.number),
+                issue_id: String(pr.number),
                 command: 'review',
-                session_id: ''
+                session_id: '',
+                head_sha: pr.head.sha,
+                head_repo: pr.head.repo.full_name,
+                head_ref: pr.head.ref
               }
             });
-            console.log(`Triggered /strands review for PR #${context.payload.pull_request.number}`);
+            console.log(`Triggered /strands review for PR #${pr.number}`);

@@ -3,8 +3,8 @@
  *
  * Adds <lastmod> dates to the XML sitemap by looking up each page's
  * last git commit date. Runs a single `git log` command at config time
- * to build a map of file paths to ISO dates, then injects them via
- * the @astrojs/sitemap `serialize` callback.
+ * across the site source tree to build a map of file paths to ISO dates,
+ * then injects them via the @astrojs/sitemap `serialize` callback.
  *
  * Dynamically-generated routes have no backing content file, so they
  * derive lastmod from the content that feeds them:
@@ -22,70 +22,13 @@
  * array, it skips adding its own — so this replaces the default
  * sitemap with one that includes lastmod.
  */
-import { execFileSync } from 'node:child_process'
+import fs from 'node:fs'
 import path from 'node:path'
 import sitemap from '@astrojs/sitemap'
+import { INDEXABLE_STANDALONE_PAGES } from '../config/standalone-pages'
+import { loadGeneratedExternalDocsNavigation } from '../external-docs-navigation'
 import type { SitemapItem } from '@astrojs/sitemap'
-
-/**
- * Build a map of content file path → last git commit date (ISO 8601).
- *
- * Uses a single `git log` call with --name-only to get all commits
- * touching the content directory, then picks the most recent date
- * for each file. This is much faster than running git log per file.
- */
-function buildLastModMap(contentDir: string): Map<string, string> {
-  const map = new Map<string, string>()
-
-  try {
-    // Single git command: output all commits with dates and affected files
-    // Format: each commit outputs its ISO date, then the list of files
-    const output = execFileSync('git', ['log', '--format=%cI', '--name-only', '--diff-filter=ACMR', '--', contentDir], {
-      encoding: 'utf-8',
-      maxBuffer: 50 * 1024 * 1024,
-    })
-
-    // Parse: lines alternate between date lines and file path lines,
-    // separated by blank lines. First occurrence of each file = most recent.
-    let currentDate = ''
-    for (const line of output.split('\n')) {
-      const trimmed = line.trim()
-      if (!trimmed) continue
-
-      // ISO date lines start with a digit (e.g., "2026-03-07T00:22:25-08:00")
-      if (/^\d{4}-/.test(trimmed)) {
-        currentDate = trimmed
-      } else if (currentDate && !map.has(trimmed)) {
-        // File path — only store if we haven't seen it yet (first = most recent)
-        map.set(trimmed, currentDate)
-      }
-    }
-  } catch (error) {
-    // If git isn't available (e.g., Docker build without .git),
-    // fall back gracefully — sitemap just won't have lastmod
-    console.warn('[sitemap-lastmod] Failed to build lastmod map:', error instanceof Error ? error.message : error)
-  }
-
-  return map
-}
-
-/**
- * Determine the path from the git repo root to the current working directory.
- *
- * `git log --name-only` emits file paths relative to the repo root, but the
- * build runs from `site/`, so those paths carry a `site/` prefix. We prepend
- * the same prefix to lookup candidates so both sides share one path space.
- * Returns '' when the build runs from the repo root (e.g. a Docker build) or
- * when git is unavailable, which keeps the plugin correct in both layouts.
- */
-function getGitPrefix(): string {
-  try {
-    // git uses forward slashes with a trailing slash (e.g. "site/"), or "" at the repo root
-    return execFileSync('git', ['rev-parse', '--show-prefix'], { encoding: 'utf-8' }).trim()
-  } catch {
-    return ''
-  }
-}
+import { buildLastModMap, getGitPrefix } from '../util/git-dates'
 
 /**
  * Convert a URL path to likely content file paths.
@@ -131,18 +74,51 @@ export function newestDateUnder(lastModMap: Map<string, string>, pathPrefix: str
   return newest
 }
 
+/**
+ * Newest commit date among exact files and directory prefixes.
+ *
+ * A source ending in `/` represents a directory; every other source is an
+ * exact file path. This prevents a file such as `box.astro-old` from
+ * accidentally contributing to the `/box/` route.
+ */
+export function newestDateForSources(lastModMap: Map<string, string>, sources: string[]): string | undefined {
+  let newest: string | undefined
+  let newestMs = -Infinity
+
+  for (const source of sources) {
+    const date = source.endsWith('/') ? newestDateUnder(lastModMap, source) : lastModMap.get(source)
+    if (!date) continue
+
+    const ms = Date.parse(date)
+    if (!Number.isNaN(ms) && ms > newestMs) {
+      newestMs = ms
+      newest = date
+    }
+  }
+
+  return newest
+}
+
 // Blog tag/author archives are noindexed thin content — keep them out of the
 // sitemap so it only lists indexable URLs. Anchored to the deploy base path
 // (subpath previews) so a content page like /docs/blog/tags/ can't be caught.
-const EXCLUDED_ROUTES = ['blog/tags/', 'blog/authors/']
+const EXCLUDED_ROUTES = ['blog/tags/', 'blog/authors/', 'frogs/']
 const basePath = (process.env.ASTRO_BASE_PATH || '/').replace(/\/+$/, '')
 
-export function sitemapWithLastmod(contentDir: string = 'src/content') {
+interface SitemapLastmodOptions {
+  /** Content directory used to resolve generated routes to source files. */
+  contentDir?: string
+  /** Git-log scope covering content and every standalone page's lastmod sources. */
+  sourceRoot?: string
+}
+
+export function sitemapWithLastmod({ contentDir = 'src/content', sourceRoot = 'src' }: SitemapLastmodOptions = {}) {
   const gitPrefix = getGitPrefix()
-  const lastModMap = buildLastModMap(contentDir)
+  const lastModMap = buildLastModMap(sourceRoot)
   console.log(`[sitemap-lastmod] Loaded ${lastModMap.size} git dates`)
 
   const contentPrefix = (rel: string) => gitPrefix + path.posix.join(contentDir, rel)
+  const excludedRoutes = [...EXCLUDED_ROUTES, ...loadPreviewExternalDocsRoutes(path.resolve('.build/external-docs'))]
 
   // Precompute lastmod dates for route classes with no backing content file.
   // Homepage uses the newest content commit overall — never the build date,
@@ -153,18 +129,25 @@ export function sitemapWithLastmod(contentDir: string = 'src/content') {
     [`${basePath}/blog/`]: newestDateUnder(lastModMap, contentPrefix('blog/')),
     [`${basePath}/changelog/`]: newestDateUnder(lastModMap, contentPrefix('changelog/')),
   }
+  for (const page of INDEXABLE_STANDALONE_PAGES) {
+    if (!page.lastmodSources) continue
+    indexDates[`${basePath}/${page.slug}/`] = newestDateForSources(
+      lastModMap,
+      page.lastmodSources.map((source) => gitPrefix + source)
+    )
+  }
   // API reference pages are regenerated from SDK source at each release, and
   // every release commits a changelog file — its commit date approximates the
   // release date for the matching stream.
   const apiDates: Array<[urlPattern: string, date: string | undefined]> = [
-    ['/api/python/', newestDateUnder(lastModMap, contentPrefix('changelog/harness/python-'))],
-    ['/api/typescript/', newestDateUnder(lastModMap, contentPrefix('changelog/harness/typescript-'))],
+    ['/api/python/', newestDateUnder(lastModMap, contentPrefix('changelog/sdk/python-'))],
+    ['/api/typescript/', newestDateUnder(lastModMap, contentPrefix('changelog/sdk/typescript-'))],
   ]
 
   return sitemap({
     filter: (page: string) => {
       const pathname = new URL(page).pathname
-      return !EXCLUDED_ROUTES.some((route) => pathname.startsWith(`${basePath}/${route}`))
+      return !excludedRoutes.some((route) => pathname.startsWith(`${basePath}/${route}`))
     },
     serialize(item: SitemapItem) {
       const url = new URL(item.url)
@@ -201,4 +184,16 @@ export function sitemapWithLastmod(contentDir: string = 'src/content') {
       return item
     },
   })
+}
+
+export function loadPreviewExternalDocsRoutes(externalDocsDir: string): string[] {
+  if (!fs.existsSync(externalDocsDir)) return []
+
+  const routes: string[] = []
+  for (const entry of fs.readdirSync(externalDocsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    const navigation = loadGeneratedExternalDocsNavigation(externalDocsDir, entry.name)
+    if (navigation?.product.status === 'preview') routes.push(`${navigation.routePrefix}/`)
+  }
+  return routes
 }

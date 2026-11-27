@@ -1,6 +1,7 @@
 import os
 import uuid
 
+import anthropic
 import pydantic
 import pytest
 
@@ -11,6 +12,7 @@ from strands.models import CacheConfig, CacheToolsConfig
 from strands.models.anthropic import AnthropicModel
 from strands.types.content import ContentBlock, Message
 from strands.types.exceptions import ContextWindowOverflowException
+from strands.vended_plugins.context_injector import ContextInjector
 from tests_integ.models import providers
 
 # these tests only run if we have the anthropic api key
@@ -84,6 +86,34 @@ def test_agent_invoke(agent):
     text = result.message["content"][0]["text"].lower()
 
     assert all(string in text for string in ["12:00", "sunny"])
+
+
+def test_sampling_params_with_legacy_api_version_pin():
+    model = AnthropicModel(
+        client_args={"api_key": os.getenv("ANTHROPIC_API_KEY"), "default_headers": {"anthropic-version": "2023-06-01"}},
+        model_id=MODEL_ID,
+        max_tokens=64,
+        params={"temperature": 0.2},
+    )
+
+    result = Agent(model=model)("Reply with the single word: ok")
+
+    assert "ok" in result.message["content"][0]["text"].lower()
+
+
+@pytest.mark.skipif(
+    int(anthropic.__version__.split(".")[0]) < 2, reason="anthropic<2 defaults to API version 2023-06-01"
+)
+def test_sampling_params_without_pin_raise_before_the_request():
+    model = AnthropicModel(
+        client_args={"api_key": os.getenv("ANTHROPIC_API_KEY")},
+        model_id=MODEL_ID,
+        max_tokens=64,
+        params={"temperature": 0.2},
+    )
+
+    with pytest.raises(ValueError, match="anthropic_version=<"):
+        Agent(model=model)("Reply with the single word: ok")
 
 
 @pytest.mark.asyncio
@@ -234,6 +264,38 @@ def test_cache_tools_earns_a_read_on_the_second_turn():
     )
 
 
+def test_anthropic_tools_web_search_alongside_function_tools(tools):
+    """A server-side web search runs next to the agent's function tools and its citations round-trip."""
+    model = AnthropicModel(
+        client_args={"api_key": os.getenv("ANTHROPIC_API_KEY")},
+        model_id=MODEL_ID,
+        max_tokens=1024,
+        # "direct" so citations are attached; the dynamic-filtering default runs the search inside code execution
+        anthropic_tools=[
+            {"type": "web_search_20260318", "name": "web_search", "max_uses": 2, "allowed_callers": ["direct"]}
+        ],
+    )
+    agent = Agent(model=model, tools=tools, load_tools_from_directory=False, callback_handler=None)
+
+    first = agent("Call tool_weather, then use web_search to find the current Python release. Answer in one sentence.")
+    assert first.stop_reason == "end_turn"
+    assert any(
+        "toolUse" in block and block["toolUse"]["name"] == "tool_weather"
+        for message in agent.messages
+        for block in message["content"]
+    ), "function tool was dropped from the request"
+    citations = [
+        citation
+        for block in first.message["content"]
+        if "citationsContent" in block
+        for citation in block["citationsContent"]["citations"]
+    ]
+    assert citations and citations[0]["location"]["web"]["url"].startswith("http")
+
+    second = agent("Reply DONE.")
+    assert "DONE" in str(second)
+
+
 class TestCountTokens:
     @pytest.fixture
     def model(self):
@@ -272,3 +334,46 @@ class TestCountTokens:
         without = await model.count_tokens(messages=messages)
         with_tools = await model.count_tokens(messages=messages, tool_specs=tool_specs, system_prompt="Be helpful.")
         assert with_tools > without
+
+
+def test_context_injection_keeps_preserved_thinking_valid_and_the_cache_warm_while_injected_text_changes():
+    @strands.tool
+    def lookup_inventory(item: str) -> str:
+        """Look up how many units of an item are in stock."""
+        return {"widgets": "17", "gadgets": "4"}.get(item, "0")
+
+    # Any edit to history before a replayed thinking block fails the request instead of dropping the block.
+    model = AnthropicModel(
+        client_args={
+            "api_key": os.getenv("ANTHROPIC_API_KEY"),
+            "default_headers": {"anthropic-beta": "thinking-binding-controls-2026-08-01"},
+        },
+        model_id="claude-opus-5-5",
+        max_tokens=4096,
+        params={"thinking": {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "error"}}},
+        cache_config=CacheConfig(strategy="anthropic"),
+    )
+    calls = 0
+
+    def render(context):
+        nonlocal calls
+        calls += 1
+        return f"<call>{calls}</call>"
+
+    agent = Agent(
+        model=model,
+        tools=[lookup_inventory],
+        callback_handler=None,
+        # Long enough to pass the minimum cacheable prefix.
+        system_prompt=f"You are an inventory assistant {uuid.uuid4()}.\n"
+        + "Report stock counts exactly as the tool returns them. " * 400,
+        plugins=[ContextInjector(render, trigger="everyTurn")],
+    )
+
+    agent("Look up widgets, then gadgets, one at a time, and say which has more stock.")
+    result = agent("Look up widgets again and confirm the count.")
+
+    assert result.stop_reason == "end_turn"
+    assert calls >= 4
+    usage = [message for message in agent.messages if message["role"] == "assistant"][-1]["metadata"]["usage"]
+    assert usage.get("cacheReadInputTokens", 0) > 0

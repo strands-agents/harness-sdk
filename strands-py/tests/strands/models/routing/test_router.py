@@ -8,6 +8,7 @@ import types
 import pytest
 
 from strands import Agent, Plugin
+from strands.agent.invocation_context import _create_invocation_context, _reached_limit
 from strands.event_loop._retry import ModelRetryStrategy
 from strands.models import BedrockModel
 from strands.models.routing import (
@@ -19,7 +20,9 @@ from strands.models.routing import (
 )
 from strands.models.routing.router import _candidate_label, _RoutingState
 from strands.multiagent import GraphBuilder
+from strands.session.repository_session_manager import RepositorySessionManager
 from strands.types.exceptions import ModelThrottledException
+from tests.fixtures.mock_session_repository import MockedSessionRepository
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 
@@ -71,7 +74,7 @@ def _routing_state_of(invocation_state, router, agent=None):
     return invocation_state[router._state_key(agent if agent is not None else _TEST_AGENT)]
 
 
-def _invoke_context(invocation_state, model, agent=None):
+def _invoke_context(invocation_state, model, agent=None, invocation_context=None):
     return types.SimpleNamespace(
         agent=agent if agent is not None else _TEST_AGENT,
         messages=[],
@@ -79,6 +82,7 @@ def _invoke_context(invocation_state, model, agent=None):
         tool_specs=[],
         invocation_state=invocation_state,
         model=model,
+        invocation_context=invocation_context,
     )
 
 
@@ -213,6 +217,36 @@ async def test_custom_strategy_prefers_named_candidate():
     )
 
     assert await router._select_model(_routing_context(router.candidates)) is smart
+
+
+class _RecordsAgentMetadata(MockedModelProvider):
+    """Records the agent_metadata forwarded to stream()."""
+
+    def __init__(self, agent_responses):
+        super().__init__(agent_responses)
+        self.agent_metadata = None
+
+    async def stream(self, *args, **kwargs):
+        self.agent_metadata = kwargs.get("agent_metadata")
+        async for event in super().stream(*args, **kwargs):
+            yield event
+
+
+@pytest.mark.asyncio
+async def test_routing_forwards_agent_metadata_to_the_selected_alternate():
+    """A routed alternate receives the invoking agent's metadata, so session-based cache routing
+    reaches every candidate rather than only the default model."""
+    alternate = _RecordsAgentMetadata([{"role": "assistant", "content": [{"text": "hi"}]}])
+    router = ModelRouter(
+        models=[RoutingCandidate(_model(), name="default"), RoutingCandidate(alternate, name="alternate")],
+        strategy=_PreferByName("alternate"),
+    )
+    session_manager = RepositorySessionManager(session_id="routed", session_repository=MockedSessionRepository())
+    agent = Agent(model=router, session_manager=session_manager, retry_strategy=None, callback_handler=None)
+
+    await agent.invoke_async("question")
+
+    assert alternate.agent_metadata.session_id == "routed"
 
 
 @pytest.mark.asyncio
@@ -638,13 +672,13 @@ class _ModelProbe(Plugin):
         self.seen = None
 
     def init_agent(self, agent):
-        from strands._middleware.stages import InvokeModelStage
+        from strands.middleware.stages import InvokeModelStage
 
         def record(context):
             self.seen = context.model
             return context
 
-        agent._middleware_registry.add_middleware(InvokeModelStage.Input, record)
+        agent.add_middleware(InvokeModelStage.Input, record)
 
 
 def test_routing_runs_before_other_input_middleware():
@@ -750,7 +784,7 @@ def _hook_scaffold(router, *, candidate_index=0, model=None):
     return agent, state, {router._state_key(agent): state}
 
 
-def _model_result(invocation_state, agent, *, error=None):
+def _model_result(invocation_state, agent, *, error=None, invocation_context=None):
     """An AfterModelCallEvent stand-in; ``error=None`` means the call succeeded."""
     return types.SimpleNamespace(
         retry=False,
@@ -758,6 +792,7 @@ def _model_result(invocation_state, agent, *, error=None):
         exception=error,
         invocation_state=invocation_state,
         agent=agent,
+        invocation_context=invocation_context,
     )
 
 
@@ -1298,3 +1333,42 @@ async def test_parallel_graph_nodes_sharing_one_router_route_independently():
     assert (fast.calls, smart.calls) == (1, 1)  # neither node ran on the other's model
     texts = {node_id: node.result.message["content"][0]["text"] for node_id, node in result.results.items()}
     assert texts == {"fast_node": "fast-done", "smart_node": "smart-done"}
+
+
+@pytest.mark.asyncio
+async def test_strategy_gets_a_handle_that_joins_the_request_usage_without_its_limits():
+    captured = []
+
+    class _Capturing:
+        async def select(self, context, **kwargs):
+            captured.append(context)
+            return None
+
+    model = _model()
+    router = ModelRouter(models=[model], strategy=_Capturing())
+    request = _create_invocation_context({"turns": 1})
+    request._usage["turns_taken"] = 1
+
+    await router._selection_middleware()(_invoke_context({}, model=model, invocation_context=request))
+
+    handed = captured[0].invocation_context
+    handed._record_usage({"inputTokens": 1, "outputTokens": 2, "totalTokens": 3})
+    assert _reached_limit(handed) is None
+    assert request.usage == {"turns_taken": 1, "inputTokens": 1, "outputTokens": 2, "totalTokens": 3}
+
+
+@pytest.mark.asyncio
+async def test_strategy_gets_no_handle_outside_a_request():
+    captured = []
+
+    class _Capturing:
+        async def select(self, context, **kwargs):
+            captured.append(context)
+            return None
+
+    model = _model()
+    router = ModelRouter(models=[model], strategy=_Capturing())
+
+    await router._selection_middleware()(_invoke_context({}, model=model))
+
+    assert captured[0].invocation_context is None

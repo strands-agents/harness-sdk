@@ -4,7 +4,9 @@ import ChangelogLayout from '../../layouts/ChangelogLayout.astro'
 import ChangelogVersion from '../../components/changelog/ChangelogVersion.astro'
 import { getReleasePaths, formatChangelogDate, releaseSlug } from '../../util/changelog'
 import { pathWithBase } from '../../util/links'
-import { streamLabel } from '../../config/changelog'
+import { PRODUCT_RELEASE_STREAM, streamLabel } from '../../config/changelog'
+import { products } from '../../config/navbar'
+import { productSchema, releaseSchema } from '../../util/structured-data'
 import '../../styles/changelog.css'
 
 export const getStaticPaths: GetStaticPaths = async () => {
@@ -21,14 +23,21 @@ const title = `${label} v${d.version}`
 const description = `Release notes for ${label} v${d.version}, published ${formatChangelogDate(d.date)}.`
 
 const linkFor = (r: typeof release) => pathWithBase(`/changelog/${releaseSlug(r)}/`)
+
+const siteUrl = Astro.site?.origin || 'https://strandsagents.com'
+const product = products.find((p) => PRODUCT_RELEASE_STREAM[p.label] === d.sdk)
+Astro.locals.structuredData = [
+  ...(product ? [productSchema(product, siteUrl)] : []),
+  releaseSchema(d, siteUrl + Astro.url.pathname, siteUrl, product),
+]
 ---
 <ChangelogLayout title={title} description={description}>
   <div class="cl-page cl-detail">
-    <a class="cl-back" href={pathWithBase('/changelog/')}><span aria-hidden="true">←</span> All releases</a>
+    <a class="cl-back" data-pagefind-ignore href={pathWithBase('/changelog/')}><span aria-hidden="true">←</span> All releases</a>
     <ol class="cl-feed-list" role="list">
       <li class="cl-version-item"><ChangelogVersion release={release} detail /></li>
     </ol>
-    <nav class="cl-pager" aria-label={`Other ${label} releases`}>
+    <nav class="cl-pager" data-pagefind-ignore aria-label={`Other ${label} releases`}>
       {older ? (
         <a class="cl-pager-link cl-pager-prev" href={linkFor(older)} rel="prev">
           <span class="cl-pager-dir"><span aria-hidden="true">←</span> Older</span>

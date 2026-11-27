@@ -5,5 +5,5 @@ maintainedBy: strands
 languages:
   typescript: {}
 github: https://github.com/strands-agents/harness-sdk/blob/main/strands-ts/src/models/vercel.ts
-docsPage: docs/user-guide/concepts/model-providers/vercel
+docsPage: docs/user-guide/sdk/model-providers/vercel
 addedDate: 2026-03-27

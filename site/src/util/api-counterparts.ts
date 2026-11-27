@@ -105,10 +105,9 @@ export function buildApiCounterpartMap(entries: readonly ApiDocEntry[]): Map<str
   for (const symbol of tsSymbols) {
     const pages = symbolToPyPages.get(symbol)
     if (!pages || pages.length === 0) continue
-    // Symbols shared by several modules (e.g. Role in types.content and the
-    // experimental bidi types): prefer the stable module, then the shortest
-    // path, then alphabetical — deterministic and biased toward the page a
-    // reader most likely wants.
+    // Symbols shared by several modules: prefer the stable module, then the
+    // shortest path, then alphabetical — deterministic and biased toward the
+    // page a reader most likely wants.
     const best = [...pages].sort(
       (a, b) =>
         Number(a.includes('.experimental.')) - Number(b.includes('.experimental.')) ||

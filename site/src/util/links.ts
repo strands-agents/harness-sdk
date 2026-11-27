@@ -77,6 +77,14 @@ export function pathWithBase(path: string): string {
 }
 
 /**
+ * Build a site URL with the configured origin and base path.
+ * Returns a base-aware path when SITE_DOMAIN is not set.
+ */
+export function siteLink(path: string): string {
+  return getSiteOrigin() + pathWithBase(path)
+}
+
+/**
  * Normalize a file path or href to a slug by removing extensions and index/README suffixes.
  * This is the shared logic used by both content collection ID generation and link resolution.
  *

@@ -1,0 +1,270 @@
+---
+title: Async Iterators for Streaming
+description: 'Stream Strands agent events asynchronously with async iterators. Process text, tool usage, and lifecycle events in FastAPI and other async frameworks.'
+sidebar:
+  label: "Async Iterators"
+tags: [streaming]
+sourceLinks:
+  - path: strands-py/src/strands/agent/agent.py
+  - path: strands-py/src/strands/event_loop/streaming.py
+  - path: strands-ts/src/agent/agent.ts
+  - path: strands-ts/src/models/streaming.ts
+---
+
+Stream agent events as they happen and handle each one in your own async code. Async iterators are the streaming interface for asynchronous frameworks like FastAPI, aiohttp, and Express, where you control the flow of execution.
+
+For every event the stream can emit, including text, tool usage, lifecycle, and reasoning events, see the [stream event types](./events.md#event-types) reference.
+
+## Basic Usage
+
+<Tabs>
+<Tab label="Python">
+
+Python uses the [`stream_async`](@api/python/strands.agent.agent#Agent.stream_async), which is a streaming counterpart to the [`invoke_async`](@api/python/strands.agent.agent#Agent.invoke_async) method, for asynchronous streaming. This is ideal for frameworks like FastAPI, aiohttp, or Django Channels.
+
+> **Note**: Python also supports synchronous event handling via [callback handlers](./callback-handlers.md).
+
+```python
+import asyncio
+from strands import Agent
+from strands.vended_tools import notebook
+
+# Initialize our agent without a callback handler
+agent = Agent(
+    tools=[notebook],
+    callback_handler=None
+)
+
+# Async function that iterates over streamed agent events
+async def process_streaming_response():
+    agent_stream = agent.stream_async(
+        'Create a notebook named "ideas" and add three project ideas.'
+    )
+    async for event in agent_stream:
+        print(event)
+
+# Run the agent
+asyncio.run(process_streaming_response())
+```
+</Tab>
+<Tab label="TypeScript">
+
+TypeScript uses the [`stream`](@api/typescript/Agent) method for streaming, which is async by default. This is ideal for frameworks like Express.js or NestJS.
+
+```typescript
+--8<-- "user-guide/sdk/streaming/async-iterators.ts:basic_usage"
+```
+</Tab>
+</Tabs>
+
+## Server examples
+
+Here's how to integrate streaming with web frameworks to create a streaming endpoint:
+
+<Tabs>
+<Tab label="Python - FastAPI">
+
+```python
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from strands import Agent
+from strands.vended_tools import notebook, http_request
+
+app = FastAPI()
+
+class PromptRequest(BaseModel):
+    prompt: str
+
+@app.post("/stream")
+async def stream_response(request: PromptRequest):
+    async def generate():
+        agent = Agent(
+            tools=[notebook, http_request],
+            callback_handler=None
+        )
+
+        try:
+            async for event in agent.stream_async(request.prompt):
+                if "data" in event:
+                    # Only stream text chunks to the client
+                    yield event["data"]
+        except Exception as e:
+            yield f"Error: {str(e)}"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/plain"
+    )
+```
+</Tab>
+<Tab label="TypeScript - Express.js">
+
+> **Note**: This is a conceptual example. Install Express.js with `npm install express @types/express` to use it in your project.
+
+```typescript
+--8<-- "user-guide/sdk/streaming/async-iterators.ts:express_example"
+```
+
+You can then curl your local server with:
+```bash
+curl localhost:3000/stream -d '{"prompt": "Hello"}' -H "Content-Type: application/json"
+```
+</Tab>
+</Tabs>
+
+### Agentic Loop
+
+This processor prints each lifecycle event as it arrives, so you can watch the order the agent moves through its loop:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands import Agent
+from strands.vended_tools import notebook
+
+# Create agent with event loop tracker
+agent = Agent(
+    tools=[notebook],
+    callback_handler=None
+)
+
+# Print the full event lifecycle to the console
+async for event in agent.stream_async(
+    'Create a notebook named "ideas" and add three project ideas.'
+):
+    # Track event loop lifecycle
+    if event.get("init_event_loop", False):
+        print("Event loop initialized")
+    elif event.get("start_event_loop", False):
+        print("Event loop cycle starting")
+    elif "message" in event:
+        print(f"New message created: {event['message']['role']}")
+    elif "result" in event:
+        print("Agent completed with result")
+    elif event.get("force_stop", False):
+        print(f"Event loop force-stopped: {event.get('force_stop_reason', 'unknown reason')}")
+
+    # Track tool usage
+    if "current_tool_use" in event and event["current_tool_use"].get("name"):
+        tool_name = event["current_tool_use"]["name"]
+        print(f"Using tool: {tool_name}")
+
+    # Show the first 20 characters of each text chunk to keep output readable
+    if "data" in event:
+        data_snippet = event["data"][:20] + ("..." if len(event["data"]) > 20 else "")
+        print(f"Text: {data_snippet}")
+```
+
+The output will show the sequence of events:
+
+1. First the event loop initializes (`init_event_loop`)
+2. Then the cycle begins (`start_event_loop`)
+3. New cycles may start multiple times during execution (`start_event_loop`)
+4. Text generation and tool usage events occur during the cycle
+5. Finally, the agent completes with a `result` event or may be force-stopped (`force_stop`)
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/streaming/overview.ts:agent_loop_lifecycle"
+```
+
+The output will show the sequence of events:
+
+1. First the invocation starts (`beforeInvocationEvent`)
+2. Then the model is called (`beforeModelCallEvent`)
+3. The model generates content with delta events (wrapped in `modelStreamUpdateEvent`)
+4. Tools may be executed (`beforeToolsEvent`, `afterToolsEvent`)
+5. The model may be called again in subsequent cycles
+6. Finally, the invocation completes (`afterInvocationEvent`)
+</Tab>
+</Tabs>
+
+## Streaming from sub-agents
+
+This example combines [agents as tools](../multi-agent/agents-as-tools.md) and [tool streaming](../tools/custom-tools.md#tool-streaming) to stream events from a sub-agent:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from typing import AsyncIterator
+from dataclasses import dataclass
+from strands import Agent, tool
+from strands.vended_tools import notebook
+
+@dataclass
+class SubAgentResult:
+    agent: Agent
+    event: dict
+
+@tool
+async def notes_agent(query: str) -> AsyncIterator:
+    """Organize notes using the notebook tool."""
+    agent = Agent(
+        name="Notes Expert",
+        system_prompt="Organize the user's information with the notebook tool.",
+        callback_handler=None,
+        tools=[notebook]
+    )
+
+    result = None
+    async for event in agent.stream_async(query):
+        yield SubAgentResult(agent=agent, event=event)
+        if "result" in event:
+            result = event["result"]
+
+    yield str(result)
+
+def process_sub_agent_events(event):
+    """Shared processor for sub-agent streaming events"""
+    tool_stream = event.get("tool_stream_event", {}).get("data")
+
+    if isinstance(tool_stream, SubAgentResult):
+        current_tool = tool_stream.event.get("current_tool_use", {})
+        tool_name = current_tool.get("name")
+
+        if tool_name:
+            print(f"Agent '{tool_stream.agent.name}' using tool '{tool_name}'")
+
+    # Also show regular text output
+    if "data" in event:
+        print(event["data"], end="")
+
+# Using with async iterators
+orchestrator_async_iterator = Agent(
+    system_prompt="Route note-taking requests to the notes_agent tool.",
+    callback_handler=None,
+    tools=[notes_agent]
+)
+
+
+# With async-iterator
+async for event in orchestrator_async_iterator.stream_async(
+    'Create a notebook named "ideas" and add three project ideas.'
+):
+    process_sub_agent_events(event)
+
+
+# With callback handler
+def handle_events(**kwargs):
+    process_sub_agent_events(kwargs)
+
+orchestrator_callback = Agent(
+    system_prompt="Route note-taking requests to the notes_agent tool.",
+    callback_handler=handle_events,
+    tools=[notes_agent]
+)
+
+orchestrator_callback('Add two more ideas to the "ideas" notebook.')
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/streaming/overview.ts:sub_agent_basic"
+```
+</Tab>
+</Tabs>

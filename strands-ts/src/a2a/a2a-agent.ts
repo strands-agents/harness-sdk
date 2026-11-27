@@ -164,6 +164,16 @@ export class A2AAgent implements InvokableAgent {
   }
 
   /**
+   * Returns the remote agent's card, connecting lazily on first call.
+   *
+   * @returns The remote agent's AgentCard
+   */
+  async getAgentCard(): Promise<AgentCard> {
+    await this._getClient()
+    return this._agentCard!
+  }
+
+  /**
    * Returns the cached A2A SDK client, creating one lazily on first use.
    * Also fetches and caches the agent card for name/description.
    *

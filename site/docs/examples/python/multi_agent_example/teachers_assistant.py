@@ -9,7 +9,7 @@ A specialized Strands agent that is the orchestrator to utilize sub-agents and t
 """
 
 from strands import Agent
-from strands_tools import file_read, file_write, editor
+from strands.vended_tools import file_editor
 from english_assistant import english_assistant
 from language_assistant import language_assistant
 from math_assistant import math_assistant

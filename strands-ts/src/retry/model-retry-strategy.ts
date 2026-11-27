@@ -76,7 +76,7 @@ export abstract class ModelRetryStrategy implements Plugin {
     const decision = await this.computeRetryDecision(event)
     if (!decision.retry) return
 
-    await sleep(decision.waitMs)
+    await sleep(decision.waitMs, event.agent.cancelSignal)
     event.retry = true
   }
 
@@ -105,6 +105,19 @@ export abstract class ModelRetryStrategy implements Plugin {
   }
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => globalThis.setTimeout(resolve, ms))
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve()
+
+  return new Promise((resolve) => {
+    const onAbort = (): void => {
+      globalThis.clearTimeout(timer)
+      // Resolve so the retry loop can re-check cancellation before another model attempt.
+      resolve()
+    }
+    const timer = globalThis.setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
 }

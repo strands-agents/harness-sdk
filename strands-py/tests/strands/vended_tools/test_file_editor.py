@@ -19,7 +19,14 @@ from strands.types.tools import ToolContext
 from strands.vended_tools.file_editor import file_editor, make_file_editor
 from strands.vended_tools.file_editor.file_editor import DEFAULT_FILE_EDITOR_DESCRIPTION
 
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX path semantics assumed")
+pytestmark = [
+    pytest.mark.skipif(sys.platform == "win32", reason="POSIX path semantics assumed"),
+    # These tests exercise `make_file_editor` directly; silence the expected
+    # deprecation noise so unrelated warnings stay visible in test logs.
+    # The `TestFileEditorDeprecation` class below asserts the warning fires
+    # via `pytest.deprecated_call`, which bypasses this filter.
+    pytest.mark.filterwarnings("ignore:file_editor is deprecated:DeprecationWarning"),
+]
 
 
 def _tool_context(sandbox: NotASandboxLocalEnvironment | None = None) -> ToolContext:
@@ -364,6 +371,37 @@ class TestInsert:
             await editor(command="insert", path=str(d), tool_context=ctx, insert_line=0, new_str="NEW")
 
 
+class TestPreservesUntouchedBytes:
+    """Guards #4049: an edit rewrites only the requested region."""
+
+    MAKEFILE = "build:\n\tgcc -o app main.c\n\ntest:\n\tpytest tests/\n"
+
+    @pytest.mark.asyncio
+    async def test_str_replace_leaves_tabs_outside_the_match(self, editor, ctx, tmp_path):
+        file_path = _write(tmp_path / "Makefile", self.MAKEFILE)
+
+        await editor(command="str_replace", path=file_path, old_str="test:", new_str="check:", tool_context=ctx)
+
+        assert (tmp_path / "Makefile").read_text() == self.MAKEFILE.replace("test:", "check:")
+
+    @pytest.mark.asyncio
+    async def test_insert_leaves_tabs_intact(self, editor, ctx, tmp_path):
+        file_path = _write(tmp_path / "Makefile", self.MAKEFILE)
+
+        await editor(command="insert", path=file_path, insert_line=0, new_str=".PHONY: build test", tool_context=ctx)
+
+        assert (tmp_path / "Makefile").read_text() == ".PHONY: build test\n" + self.MAKEFILE
+
+    @pytest.mark.asyncio
+    async def test_empty_old_str_reports_the_empty_argument(self, editor, ctx, tmp_path):
+        file_path = _write(tmp_path / "notes.txt", "alpha\nbeta\n")
+
+        with pytest.raises(ValueError, match="old_str must not be empty"):
+            await editor(command="str_replace", path=file_path, old_str="", new_str="x", tool_context=ctx)
+
+        assert (tmp_path / "notes.txt").read_text() == "alpha\nbeta\n"
+
+
 class TestFileSizeLimit:
     """The 1MB content size guard."""
 
@@ -438,3 +476,57 @@ class TestToolMetadata:
         assert "command" in props
         assert "path" in props
         assert "tool_context" not in props
+
+
+class TestFileEditorDeprecation:
+    """`make_file_editor` fires a `DeprecationWarning` on call.
+
+    The module-level default `file_editor` instance in `file_editor.py`
+    suppresses the warning in a `warnings.catch_warnings` block so
+    `import strands.vended_tools` is quiet; direct consumer calls to
+    `make_file_editor` warn.
+    """
+
+    def test_import_vended_tools_does_not_warn(self):
+        # Running Python with ``-W error::DeprecationWarning`` in a fresh
+        # interpreter is the only way to assert "no deprecation warning fires
+        # on first import" — the main test process has already imported the
+        # module.
+        import subprocess
+
+        result = subprocess.run(
+            [sys.executable, "-W", "error::DeprecationWarning", "-c", "import strands.vended_tools"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+
+    def test_make_file_editor_call_fires_deprecation_warning(self):
+        from strands.vended_tools import make_file_editor
+
+        with pytest.deprecated_call(match="file_editor is deprecated"):
+            tool = make_file_editor()
+        assert tool.tool_name == "file_editor"
+
+    def test_docker_sandbox_get_tools_does_not_warn(self):
+        # The SDK-internal use in ``DockerSandbox.get_tools`` is silenced; a
+        # user constructing a sandbox should not see a deprecation warning
+        # just because the sandbox retains ``file_editor`` as its vended tool.
+        import warnings
+
+        from strands.sandbox.docker import DockerSandbox
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            tools = DockerSandbox("my-container").get_tools()
+        assert any(t.tool_name == "sandbox_file_editor" for t in tools)
+
+    def test_ssh_sandbox_get_tools_does_not_warn(self):
+        import warnings
+
+        from strands.sandbox.ssh import SshSandbox
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            tools = SshSandbox("myhost", working_dir="/workspace").get_tools()
+        assert any(t.tool_name == "sandbox_file_editor" for t in tools)

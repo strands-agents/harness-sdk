@@ -1,0 +1,279 @@
+---
+import halftone from '../assets/banner/halftone.svg?url';
+import arrow from '../assets/banner/arrow.svg?raw';
+import github from '../assets/nav/github.svg?raw';
+import { getStarCount } from '../util/github';
+import { pathWithBase } from '../util/links';
+
+const stars = await getStarCount();
+---
+
+<section class="banner" aria-label="Introduction">
+  <div class="banner__inner">
+    <div class="banner__halftone" aria-hidden="true">
+      <div class="banner__halftone-mask" style={`--halftone-mask: url("${halftone}")`} />
+    </div>
+    <div class="banner__gradient" aria-hidden="true" />
+    <div class="banner__content">
+      <div class="banner__text">
+        <h1 class="banner__headline">
+          The open source<br />
+          toolkit for<br />
+          production agents.
+        </h1>
+      </div>
+      <div class="banner__actions">
+        <div class="banner__links">
+          <a
+            href={pathWithBase('/docs/user-guide/harness/quickstart/')}
+            class="banner__link banner__link--primary"
+          >
+            Build an agent
+            <span class="banner__arrow" set:html={arrow} />
+          </a>
+          <a
+            href="https://github.com/strands-agents"
+            class="banner__link banner__link--github"
+            aria-label={`View Strands on GitHub, ${stars} stars`}
+            target="_blank"
+            rel="noopener"
+          >
+            <span class="banner__github-icon" set:html={github} />
+            <span class="banner__github-stars">{stars}</span>
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .banner {
+    width: 100%;
+    background: var(--bg);
+  }
+
+  .banner__inner {
+    position: relative;
+    min-height: 324px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+  }
+
+  .banner__halftone {
+    position: absolute;
+    inset: 24px 0 0;
+    height: auto;
+    overflow: hidden;
+    opacity: 0.4;
+    /* Decorative only — never intercept taps/clicks meant for content. */
+    pointer-events: none;
+    /* Show a centered slice of the rotated artwork behind the hero. */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .banner__halftone-mask {
+    display: block;
+    width: 100%;
+    min-width: 1332px;
+    height: auto;
+    aspect-ratio: 1332 / 750;
+    transform: rotate(180deg);
+    flex: none;
+    background-color: var(--halftone-dot);
+    -webkit-mask-image: var(--halftone-mask);
+    mask-image: var(--halftone-mask);
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-size: 100% 100%;
+    mask-size: 100% 100%;
+    mask-mode: alpha;
+  }
+
+  .banner__gradient {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to bottom, transparent 0%, var(--bg) 100%);
+    pointer-events: none;
+  }
+
+  .banner__content {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    width: 100%;
+    max-width: 1332px;
+    margin: 0 auto;
+    padding: 69px clamp(24px, 5vw, 96px) 48px;
+    text-align: center;
+  }
+
+  .banner__text {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .banner__headline {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 500;
+    font-size: clamp(30px, 3.25vw, 52px);
+    letter-spacing: 0.1em;
+    line-height: 1.2;
+    color: var(--banner-headline);
+    text-align: center;
+    white-space: normal;
+  }
+
+  .banner__actions {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    flex: none;
+    gap: 16px;
+    width: min(405px, 100%);
+    max-width: 100%;
+  }
+
+  .banner__links {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .banner__link {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 10px 15px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 600;
+    font-size: 16px;
+    line-height: 1.3;
+    color: var(--fg);
+    text-decoration: none;
+    white-space: nowrap;
+    /* Sit the links on the same pill surface as the language toggle below so
+       they stay legible over the halftone backdrop and read as a set. */
+    background: var(--toggle-bg);
+    border: 1px solid var(--toggle-inactive-border);
+    border-radius: 999px;
+  }
+
+  .banner__link--primary {
+    color: var(--strands-black);
+    background: var(--toggle-active-bg);
+    border-color: var(--toggle-active-bg);
+  }
+
+  .banner__link--github {
+    gap: 8px;
+  }
+
+  .banner__github-icon {
+    display: inline-flex;
+    width: 22px;
+    height: 22px;
+  }
+
+  .banner__github-icon :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  .banner__github-stars {
+    font-size: 15px;
+    opacity: 0.78;
+  }
+
+  .banner__link:hover {
+    opacity: 0.75;
+  }
+
+  .banner__arrow {
+    display: inline-flex;
+    width: 11px;
+    height: 9px;
+  }
+
+  .banner__arrow :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  /* ---------- Tablet (768–1023px) ---------- */
+  @media (max-width: 1023px) {
+    .banner__content {
+      padding: 69px 33px 48px;
+    }
+
+    .banner__headline {
+      font-size: clamp(30px, 3.6vw, 52px);
+    }
+  }
+
+  /* ---------- Mobile (< 768px) ---------- */
+  @media (max-width: 767px) {
+    .banner__inner {
+      height: auto;
+      padding: 36px 12px 24px;
+    }
+
+    /* Keep the full-width dots faint behind the centered headline. */
+    .banner__halftone {
+      top: 12px;
+      bottom: 0;
+      height: auto;
+      opacity: 0.3;
+    }
+
+    /* Must stay `position: relative` — static content would paint UNDER the
+       absolutely-positioned halftone/gradient overlays, making the toggle
+       untappable and washing out the buttons. */
+    .banner__content {
+      position: relative;
+      flex-direction: column;
+      align-items: center;
+      gap: 13px;
+      padding: 0;
+      width: 100%;
+    }
+
+    .banner__headline {
+      max-width: 560px;
+      font-size: clamp(23px, 7.4vw, 38px);
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      line-height: 1.15;
+      text-align: center;
+      white-space: normal;
+    }
+
+    .banner__actions {
+      width: min(405px, 100%);
+      max-width: 100%;
+      align-items: stretch;
+    }
+
+    .banner__links {
+      width: 100%;
+      justify-content: center;
+    }
+
+    .banner__link {
+      font-size: 14px;
+    }
+  }
+</style>

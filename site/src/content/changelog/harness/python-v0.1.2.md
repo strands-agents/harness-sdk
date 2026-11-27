@@ -2,16 +2,12 @@
 sdk: harness
 language: python
 version: "0.1.2"
-tag: python/v0.1.2
-date: 2025-05-18
-releaseUrl: https://github.com/strands-agents/harness-sdk/releases/tag/python/v0.1.2
-packageUrl: https://pypi.org/project/strands-agents/0.1.2/
+tag: harness-python/v0.1.2
+date: 2026-09-22
+releaseUrl: https://github.com/strands-agents/harness-sdk/releases/tag/harness-python/v0.1.2
+packageUrl: https://pypi.org/project/strands-harness/0.1.2/
 entries:
-  - { type: other, breaking: false, scope: null, areas: [tool], title: "Update README.md mention of tools repo", pr: 29, prUrl: "https://github.com/strands-agents/sdk-python/pull/29", commit: "a03b74c", commitUrl: "https://github.com/strands-agents/sdk-python/commit/a03b74c", author: ryanycoleman }
-  - { type: other, breaking: false, scope: null, areas: [model], title: "Update README to mention Meta Llama API as a supported model provider", pr: 21, prUrl: "https://github.com/strands-agents/sdk-python/pull/21", commit: "6088173", commitUrl: "https://github.com/strands-agents/sdk-python/commit/6088173", author: ryanycoleman }
-  - { type: fix, breaking: false, scope: null, areas: [otel], title: "tracing of non-serializable values, e.g. bytes", pr: 34, prUrl: "https://github.com/strands-agents/sdk-python/pull/34", commit: "2056888", commitUrl: "https://github.com/strands-agents/sdk-python/commit/2056888", author: awsarron }
-  - { type: fix, breaking: false, scope: bedrock, areas: [model], title: "use the AWS_REGION environment variable for the Bedrock model provider region if set and boto_session is not passed", pr: 39, prUrl: "https://github.com/strands-agents/sdk-python/pull/39", commit: "4d29560", commitUrl: "https://github.com/strands-agents/sdk-python/commit/4d29560", author: awsarron }
-  - { type: other, breaking: false, scope: null, areas: [], title: "v0.1.2", pr: 41, prUrl: "https://github.com/strands-agents/sdk-python/pull/41", commit: "912e110", commitUrl: "https://github.com/strands-agents/sdk-python/commit/912e110", author: awsarron }
-newContributors:
-  - { login: ryanycoleman, pr: 29 }
+  - { type: fix, breaking: false, scope: harness, areas: [model], title: "default effort back to 'auto' so no-reasoning models resolve", pr: 4473, prUrl: "https://github.com/strands-agents/harness-sdk/pull/4473", commit: "98547f1", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/98547f1", author: strandly-the-agent }
+  - { type: fix, breaking: false, scope: harness, areas: [model, tool], title: "let an explicit web_search: 'exa' win over native search", pr: 4491, prUrl: "https://github.com/strands-agents/harness-sdk/pull/4491", commit: "523d4d0", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/523d4d0", author: strandly-the-agent }
+  - { type: docs, breaking: false, scope: null, areas: [], title: "use Strands wordmarks in package READMEs", pr: 4475, prUrl: "https://github.com/strands-agents/harness-sdk/pull/4475", commit: "42c4c42", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/42c4c42", author: pgrayy }
 ---

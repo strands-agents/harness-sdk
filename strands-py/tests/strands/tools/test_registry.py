@@ -2,6 +2,7 @@
 Tests for the SDK tool registry module.
 """
 
+import copy
 import json
 import logging
 import sys
@@ -15,6 +16,7 @@ from strands.tools.decorator import DecoratedFunctionTool, tool
 from strands.tools.loader import _TOOL_MODULE_PREFIX
 from strands.tools.mcp import MCPClient
 from strands.tools.registry import ToolRegistry
+from tests.fixtures.say_tool import dont_say, say
 
 
 @pytest.fixture(autouse=True)
@@ -86,12 +88,72 @@ def test_get_all_tool_specs_returns_right_tool_specs():
     tool_registry.register_tool(tool_1)
     tool_registry.register_tool(tool_2)
 
-    tool_specs = tool_registry.get_all_tool_specs()
+    tru_tool_specs = tool_registry.get_all_tool_specs()
 
-    assert tool_specs == [
-        tool_1.tool_spec,
-        tool_2.tool_spec,
+    exp_tool_specs = [
+        {
+            "name": "tool_1",
+            "description": "<lambda>",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {"a": {"type": "string", "description": "Parameter a"}},
+                    "required": ["a"],
+                }
+            },
+        },
+        {
+            "name": "tool_2",
+            "description": "<lambda>",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {"b": {"type": "string", "description": "Parameter b"}},
+                    "required": ["b"],
+                }
+            },
+        },
     ]
+    assert tru_tool_specs == exp_tool_specs
+
+
+@pytest.mark.parametrize(
+    ("options", "exp_spec_names"),
+    [
+        ({}, ["zeta", "alpha", "Mike"]),
+        ({"sort_tool_specs": False}, ["zeta", "alpha", "Mike"]),
+        ({"sort_tool_specs": True}, ["Mike", "alpha", "zeta"]),
+    ],
+    ids=["default", "unsorted", "sorted"],
+)
+def test_get_all_tool_specs_order(options, exp_spec_names):
+    # Sorting is opt-in and never changes registration order (#5700).
+    names = ["zeta", "alpha", "Mike"]
+    tool_registry = ToolRegistry(**options)
+    for name in names:
+        tool_registry.register_tool(strands.tool(lambda a: a, name=name))
+
+    tru_spec_names = [tool_spec["name"] for tool_spec in tool_registry.get_all_tool_specs()]
+    assert tru_spec_names == exp_spec_names
+    tru_config_names = list(tool_registry.get_all_tools_config())
+    exp_config_names = names
+    assert tru_config_names == exp_config_names
+
+
+def test_get_all_tool_specs_does_not_mutate_registered_tool_specs():
+    """Reading tool configuration leaves the registered tools' own specs as their author defined them.
+
+    Guards https://github.com/strands-agents/harness-sdk/issues/3910.
+    """
+    tool_1 = strands.tool(lambda a: a, name="tool_1")
+    raw_tool_spec = copy.deepcopy(tool_1.tool_spec)
+
+    tool_registry = ToolRegistry()
+    tool_registry.register_tool(tool_1)
+
+    tool_registry.get_all_tool_specs()
+
+    assert tool_1.tool_spec == raw_tool_spec
 
 
 def test_scan_module_for_tools():
@@ -536,6 +598,31 @@ def test_validate_tool_spec_with_ref_property():
     assert props["ref_field"] == {"$ref": "#/$defs/SomeType"}
     assert "type" not in props["ref_field"]
     assert "description" not in props["ref_field"]
+
+
+@pytest.mark.parametrize("registration", ["regular", "dynamic", "temporary", "missing"])
+def test_remove_updates_both_registries(registration):
+    registry = ToolRegistry()
+    removed_tool = tool(say.__wrapped__)
+    retained_tool = tool(dont_say.__wrapped__)
+    retained_tool.mark_dynamic()
+    registry.register_tool(retained_tool)
+    if registration == "dynamic":
+        removed_tool.mark_dynamic()
+    if registration == "temporary":
+        registry.register_dynamic_tool(removed_tool)
+    elif registration != "missing":
+        registry.register_tool(removed_tool)
+
+    tru_results = [registry.remove(removed_tool.tool_name), registry.remove(removed_tool.tool_name)]
+    exp_results = [None, None]
+    assert tru_results == exp_results
+    tru_registries = (registry.registry, registry.dynamic_tools)
+    exp_registries = ({retained_tool.tool_name: retained_tool}, {retained_tool.tool_name: retained_tool})
+    assert tru_registries == exp_registries
+    tru_specs = registry.get_all_tool_specs()
+    exp_specs = [retained_tool.tool_spec]
+    assert tru_specs == exp_specs
 
 
 def test_tool_registry_replace_existing_tool():

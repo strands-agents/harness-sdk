@@ -54,6 +54,37 @@ describe('InProcessTaskEngine', () => {
       })
     })
 
+    it('returns a cancelled task unchanged instead of resuming it', async () => {
+      let executions = 0
+      const engine = createEngine(async () => {
+        executions++
+        return { status: 'input_required', state: createState('waiting') }
+      })
+      const task = engine.submit(createAdmission('work'))
+      await engine.waitForIdle()
+      const cancelled = engine.cancel(task.taskId, { reason: 'stop' })
+
+      const resumed = engine.resume(task.taskId, (state) => ({ state, ready: true }))
+      await engine.waitForIdle()
+
+      expect(resumed).toEqual(cancelled)
+      expectTask(engine.get(task.taskId), task, { status: 'cancelled' })
+      expect(executions).toBe(1)
+    })
+
+    it('rejects resuming a working task', async () => {
+      const finish = deferred<InProcessTaskExecutionOutcome>()
+      const engine = createEngine(async () => finish.promise)
+      const task = engine.submit(createAdmission('work'))
+
+      expect(() => engine.resume(task.taskId, (state) => ({ state, ready: true }))).toThrow(
+        "cannot be resumed: status is 'working', not 'input_required'"
+      )
+
+      finish.resolve({ status: 'completed', result: createResult('done') })
+      await engine.waitForIdle()
+    })
+
     it('cancels running work and removes it before execution settles', async () => {
       const finish = deferred<InProcessTaskExecutionOutcome>()
       let executionSignal: AbortSignal | undefined
@@ -72,6 +103,56 @@ describe('InProcessTaskEngine', () => {
       )
       finish.resolve({ status: 'completed', result: createResult('late') })
       await engine.waitForIdle()
+    })
+
+    // Late cancellation outcomes cannot replace an engine-owned terminal state (#5426).
+    it.each(['cancel', 'timeout', 'remove'])('preserves %s when execution later returns cancelled', async (action) => {
+      const finish = deferred<InProcessTaskExecutionOutcome>()
+      const aborted = deferred<void>()
+      const updates: string[] = []
+      const engine = createEngine(
+        async ({ cancelSignal }) => {
+          cancelSignal.addEventListener('abort', () => aborted.resolve(), { once: true })
+          return finish.promise
+        },
+        {
+          timeout: action === 'timeout' ? 10 : Infinity,
+          onTaskUpdated: ({ status }) => {
+            updates.push(status)
+          },
+        }
+      )
+      const task = engine.submit(createAdmission('work'))
+      if (action === 'timeout') await aborted.promise
+      else engine.cancel(task.taskId, { reason: 'Stop work' })
+      const terminal = engine.get(task.taskId)
+      if (action === 'remove') engine.remove(task.taskId)
+
+      finish.resolve({ status: 'cancelled' })
+      await engine.waitForIdle()
+
+      expect(engine.get(task.taskId)).toEqual(action === 'remove' ? undefined : terminal)
+      expect(updates).toEqual(['queued', 'working', action === 'timeout' ? 'failed' : 'cancelled'])
+    })
+
+    it('settles a resumed execution as cancelled and clears interrupt state', async () => {
+      const updates: string[] = []
+      const engine = createEngine(
+        async ({ state }) =>
+          state ? { status: 'cancelled' } : { status: 'input_required', state: createState('waiting') },
+        {
+          onTaskUpdated: ({ status }) => {
+            updates.push(status)
+          },
+        }
+      )
+      const task = engine.submit(createAdmission('work'))
+      await engine.waitForIdle()
+      engine.resume(task.taskId, (state) => ({ state, ready: true }))
+      await engine.waitForIdle()
+
+      expectTask(engine.get(task.taskId), task, { status: 'cancelled' })
+      expect(updates).toEqual(['queued', 'working', 'input_required', 'queued', 'working', 'cancelled'])
     })
 
     it('cancels queued work without executing it', async () => {

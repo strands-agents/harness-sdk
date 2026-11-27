@@ -23,7 +23,7 @@ def create_lambda_package():
     current_dir = Path.cwd()
     packaging_dir = current_dir / "packaging"
 
-    # get the path to the strands_tools package
+    # Locate the Lambda application source.
     app_dir = current_dir / "lambda"
     app_deployment_zip = packaging_dir / "app.zip"
 

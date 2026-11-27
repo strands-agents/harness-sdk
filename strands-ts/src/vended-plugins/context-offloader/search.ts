@@ -30,9 +30,9 @@ function formatLines(lines: string[], indices: number[], matchedSet: Set<number>
   return output.join('\n')
 }
 
-// Mitigates ReDoS from overly long patterns. Short pathological patterns (e.g. `(a+)+$`)
-// are still possible but unlikely since the agent provides the pattern, not end users.
 const MAX_PATTERN_LENGTH = 200
+// Best-effort heuristic; does not catch all catastrophic patterns (e.g. (.*a){12}$).
+const NESTED_QUANTIFIER = /[+*]\s*\)\s*[+*]/
 
 /** Finds lines matching a pattern, expands with context, and formats with truncation. */
 function searchByPattern(
@@ -47,6 +47,7 @@ function searchByPattern(
   let regex: RegExp
   const truncated = pattern.length > MAX_PATTERN_LENGTH ? pattern.slice(0, MAX_PATTERN_LENGTH) : pattern
   try {
+    if (NESTED_QUANTIFIER.test(truncated)) throw new Error('ReDoS')
     regex = new RegExp(truncated)
   } catch {
     regex = new RegExp(truncated.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
@@ -112,7 +113,10 @@ export function isSearchableContent(contentType: string): boolean {
  * @param text - The full text content to search
  * @param input - Search parameters (pattern, line_range, context_lines)
  * @param maxChars - Maximum output size in characters; results are truncated beyond this
- * @returns Formatted search results with line numbers, or an error/empty message
+ * @returns Formatted search results with line numbers, or a message saying the content held no match
+ * @throws If `line_range` is inverted or starts past the end of the content. Callers are tools, and the
+ *   tool factory turns a throw into an error-status result; returning the message would report the
+ *   failure as a success.
  */
 export function searchContent(
   text: string,
@@ -134,10 +138,12 @@ export function searchContent(
   let scopeEnd = totalLines - 1
   if (input.line_range) {
     if (input.line_range.start > input.line_range.end) {
-      return `Error: line_range.start (${input.line_range.start}) must be <= line_range.end (${input.line_range.end}).`
+      throw new Error(
+        `line_range.start (${input.line_range.start}) must be <= line_range.end (${input.line_range.end}).`
+      )
     }
     if (input.line_range.start > totalLines) {
-      return `Error: line_range.start (${input.line_range.start}) is beyond content length (${totalLines} lines).`
+      throw new Error(`line_range.start (${input.line_range.start}) is beyond content length (${totalLines} lines).`)
     }
     scopeStart = input.line_range.start - 1
     scopeEnd = Math.min(input.line_range.end - 1, totalLines - 1)

@@ -1,12 +1,14 @@
 """Integration tests for Agent retry_strategy parameter."""
 
-from unittest.mock import Mock
+import asyncio
+import threading
+from unittest.mock import ANY, Mock
 
 import pytest
 
 from strands import Agent, ModelRetryStrategy
 from strands.event_loop.event_loop import INITIAL_DELAY, MAX_ATTEMPTS, MAX_DELAY
-from strands.hooks import AfterModelCallEvent
+from strands.hooks import AfterModelCallEvent, BeforeModelCallEvent
 from strands.types.exceptions import ModelThrottledException
 from tests.fixtures.mocked_model_provider import MockedModelProvider
 
@@ -121,6 +123,57 @@ async def test_agent_retries_with_default_strategy(mock_sleep):
     assert mock_sleep.sleep_calls[0] == 4
     # Second retry: 8 seconds (exponential backoff)
     assert mock_sleep.sleep_calls[1] == 8
+
+
+@pytest.mark.parametrize("use_external_signal", [False, True])
+@pytest.mark.asyncio
+async def test_agent_cancel_interrupts_retry_backoff_without_another_model_call(use_external_signal):
+    """Cancellation during retry backoff settles promptly without re-entering the provider."""
+    model = Mock()
+    model.stream.side_effect = [
+        ModelThrottledException("ThrottlingException"),
+        MockedModelProvider([{"role": "assistant", "content": [{"text": "unexpected retry"}]}]).stream([]),
+    ]
+    strategy = ModelRetryStrategy(max_attempts=3, initial_delay=30, max_delay=30)
+    agent = Agent(model=model, retry_strategy=strategy)
+    external_signal = threading.Event()
+    first_failure = asyncio.Event()
+    hook_events: list[type] = []
+
+    async def record_before(_event: BeforeModelCallEvent) -> None:
+        hook_events.append(BeforeModelCallEvent)
+
+    async def record_after(event: AfterModelCallEvent) -> None:
+        hook_events.append(AfterModelCallEvent)
+        if isinstance(event.exception, ModelThrottledException):
+            first_failure.set()
+
+    agent.add_hook(record_before, BeforeModelCallEvent)
+    agent.add_hook(record_after, AfterModelCallEvent)
+    if use_external_signal:
+        invocation = asyncio.create_task(agent.invoke_async("test prompt", cancel_signal=external_signal))
+    else:
+        invocation = asyncio.create_task(agent.invoke_async("test prompt"))
+    await first_failure.wait()
+    if use_external_signal:
+        external_signal.set()
+    else:
+        agent.cancel()
+
+    result = await asyncio.wait_for(invocation, timeout=1)
+
+    assert hook_events == [BeforeModelCallEvent, AfterModelCallEvent]
+    assert result.message == {
+        "role": "assistant",
+        "content": [{"text": "Cancelled by user"}],
+        "metadata": {
+            "usage": {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0},
+            "metrics": {"latencyMs": 0},
+        },
+        "tracking_id": ANY,
+    }
+    assert result.stop_reason == "cancelled"
+    assert model.stream.call_count == 1
 
 
 @pytest.mark.asyncio

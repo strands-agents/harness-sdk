@@ -69,7 +69,7 @@ export interface Plugin {
 
   /**
    * Returns tools provided by this plugin for auto-registration.
-   * Implement to provide plugin-specific tools.
+   * Called after {@link initAgent} resolves; may depend on state set there.
    *
    * @returns Array of tools to register with the agent
    */

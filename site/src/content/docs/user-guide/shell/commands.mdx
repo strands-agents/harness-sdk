@@ -1,5 +1,5 @@
 ---
-title: Strands Shell Commands
+title: Strands Shell commands
 description: The full command inventory in Strands Shell, with supported flags, shell builtins, and known divergences from GNU and BSD coreutils behavior.
 sidebar:
   label: "Commands"
@@ -7,7 +7,11 @@ sidebar:
 
 Strands Shell reimplements a curated subset of POSIX and coreutils in Rust, targeting the operations agents reach for most rather than a complete toolset. This page is the reference for what is supported and where behavior diverges from GNU or BSD: missing flags, unsupported features, and known gaps.
 
-The shell is Bourne-compatible, with pipes, loops, functions, and subshells. The commands group into text processing, file contents, file management, path and system utilities, networking, JSON, search, and scripting.
+This page covers the external commands the shell reimplements. They group into text
+processing, file contents, file management, path and system utilities, networking, JSON,
+and search. The shell language and builtins have their own page,
+[Shell language and builtins](shell-language.md); `lua` is covered in
+[Lua scripting](lua-scripting.md).
 
 ## General callouts
 
@@ -91,42 +95,12 @@ The SSRF guard and credential injection on `curl` are security features, covered
 | `find` | `-name`, `-type`, `-maxdepth`, `-exec`, and `-print0` are supported. No `-delete`, `-size`, `-mtime`, `-prune`, or `-regex`. Children are sorted alphabetically, not in readdir order. |
 | `xargs` | Space-separated `-n`, `-I`, `-0`, and `-d` are supported; attached forms (`-n1`, `-I{}`) and `-t`, `-r`, `-L`, `-P` are not. Implicitly behaves as `-r`. |
 
-## Scripting
+## Scripting and shell language
 
-| Command | Notable gaps |
-|---|---|
-| `lua` | Full support. Sandboxed Lua 5.4 with VFS-backed `io` and `os`. Metatables are disabled (`setmetatable` removed); no `os.date` or `debug`. No wall-clock timeout under a bare `-c`. |
+`lua` runs a sandboxed Lua 5.4 interpreter for logic that would otherwise sprawl across
+a chain of pipes: multi-step transforms, structured-data manipulation, or calling nested
+MCP servers as Lua modules. See [Lua scripting](lua-scripting.md).
 
-Reach for `lua` when shell syntax gets awkward: multi-step transforms, structured data manipulation, or logic that would otherwise sprawl across a chain of pipes.
-
-## Shell builtins
-
-| Builtin | Notable gaps |
-|---|---|
-| `test`, `[` | No `[[ ]]`. Non-numeric or empty operands are treated as `0` (succeeds rather than erroring). |
-| `printf` | No floating-point (`%f`, `%e`, `%g` print literally); `%d` does not parse `0x` or octal prefixes. |
-| `read` | No `-a`, `-n`, or `-d`; a prefix `IFS=` is ignored; `-r` is effectively always on. |
-| `set` | No `-o`, so `set -o pipefail` fails; only `e`, `u`, and `x` are supported. |
-| `trap` | `EXIT` works; numeric signals (`trap ... 0`) are ignored; `-p` and `-l` are no-ops. |
-| `alias` | Can be defined and listed, but aliases are never expanded during execution. |
-| `readonly` | Enforced, but a violation returns exit 0; no `-p`. |
-| `local` | Works within functions; silently succeeds when used outside a function. |
-| `type` | No `-t` or `-a`. |
-| `cd` | No `CDPATH`; `-P` and `-L` are not parsed. |
-| `getopts`, `export`, `unset`, `shift`, `umask`, `hash`, `wait`, `:` | Full support. |
-| `$(( ))` arithmetic | Precedence, bitwise, ternary, hex, and octal work correctly. Malformed input returns an incorrect result with exit 0 (`$((2 3))` yields `2`, `$((1/0))` yields `0`). Post-increment `x++`/`x--` returns the value without updating the variable. |
-
-## Shell language
-
-| Feature | Supported |
-|---|---|
-| Pipelines and lists | `\|`, `&&`, `\|\|`, `;` |
-| Redirections | `>`, `>>`, `<`, `2>`, `&>`, here-docs `<<` |
-| Conditionals | `if`, `elif`, `else`, `case` |
-| Loops | `for`, `while`, `until` |
-| Functions | definitions, `local` variables, `return` |
-| Grouping | command groups `{ }`, subshells `( )` |
-| Expansion | variables (`${VAR:-default}`, `${VAR%pat}`, `${#VAR}`), command substitution (`` `cmd` ``, `$(cmd)`), arithmetic `$(( ))`, globs |
-| Quoting | single, double |
-| Jobs | background `&` |
-| Scripts | `. script.sh`, `source` |
+The shell language itself (pipelines, redirections, conditionals, loops, functions, and
+expansions) and the builtins (`test`, `printf`, `read`, `set`, and the rest) are
+documented in [Shell language and builtins](shell-language.md).

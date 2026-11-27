@@ -1,2 +1,1 @@
 strands-agents
-strands-agents-tools

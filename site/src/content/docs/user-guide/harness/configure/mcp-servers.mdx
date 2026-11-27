@@ -1,0 +1,110 @@
+---
+title: Connect MCP servers
+description: "Give Strands harness MCP tools by passing a standard mcpServers config, as a path to a JSON file or an inline mapping. A failed server yields no tools, not a crash."
+sourceLinks:
+  - path: harness-py/src/strands_harness/agent.py
+  - path: harness-ts/src/agent.ts
+sidebar:
+  label: "Connect MCP servers"
+---
+
+[MCP tools](../../../sdk/tools/mcp-tools/) let the agent use tools served by
+a Model Context Protocol server. Strands harness connects them from a standard `mcpServers` config,
+the same shape other MCP clients use, and adds every discovered tool to the agent's tool
+list.
+
+## Pass a config file or an inline mapping
+
+`mcp_servers` accepts either a path to a JSON file or the mapping itself. The mapping can
+be a flat `{name: {...}}` map, or that map nested under an `mcpServers` key:
+
+<Tabs>
+  <Tab label="Strands harness">
+    <Tabs>
+      <Tab label="Python">
+        ```python
+        # pip install strands-harness
+        from strands_harness import create_harness
+
+        # From a JSON file:
+        agent = create_harness(mcp_servers="./mcp.json")
+
+        # Or inline:
+        agent = create_harness(
+            mcp_servers={
+                "filesystem": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]},
+            },
+        )
+        ```
+      </Tab>
+      <Tab label="TypeScript">
+        ```typescript
+        // npm install @strands-agents/harness
+        import { createHarness } from '@strands-agents/harness'
+
+        // From a JSON file:
+        const agent = await createHarness({ mcpServers: './mcp.json' })
+
+        // Or inline:
+        const inline = await createHarness({
+          mcpServers: {
+            filesystem: { command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '.'] },
+          },
+        })
+        ```
+      </Tab>
+    </Tabs>
+  </Tab>
+  <Tab label="SDK">
+    <Tabs>
+      <Tab label="Python">
+        ```python
+        # pip install strands-agents
+        from mcp import stdio_client, StdioServerParameters
+        from strands import Agent
+        from strands.tools.mcp import MCPClient
+
+        # The Strands Harness SDK has no mcpServers-file loader; make a client per server.
+        mcp_client = MCPClient(lambda: stdio_client(
+            StdioServerParameters(command="npx",
+                args=["-y", "@modelcontextprotocol/server-filesystem", "."])))
+        agent = Agent(tools=[mcp_client])
+        agent("list the files in this project")
+        ```
+      </Tab>
+      <Tab label="TypeScript">
+        ```typescript
+        // npm install @strands-agents/sdk
+        import { Agent, McpClient } from '@strands-agents/sdk'
+        import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+
+        // The Strands Harness SDK has no mcpServers-file loader; make a client per server.
+        const mcpClient = new McpClient({
+          transport: new StdioClientTransport({
+            command: 'npx',
+            args: ['-y', '@modelcontextprotocol/server-filesystem', '.'],
+          }),
+        })
+        const agent = new Agent({ tools: [mcpClient] })
+        await agent.invoke('list the files in this project')
+        ```
+      </Tab>
+    </Tabs>
+  </Tab>
+</Tabs>
+
+The Strands Harness SDK connects each server, discovers its tools, and manages its lifecycle.
+
+## A failed server yields no tools, not a crash
+
+Each server defaults to continuing on error, so a server that fails to start yields no
+tools rather than taking construction down with it. Make a specific server's failure fatal
+by setting `"continue_on_error": false` on it in the config.
+
+If two servers, or a server and a local tool, would register the same tool name, set a
+server's `"prefix"` in the config so its tools are namespaced and cannot clash.
+
+The [CLI](../../quickstart/#build-an-agent-with-the-cli) also discovers
+project MCP config automatically and can add config files with `--mcp-config`. For the full
+option list, see the
+[configuration reference](../../reference/configuration/).

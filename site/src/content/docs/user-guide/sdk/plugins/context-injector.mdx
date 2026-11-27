@@ -1,0 +1,120 @@
+---
+title: Context Injector
+description: "Fold real-time text into the model input before each call with the ContextInjector plugin: a clock, environment facts, or a lookup, not stored in history."
+tags: [token-management]
+sourceLinks:
+  - path: strands-py/src/strands/vended_plugins/context_injector/plugin.py
+  - path: strands-ts/src/vended-plugins/context-injector/plugin.ts
+addedDate: 2026-06-17
+---
+
+The `ContextInjector` plugin folds real-time text into the model input before each call. The text is added to that single call's input only: it is never written to the conversation history, so it is not persisted or replayed on later turns. Use it for context the agent should always have but that does not belong in the stored history: the current time, a sandbox descriptor, environment facts, or a retrieval lookup.
+
+## How It Works
+
+A `ContextInjector` has two parts. The callback function decides **what** text to fold into the next model call's input. The trigger decides **when** the callback is called. The injected text is **ephemeral by design**: it augments the model input for that one call and never persists into the durable conversation or session.
+
+This is the same injection mechanism that powers [memory context injection](../memory/managing-memory#context-injection). `ContextInjector` is the generic surface for any consumer.
+
+## Getting Started
+
+Pass a `ContextInjector` to your agent's `plugins` list with a callback that renders the text to inject. By default it injects only on a fresh user turn, the common case for chat agents:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from datetime import datetime, timezone
+
+from strands import Agent
+from strands.vended_plugins.context_injector import ContextInjector
+
+agent = Agent(
+    plugins=[
+        ContextInjector(lambda context: f"<now>{datetime.now(timezone.utc).isoformat()}</now>"),
+    ],
+)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/plugins/context-injector_imports.ts:getting_started_imports"
+
+--8<-- "user-guide/sdk/plugins/context-injector.ts:getting_started"
+```
+</Tab>
+</Tabs>
+
+## When to Inject
+
+The trigger controls when the callback runs:
+
+- `'userTurn'` (the default) injects only when the latest message is a fresh user ask, a user message carrying no tool result. This is the common case for chat agents.
+- `'everyTurn'` injects before every model call, including mid-task tool-result turns. Use it for autonomous agents that should consult the injected context at each step.
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from datetime import datetime, timezone
+
+from strands.vended_plugins.context_injector import ContextInjector
+
+clock = ContextInjector(
+    lambda context: f"<now>{datetime.now(timezone.utc).isoformat()}</now>",
+    name="clock",
+    trigger="everyTurn",  # inject before every model call, not just fresh user asks
+)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/plugins/context-injector_imports.ts:every_turn_imports"
+
+--8<-- "user-guide/sdk/plugins/context-injector.ts:every_turn"
+```
+</Tab>
+</Tabs>
+
+For finer control, pass a predicate: a function that receives the injection context and returns whether to inject this call. The context carries the current messages, durable state shared across calls via <Syntax py="context.state" ts="context.appState" />, and the agent. A predicate that throws fails open, so the model call still proceeds:
+
+<Tabs>
+<Tab label="Python">
+
+```python
+from strands.vended_plugins.context_injector import ContextInjector
+
+injector = ContextInjector(
+    lambda context: f"<context>{len(context.messages)} turns so far</context>",
+    # Inject only when a tool stashed a flag in agent state last turn.
+    trigger=lambda context: context.state.get("recall_enabled") is True,
+)
+```
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/plugins/context-injector_imports.ts:predicate_imports"
+
+--8<-- "user-guide/sdk/plugins/context-injector.ts:predicate"
+```
+</Tab>
+</Tabs>
+
+## Configuration
+
+| Field | Purpose |
+|-------|---------|
+| <Syntax py="render_content" ts="renderContent" /> | Returns the text to inject for this call, or <Syntax py="None / empty string" ts="undefined / empty string" /> to skip. Required, and the only positional argument. |
+| `trigger` | `'userTurn'` (default), `'everyTurn'`, or a predicate over the injection context. |
+| `name` | Plugin name for logging and duplicate detection. Defaults to `'strands:context-injector'`. Set a distinct name when registering more than one. |
+
+:::caution[Injected text reaches the model verbatim]
+The rendered text is a prompt-injection surface. If it interpolates attacker-influenced data (tool output, user-derived state), escape it yourself before returning. A callback that throws fails open: injection is skipped and the model call proceeds.
+:::
+
+## Related
+
+- [Memory](../memory/managing-memory#context-injection) builds on this engine to inject retrieved knowledge before a model call.

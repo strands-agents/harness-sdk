@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 352" width="720" height="352">
+  <!-- Type: loop (two-station across a boundary). Story: your application invokes the agent; a hook or tool inside it raises interrupts, the agent returns them to you, and you resume it with responses until no new interrupts are raised. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Zones: the agent; your application lives outside it -->
+  <rect class="dg-zone" x="320" y="24" width="384" height="312" rx="8"/>
+  <text class="dg-eyebrow" x="336" y="44">AGENT</text>
+
+  <!-- Edges (drawn before nodes) -->
+  <path class="dg-edge" d="M208,88 H350" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M352,128 H210" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M208,168 H350" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M512,192 V254" marker-end="url(#arrow)"/>
+
+  <!-- Edge labels -->
+  <rect class="dg-mask" x="236" y="68" width="56" height="12" rx="2"/>
+  <text class="dg-label" x="264" y="77" text-anchor="middle">REQUEST</text>
+  <rect class="dg-mask" x="224" y="108" width="80" height="12" rx="2"/>
+  <text class="dg-label" x="264" y="117" text-anchor="middle">INTERRUPTS</text>
+  <rect class="dg-mask" x="228" y="148" width="72" height="12" rx="2"/>
+  <text class="dg-label" x="264" y="157" text-anchor="middle">RESPONSES</text>
+  <rect class="dg-mask is-on-zone" x="516" y="215" width="96" height="12" rx="2"/>
+  <text class="dg-label" x="520" y="224">NO INTERRUPTS</text>
+
+  <text class="dg-note" x="16" y="228">The agent returns the interrupts,</text>
+  <text class="dg-note" x="16" y="248">then you resume it with responses.</text>
+
+  <!-- Nodes -->
+  <rect class="dg-node is-input" x="16" y="64" width="192" height="128" rx="6"/>
+  <text class="dg-name" x="112" y="117" text-anchor="middle">Your application</text>
+  <text class="dg-sub" x="112" y="135" text-anchor="middle">sends the request,</text>
+  <text class="dg-sub" x="112" y="151" text-anchor="middle">answers interrupts</text>
+
+  <rect class="dg-node is-focal" x="352" y="64" width="320" height="128" rx="6"/>
+  <text class="dg-name is-focal-text" x="512" y="123" text-anchor="middle">Hook or tool</text>
+  <text class="dg-sub" x="512" y="141" text-anchor="middle">may raise interrupts</text>
+
+  <rect class="dg-node" x="432" y="256" width="160" height="56" rx="6"/>
+  <text class="dg-name" x="512" y="281" text-anchor="middle">Agent loop</text>
+  <text class="dg-sub" x="512" y="299" text-anchor="middle">continues</text>
+</svg>

@@ -1,5 +1,5 @@
 from strands import Agent
-from strands_tools import http_request
+from strands.vended_tools import http_request
 from typing import Dict, Any
 
 # Define a weather-focused system prompt

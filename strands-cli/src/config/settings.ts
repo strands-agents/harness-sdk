@@ -1,0 +1,457 @@
+import { isRecord } from '../values.js'
+export const FROG_THEMES = ['green', 'minimal', 'homeland', 'merlin', 'kikker', 'oak', 'spectre', 'scarlet'] as const
+
+export type FrogTheme = (typeof FROG_THEMES)[number]
+
+export const FROG_THEME_LABELS: Record<FrogTheme, string> = {
+  green: 'Classic',
+  minimal: 'Minimal',
+  oak: 'Oak',
+  homeland: 'Homeland',
+  merlin: 'Merlin',
+  kikker: 'Kikker',
+  spectre: 'Spectre',
+  scarlet: 'Scarlet',
+}
+
+export type ResolvedColorMode = 'light' | 'dark'
+
+export const CONTEXT_OFFLOAD_THRESHOLD_OPTIONS = [
+  { label: 'Default', value: 'default' },
+  { label: '1.5K', value: 1_500 },
+  { label: '2.5K', value: 2_500 },
+  { label: '5K', value: 5_000 },
+  { label: '10K', value: 10_000 },
+] as const
+
+export type ContextOffloadThreshold = (typeof CONTEXT_OFFLOAD_THRESHOLD_OPTIONS)[number]['value']
+
+/** How many chat turns pass between the optimizations that strands dev starts by itself; 0 starts none. */
+export type AutoOptimizeCadence = number
+
+/** The most chat turns a cadence can be: what the four digits of its settings field hold. */
+export const AUTO_OPTIMIZE_MAX_TURNS = 9999
+
+/** The value as a cadence when it is a whole number of turns from 0 to the maximum, or `undefined`. */
+export const autoOptimizeCadence = (value: unknown): AutoOptimizeCadence | undefined =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= AUTO_OPTIMIZE_MAX_TURNS
+    ? value
+    : undefined
+
+export const SETTINGS_CATEGORIES = [
+  {
+    id: 'Appearance',
+    label: 'Appearance',
+  },
+  {
+    id: 'Agent',
+    label: 'Agent',
+  },
+  {
+    id: 'Auto-Discovery',
+    label: 'Auto-Discovery',
+  },
+  {
+    id: 'Updates',
+    label: 'Updates',
+  },
+  {
+    id: 'Telemetry',
+    label: 'Telemetry',
+  },
+] as const
+
+export type SettingsCategory = (typeof SETTINGS_CATEGORIES)[number]['id'] | 'Workspace'
+
+export const DEFAULT_SETTINGS_CATEGORY = 'Appearance' satisfies SettingsCategory
+
+export type ThemeColors = Record<(typeof THEME_COLOR_KEYS)[number], string>
+
+export const THEME_COLOR_KEYS = [
+  'background',
+  'foreground',
+  'muted',
+  'surface',
+  'panel',
+  'selection',
+  'border',
+  'accent',
+  'hover',
+  'success',
+  'warning',
+  'error',
+  'diffAdd',
+  'diffRemove',
+] as const
+
+export interface ChatSettings {
+  transcriptSpacing: 'compact' | 'comfortable'
+  animations: boolean
+  showReasoning: boolean
+  toolOutput: 'hidden' | 'compact' | 'full'
+  frogTheme: FrogTheme
+  /** Load MCP servers configured for other tools (Claude Code, Kiro, Gemini CLI, Codex). */
+  mcpDiscovery: boolean
+  /** Configured MCP servers the user turned off in /mcp. */
+  disabledMcpServers: readonly string[]
+  /** Load Agent Skills from other tools' and the workspace's conventional directories. */
+  skillDiscovery: boolean
+  /** Allow agents to discover and message other live conversations. */
+  agentMessaging: boolean
+  /** Send one anonymous usage ping per interactive start (see README → Telemetry). */
+  telemetry: boolean
+  /** Ask at interactive startup before installing an available CLI update. */
+  updatePrompts: boolean
+  /** Tool-result token cutoff for context offloading, or the selected context-manager preset's default. */
+  contextOffloadThreshold: ContextOffloadThreshold
+  /** Write the edits of a finished strands dev optimization to the agent source without showing them for review. */
+  autoAcceptOptimizationResults?: boolean
+  /** Start a strands dev optimization from the chat history every this many chat turns; 0 starts none. */
+  autoOptimize?: AutoOptimizeCadence
+}
+
+export type ThemeSettings = Pick<ChatSettings, 'frogTheme'>
+
+export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
+  transcriptSpacing: 'comfortable',
+  animations: true,
+  showReasoning: true,
+  toolOutput: 'compact',
+  frogTheme: 'green',
+  mcpDiscovery: false,
+  disabledMcpServers: [],
+  skillDiscovery: false,
+  agentMessaging: true,
+  telemetry: true,
+  updatePrompts: true,
+  contextOffloadThreshold: 'default',
+}
+
+export const WORKSPACE_SETTING_DEFAULTS: Required<
+  Pick<ChatSettings, 'autoAcceptOptimizationResults' | 'autoOptimize'>
+> = {
+  autoAcceptOptimizationResults: false,
+  autoOptimize: 0,
+}
+
+export type SettingKey =
+  | 'frogTheme'
+  | 'transcriptSpacing'
+  | 'animations'
+  | 'showReasoning'
+  | 'toolOutput'
+  | 'mcpDiscovery'
+  | 'skillDiscovery'
+  | 'agentMessaging'
+  | 'telemetry'
+  | 'updatePrompts'
+  | 'contextOffloadThreshold'
+  | 'autoAcceptOptimizationResults'
+  | 'autoOptimize'
+
+export interface SettingDefinition {
+  key: SettingKey
+  label: string
+  section: SettingsCategory
+  /** `number` is a field that takes a whole number from 0 to `max`; it has no options. */
+  control: 'segmented' | 'toggle' | 'number'
+  options: readonly { label: string; value: string | number | boolean }[]
+  max?: number
+}
+
+export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
+  {
+    key: 'frogTheme',
+    label: 'Theme',
+    section: 'Appearance',
+    control: 'segmented',
+    options: FROG_THEMES.map((value) => ({ label: FROG_THEME_LABELS[value], value })),
+  },
+  {
+    key: 'transcriptSpacing',
+    label: 'Transcript spacing',
+    section: 'Appearance',
+    control: 'segmented',
+    options: [
+      { label: 'Compact', value: 'compact' },
+      { label: 'Comfortable', value: 'comfortable' },
+    ],
+  },
+  {
+    key: 'animations',
+    label: 'Animations',
+    section: 'Appearance',
+    control: 'toggle',
+    options: [
+      { label: 'On', value: true },
+      { label: 'Off', value: false },
+    ],
+  },
+  {
+    key: 'showReasoning',
+    label: 'Reasoning',
+    section: 'Appearance',
+    control: 'toggle',
+    options: [
+      { label: 'Show', value: true },
+      { label: 'Hide', value: false },
+    ],
+  },
+  {
+    key: 'toolOutput',
+    label: 'Tool output',
+    section: 'Appearance',
+    control: 'segmented',
+    options: [
+      { label: 'Hidden', value: 'hidden' },
+      { label: 'Compact', value: 'compact' },
+      { label: 'Full', value: 'full' },
+    ],
+  },
+  {
+    key: 'mcpDiscovery',
+    label: 'MCP',
+    section: 'Auto-Discovery',
+    control: 'toggle',
+    options: [
+      { label: 'On', value: true },
+      { label: 'Off', value: false },
+    ],
+  },
+  {
+    key: 'skillDiscovery',
+    label: 'Skills',
+    section: 'Auto-Discovery',
+    control: 'toggle',
+    options: [
+      { label: 'On', value: true },
+      { label: 'Off', value: false },
+    ],
+  },
+  {
+    key: 'agentMessaging',
+    label: 'Agents (peer-to-peer messaging)',
+    section: 'Auto-Discovery',
+    control: 'toggle',
+    options: [
+      { label: 'On', value: true },
+      { label: 'Off', value: false },
+    ],
+  },
+  {
+    key: 'contextOffloadThreshold',
+    label: 'Tool result offloading threshold',
+    section: 'Agent',
+    control: 'segmented',
+    options: CONTEXT_OFFLOAD_THRESHOLD_OPTIONS,
+  },
+  {
+    key: 'updatePrompts',
+    label: 'Startup update prompts',
+    section: 'Updates',
+    control: 'toggle',
+    options: [
+      { label: 'On', value: true },
+      { label: 'Off', value: false },
+    ],
+  },
+  {
+    key: 'autoOptimize',
+    label: 'Auto-optimize every N turns',
+    section: 'Workspace',
+    control: 'number',
+    options: [],
+    max: AUTO_OPTIMIZE_MAX_TURNS,
+  },
+  {
+    key: 'autoAcceptOptimizationResults',
+    label: 'Auto-accept optimization results',
+    section: 'Workspace',
+    control: 'toggle',
+    options: [
+      { label: 'On', value: true },
+      { label: 'Off', value: false },
+    ],
+  },
+  {
+    key: 'telemetry',
+    label: 'Send anonymous usage data',
+    section: 'Telemetry',
+    control: 'toggle',
+    options: [
+      { label: 'On', value: true },
+      { label: 'Off', value: false },
+    ],
+  },
+]
+
+export const settingValue = (settings: ChatSettings, key: SettingKey): ChatSettings[SettingKey] =>
+  ({ ...WORKSPACE_SETTING_DEFAULTS, ...settings })[key]
+
+export function settingDescription(settings: ChatSettings, key: SettingKey): string {
+  switch (key) {
+    case 'frogTheme':
+      return FROG_THEME_LABELS[settings.frogTheme]
+    case 'animations':
+      return settings.animations ? 'on' : 'off'
+    case 'showReasoning':
+      return settings.showReasoning ? 'shown' : 'hidden'
+    case 'mcpDiscovery':
+      return settings.mcpDiscovery
+        ? 'on · adds conventional Claude, Kiro, Gemini, Codex, and Strands sources · applies at next launch'
+        : 'off · only explicit --mcp-config sources load · applies at next launch'
+    case 'skillDiscovery':
+      return settings.skillDiscovery
+        ? 'on · adds conventional user and workspace sources · applies at next launch'
+        : 'off · only configured skills directories load · applies at next launch'
+    case 'agentMessaging':
+      return settings.agentMessaging
+        ? 'on · lets live conversations discover and message each other · applies at next launch'
+        : 'off · conversations stay isolated · applies at next launch'
+    case 'telemetry':
+      return settings.telemetry
+        ? 'on · one anonymous ping per launch: CLI version, provider, built-in tools and plugins · applies at next launch'
+        : 'off · nothing is sent · applies at next launch'
+    case 'updatePrompts':
+      return settings.updatePrompts
+        ? 'on · asks before installing an available update'
+        : 'off · available updates remain visible in the footer'
+    case 'autoAcceptOptimizationResults':
+      return settingValue(settings, key)
+        ? 'on · the edits of a finished optimization are written to the agent without a review'
+        : 'off · a finished optimization shows its edits, and you apply or leave each one'
+    case 'autoOptimize':
+      return settingValue(settings, key) === 0
+        ? 'off · an optimization runs only when you start one'
+        : `every ${settings.autoOptimize} chat turns · in the background, makes an experiment from your chats and optimizes on it · paid`
+    case 'contextOffloadThreshold':
+      return `${CONTEXT_OFFLOAD_THRESHOLD_OPTIONS.find(({ value }) => value === settings.contextOffloadThreshold)!.label} · tool-result tokens · applies at next launch`
+    default:
+      return settings[key]
+  }
+}
+
+/** Settings of a strands dev workspace, which its workspace layer saves and the user CLI config never holds. */
+export const WORKSPACE_SETTING_KEYS: ReadonlySet<string> = new Set(
+  SETTING_DEFINITIONS.filter(({ section }) => section === 'Workspace').map(({ key }) => key)
+)
+
+/**
+ * Saved settings in today's names. Until the two were split, autoOptimize was the on/off of what is now
+ * autoAcceptOptimizationResults; merge saved settings over others only after this, or the old value is lost.
+ */
+export function migrateSavedSettings(saved: Record<string, unknown>): Record<string, unknown> {
+  if (typeof saved.autoOptimize !== 'boolean') return saved
+  const { autoOptimize, ...rest } = saved
+  return { autoAcceptOptimizationResults: autoOptimize, ...rest }
+}
+
+export function parseSettings(saved: unknown): ChatSettings {
+  if (!isRecord(saved)) {
+    return globalThis.structuredClone(DEFAULT_CHAT_SETTINGS)
+  }
+  const value = migrateSavedSettings(saved)
+  const booleanSetting = (key: keyof ChatSettings): boolean => {
+    const selected = value[key]
+    return typeof selected === 'boolean' ? selected : DEFAULT_CHAT_SETTINGS[key] === true
+  }
+
+  const transcriptSpacing =
+    value.transcriptSpacing === 'compact' || value.transcriptSpacing === 'comfortable'
+      ? value.transcriptSpacing
+      : DEFAULT_CHAT_SETTINGS.transcriptSpacing
+  const animations = booleanSetting('animations')
+  const showReasoning = booleanSetting('showReasoning')
+  const toolOutput =
+    value.toolOutput === 'hidden' || value.toolOutput === 'compact' || value.toolOutput === 'full'
+      ? value.toolOutput
+      : DEFAULT_CHAT_SETTINGS.toolOutput
+  const savedFrogTheme = value.frogTheme === 'solar' || value.frogTheme === 'crimson' ? 'scarlet' : value.frogTheme
+  const frogTheme = FROG_THEMES.find((theme) => theme === savedFrogTheme) ?? DEFAULT_CHAT_SETTINGS.frogTheme
+  const contextOffloadThreshold =
+    CONTEXT_OFFLOAD_THRESHOLD_OPTIONS.find(({ value: option }) => option === value.contextOffloadThreshold)?.value ??
+    DEFAULT_CHAT_SETTINGS.contextOffloadThreshold
+
+  const disabledMcpServers = Array.isArray(value.disabledMcpServers)
+    ? value.disabledMcpServers.filter((entry): entry is string => typeof entry === 'string')
+    : [...DEFAULT_CHAT_SETTINGS.disabledMcpServers]
+
+  return {
+    transcriptSpacing,
+    animations,
+    showReasoning,
+    toolOutput,
+    frogTheme,
+    mcpDiscovery: booleanSetting('mcpDiscovery'),
+    disabledMcpServers,
+    skillDiscovery: booleanSetting('skillDiscovery'),
+    agentMessaging: booleanSetting('agentMessaging'),
+    telemetry: booleanSetting('telemetry'),
+    updatePrompts: booleanSetting('updatePrompts'),
+    contextOffloadThreshold,
+    ...savedWorkspaceSettings(value),
+  }
+}
+
+const savedWorkspaceSettings = (
+  value: Record<string, unknown>
+): Pick<ChatSettings, 'autoAcceptOptimizationResults' | 'autoOptimize'> => {
+  const autoOptimize = autoOptimizeCadence(value.autoOptimize)
+  return {
+    ...(typeof value.autoAcceptOptimizationResults === 'boolean'
+      ? { autoAcceptOptimizationResults: value.autoAcceptOptimizationResults }
+      : {}),
+    ...(autoOptimize === undefined ? {} : { autoOptimize }),
+  }
+}
+
+export function parseSettingUpdate(setting: string, current: ChatSettings): Partial<ChatSettings> | undefined {
+  const [name, selected, extra] = setting.split('=')
+  if (extra !== undefined) {
+    return undefined
+  }
+  switch (name) {
+    case 'transcriptSpacing':
+      if (selected !== undefined && selected !== 'compact' && selected !== 'comfortable') {
+        return undefined
+      }
+      return {
+        transcriptSpacing: selected ?? (current.transcriptSpacing === 'comfortable' ? 'compact' : 'comfortable'),
+      }
+    case 'animations':
+    case 'showReasoning':
+    case 'mcpDiscovery':
+    case 'skillDiscovery':
+    case 'agentMessaging':
+    case 'telemetry':
+    case 'updatePrompts':
+    case 'autoAcceptOptimizationResults':
+      return { [name]: !current[name] }
+    case 'toolOutput':
+      if (selected !== undefined && selected !== 'hidden' && selected !== 'compact' && selected !== 'full') {
+        return undefined
+      }
+      return {
+        toolOutput:
+          selected ??
+          (current.toolOutput === 'hidden' ? 'compact' : current.toolOutput === 'compact' ? 'full' : 'hidden'),
+      }
+    case 'frogTheme': {
+      const frogTheme = FROG_THEMES.find((theme) => theme === selected)
+      return frogTheme === undefined ? undefined : { frogTheme }
+    }
+    case 'autoOptimize': {
+      const cadence = /^\d+$/.test(selected ?? '') ? autoOptimizeCadence(Number(selected)) : undefined
+      return cadence === undefined ? undefined : { autoOptimize: cadence }
+    }
+    case 'contextOffloadThreshold': {
+      const threshold =
+        selected === 'default'
+          ? 'default'
+          : CONTEXT_OFFLOAD_THRESHOLD_OPTIONS.find(({ value }) => String(value) === selected)?.value
+      return threshold === undefined ? undefined : { contextOffloadThreshold: threshold }
+    }
+    default:
+      return undefined
+  }
+}

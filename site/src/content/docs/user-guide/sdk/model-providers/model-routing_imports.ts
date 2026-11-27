@@ -1,0 +1,51 @@
+// @ts-nocheck
+
+// --8<-- [start:mr_fallback_imports]
+import { Agent, BedrockModel, ModelRouter } from '@strands-agents/sdk'
+// --8<-- [end:mr_fallback_imports]
+
+// --8<-- [start:mr_classify_imports]
+import {
+  Agent,
+  BedrockModel,
+  ClassifierStrategy,
+  ModelRouter,
+  RoutingCandidate,
+} from '@strands-agents/sdk'
+// --8<-- [end:mr_classify_imports]
+
+// --8<-- [start:mr_decision_model_imports]
+import {
+  Agent,
+  BedrockModel,
+  ClassifierStrategy,
+  ModelRouter,
+  RoutingCandidate,
+  TypeSafeDecisionModel,
+} from '@strands-agents/sdk'
+// --8<-- [end:mr_decision_model_imports]
+
+// --8<-- [start:mr_composed_imports]
+import {
+  Agent,
+  BedrockModel,
+  ClassifierStrategy,
+  FallbackStrategy,
+  ModelRouter,
+  RoutingCandidate,
+  type RoutingContext,
+  type RoutingStrategy,
+} from '@strands-agents/sdk'
+// --8<-- [end:mr_composed_imports]
+
+// --8<-- [start:mr_tenant_imports]
+import {
+  Agent,
+  BedrockModel,
+  FallbackStrategy,
+  ModelRouter,
+  RoutingCandidate,
+  type RoutingContext,
+  type RoutingStrategy,
+} from '@strands-agents/sdk'
+// --8<-- [end:mr_tenant_imports]

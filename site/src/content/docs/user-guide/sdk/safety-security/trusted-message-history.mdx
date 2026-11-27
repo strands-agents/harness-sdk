@@ -1,0 +1,54 @@
+---
+title: Trusted Message History
+description: "An agent treats its message history as trusted input. Treat history from a source you do not control as untrusted, and clear tool-call content from it."
+tags: [safety, conversation-management]
+sourceLinks:
+  - path: strands-py/src/strands/event_loop/event_loop.py
+  - path: strands-py/src/strands/agent/agent.py
+  - path: strands-ts/src/agent/agent.ts
+---
+
+An agent treats its message history as trusted input. When you build that history from a source you do not control (a request body, a loaded snapshot) treat it as untrusted, because message content carries more than text: it can carry tool-call and tool-result blocks.
+
+Forged tool content is a concern in both SDKs. A tool-result block you did not produce, placed in history that reaches the model, can misrepresent what a tool returned and steer the model's next step.
+
+In the Python SDK, invoking an agent with content other than a string is a pointed example of this: the input is considered trusted, and a tool-call block as the most recent message causes the agent to run that tool directly on its next invocation, with no model call in between. The block's author chooses the tool and its arguments outright.
+
+## Do not populate history from an untrusted source
+
+The reliable control is the trust boundary. Build an agent's message history from your own application, not from input a caller can shape. History your application produces, or persists to storage only it can write, is trusted; load it as-is.
+
+## Clearing a trailing tool-call block
+
+If a Python application must accept caller-influenced history, strip `toolUse` content from the tail before the agent uses it. The dispatch check inspects only the last message, so keep stripping until the final message carries no `toolUse` block: dropping one `toolUse`-only message can expose another beneath it.
+
+```python
+from strands import Agent
+
+
+def strip_trailing_tool_use(messages):
+    """Strip toolUse blocks from the tail until the last message has none."""
+    messages = list(messages)
+    while messages:
+        last = messages[-1]
+        content = [block for block in last.get("content", []) if "toolUse" not in block]
+        if len(content) == len(last.get("content", [])):
+            break  # no toolUse in the final message
+        if content:
+            messages[-1] = {**last, "content": content}
+            break
+        messages.pop()  # message was toolUse-only; drop it and re-check the tail
+    return messages
+
+
+# untrusted_messages came from a request body, queue, or shared store.
+agent = Agent()
+agent(strip_trailing_tool_use(untrusted_messages))
+```
+
+Stripping the trailing tool-call content closes the direct-dispatch path. It does not make untrusted content safe: injected text and forged tool-result content elsewhere in the history still reach the model. Prefer the trust boundary above.
+
+## Related
+
+- [Prompts](../agents/prompts.md) for the input shapes an agent accepts.
+- [Snapshots](../agents/snapshots.md) for capturing and loading agent state.

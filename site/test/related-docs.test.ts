@@ -65,9 +65,7 @@ describe('relatedUserGuideFor (headless: top 10, specificity-weighted Jaccard)',
 
   it('caps at 10 matches', () => {
     const current = doc('docs/user-guide/a', 'A', ['x'])
-    const candidates = Array.from({ length: 12 }, (_, i) =>
-      doc(`docs/user-guide/${i}`, `T${i}`, ['x'])
-    )
+    const candidates = Array.from({ length: 12 }, (_, i) => doc(`docs/user-guide/${i}`, `T${i}`, ['x']))
 
     expect(relatedUserGuideFor(current, [current, ...candidates])).toHaveLength(10)
   })
@@ -91,7 +89,15 @@ describe('relatedUserGuideFor (headless: top 10, specificity-weighted Jaccard)',
     // focused match first because the union is much smaller.
     const current = doc('docs/user-guide/a', 'A', ['bedrock', 'aws'])
     const focused = doc('docs/user-guide/b', 'Focused', ['bedrock'])
-    const coincidental = doc('docs/user-guide/c', 'Coincidental', ['aws', 'multi-agent', 'observability', 'deployment', 'tools', 'hooks', 'event-loop'])
+    const coincidental = doc('docs/user-guide/c', 'Coincidental', [
+      'aws',
+      'multi-agent',
+      'observability',
+      'deployment',
+      'tools',
+      'hooks',
+      'event-loop',
+    ])
 
     const result = relatedUserGuideFor(current, [current, focused, coincidental])
     expect(result.map((r) => r.title)).toEqual(['Focused', 'Coincidental'])
@@ -151,4 +157,3 @@ describe('userGuidePagesWithTag', () => {
     expect(userGuidePagesWithTag('safety', current, [current, untagged])).toEqual([])
   })
 })
-

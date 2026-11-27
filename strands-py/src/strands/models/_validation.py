@@ -1,8 +1,10 @@
 """Configuration validation utilities for model providers."""
 
 import dataclasses
+import logging
 import re
 import warnings
+from collections import Counter
 from collections.abc import Collection, Mapping
 from typing import Any
 
@@ -83,7 +85,7 @@ def _cache_config_fields_set(cache_config: CacheConfig) -> set[str]:
 
 
 def warn_on_cache_config_not_supported(
-    cache_config: CacheConfig,
+    cache_config: CacheConfig | None,
     provider: str,
     *,
     supported: Collection[str],
@@ -92,12 +94,15 @@ def warn_on_cache_config_not_supported(
     """Warn once about supplied cache_config fields a provider does not support.
 
     Args:
-        cache_config: The provider's configured cache settings.
+        cache_config: The provider's configured cache settings, if any. ``None`` is a no-op, so callers
+            can pass an unset config directly without guarding it.
         provider: Human-readable provider name for the warning message.
         supported: Names of ``CacheConfig`` fields the provider applies; the rest are the no-ops.
         stacklevel: Frames to skip so the warning points at the caller. Defaults to 4, correct when a
             mapper one frame below ``format_request`` invokes this.
     """
+    if cache_config is None:
+        return
     unsupported = sorted(field for field in _cache_config_fields_set(cache_config) if field not in supported)
     if unsupported:
         warnings.warn(
@@ -122,6 +127,21 @@ def _warn_on_deprecated_cache_tools(config_dict: Mapping[str, Any], *, stackleve
             DeprecationWarning,
             stacklevel=stacklevel,
         )
+
+
+def _log_skipped_blocks(logger: logging.Logger, skipped: Counter[str]) -> None:
+    """Log each skip notice once with the number of blocks it covers.
+
+    Formatters re-format the full history on every request, so a notice logged per skipped block repeats
+    for every earlier message on every request. Formatters count notices while they format and call this
+    once at the end instead.
+
+    Args:
+        logger: The provider module's logger, so records keep the provider's logger name.
+        skipped: Count of skipped blocks per notice message.
+    """
+    for message, count in skipped.items():
+        logger.warning("count=<%d> | %s", count, message)
 
 
 def _has_location_source(content: ContentBlock) -> bool:

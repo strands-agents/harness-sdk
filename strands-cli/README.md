@@ -1,0 +1,1042 @@
+<div align="center">
+  <div>
+    <a href="https://strandsagents.com">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="https://strandsagents.com/latest/assets/wordmark-github-dark.svg">
+        <img src="https://strandsagents.com/latest/assets/wordmark-github-light.svg" alt="Strands" width="320">
+      </picture>
+    </a>
+  </div>
+
+  <h1>
+    Strands CLI
+  </h1>
+
+  <h2>
+    Chat with a batteries-included agent from your terminal.
+  </h2>
+
+  <div align="center">
+    <a href="https://github.com/strands-agents/harness-sdk/blob/main/LICENSE.APACHE"><img alt="License" src="https://img.shields.io/github/license/strands-agents/harness-sdk"/></a>
+    <a href="https://www.npmjs.com/package/@strands-agents/cli"><img alt="npm version" src="https://img.shields.io/npm/v/%40strands-agents%2Fcli"/></a>
+    <a href="https://discord.gg/strands"><img alt="Strands Discord" src="https://img.shields.io/badge/Discord-Strands-5865F2?logo=discord&logoColor=white"/></a>
+  </div>
+
+  <p>
+    <a href="https://github.com/strands-agents/harness-sdk/tree/main/harness-ts">Strands harness</a>
+    ◆ <a href="https://github.com/strands-agents/harness-sdk">Strands Harness SDK</a>
+    ◆ <a href="https://strandsagents.com/">Documentation</a>
+    ◆ <a href="https://discord.gg/strands">Discord</a>
+  </p>
+</div>
+
+`strands` is a terminal chat command for the [Strands harness](https://github.com/strands-agents/harness-sdk/tree/main/harness-ts),
+a batteries-included agent built on the Strands Harness SDK. It's the fastest way to try the
+Strands harness: no code, with an interactive setup for model providers and agent defaults.
+
+```bash
+npm install -g @strands-agents/cli   # gives you the `strands` command
+strands "summarize what this repo does"
+```
+
+By default you get Claude Opus 5 on Amazon Bedrock, with reasoning, shell and file tools, web
+access, caching, todos, environment context, a `subagent` delegate, Agent Skills, resumable
+sessions, long-term memory, and automatic context management. The full-screen terminal keeps
+background delegates non-blocking and automatically continues the agent when their results arrive.
+
+## Installation
+
+Install it globally to get the `strands` command:
+
+```bash
+npm install -g @strands-agents/cli
+strands
+```
+
+Or run it on demand without installing, using `npx`:
+
+```bash
+npx @strands-agents/cli
+```
+
+Update a global installation with:
+
+```bash
+strands update
+```
+
+### Windows
+
+Windows uses its built-in Windows PowerShell for the shell tool and `!` commands; Git Bash is not
+required. File tools accept drive-letter and UNC paths, and exported agents use the same native
+PowerShell behavior.
+
+On the first interactive launch, the intro animation plays before the setup panel opens. Quickstart
+lets you choose a provider and model, then launch. Customize lets you select tools, skills, MCP, and
+other capabilities individually or together, and edit the agent instructions, data paths, and approval
+controls. The CLI detects standard credential sources but never writes API keys to its config.
+
+## Local harness development
+
+`strands dev` runs a harness from a local workspace. It does not change the default agent for plain `strands`.
+
+```bash
+strands dev
+strands dev --search-root ../other-projects
+strands dev init --create cli --workspace ./strands-dev
+strands dev --workspace ./strands-dev
+strands dev --agent ./my-project/agent.py
+strands dev init --create python --workspace ./new-agent
+```
+
+The full TUI opens before discovery. Its picker lists the current CLI harness first, discovered harnesses next, and a new-harness option last.
+The selector separates Global Harness, Discovered Harnesses, and New Harness choices. Source details appear below the selected choice.
+Base CLI shows its source path and explains that changes in dev also change plain `strands`.
+Discovery omits the current CLI source and the base workspace already represented by that choice. Distinct projects with matching names remain separate.
+Creation errors stay in the picker so you can retry without restarting the CLI.
+Discovery reads the current folder and any explicit search roots. It does not execute source or follow symbolic links.
+It skips dependency folders, build output, private state, and copied harness libraries.
+It never lists an agent inside a `strands-dev/` or `strands-dev-N/` folder, for example an old agent copy in `strands-dev/tmp/`.
+Discovery lists a source file only in a shape that strands dev can load.
+In TypeScript, a top-level `agent` must come from one `createHarness(...)` call or from a call to a local function.
+In Python, `agent` must come from `create_harness(...)`. Or, the file must define `create_agent` and set `agent` from a local function.
+If a file calls `createHarness` or `create_harness` in a different shape, the picker shows that file and the expected shape.
+
+When the launch directory has no workspace, select an existing harness in the picker.
+When the suggested folder already holds the workspace of that harness, dev opens it. Dev does not ask for a folder.
+
+When that folder does not hold the workspace of the harness, the picker asks for a folder under **Create a workspace**.
+The folder field starts with the folder that contains the harness file. Dev creates `strands-dev/` in that folder.
+For example, `~/agents/support/agent.py` gives the field `~/agents/support` and the workspace `~/agents/support/strands-dev/`.
+The rule is the same when the file is in a source folder: `~/repo/src/agent.ts` gives `~/repo/src/strands-dev/`.
+
+When that `strands-dev/` holds the workspace of a different agent, a note under the field names that agent.
+Then Enter asks you to type DELETE before dev replaces that workspace. Dev never makes a numbered folder such as `strands-dev-2/`.
+
+For the Base CLI, the suggested workspace is `~/.strands/strands-dev/`, in the folder of the CLI config.
+When that folder does not contain the Base CLI workspace, the field starts with `~/.strands`.
+This rule also applies when the Base CLI has a saved project.
+That folder holds the Base CLI workspace only when dev made it from the current project or config of the CLI.
+
+You can edit the path before you continue.
+When the path that you type ends in `strands-dev` or `strands-dev-N`, the note names that folder.
+A relative path starts from the launch directory. Esc in the folder step goes back to the harness list.
+
+When you go back from a failed setup, dev deletes the folders that the failed setup made. The other choices keep their usual folders.
+If the failed setup used a folder that was there before, dev keeps that folder. The next selection suggests the same folder.
+
+Before dev replaces a workspace, it moves the old folder to a hidden backup. Dev deletes the backup when the chat starts.
+If you go back, cancel, or quit before the chat starts, dev puts the old folder back.
+
+**Create a new harness** does not ask for a folder. Dev creates the project in `strands-workspace/` in the launch directory.
+The harness file is `strands-workspace/agent.py` or `strands-workspace/agent.ts`, and its workspace is `strands-workspace/strands-dev/`.
+When `strands-workspace/` holds the same new harness, dev opens it.
+When it holds a different harness, dev asks you to type DELETE before it replaces that project.
+A new harness is a general-purpose agent. It gets the model settings of the saved profile (`model`, `modelModule`, `effort`, and `caching`) and its `dependencies`. The description, instructions, tools, skills, MCP servers, and other options of the profile stay with the Base CLI. Dev adds its own instructions, skills, and tools only to the dev chat, at runtime.
+If the model module of the saved profile is in the other language, the new harness uses the `model` of the profile. The form shows a note.
+The form shows the project folder under the name. The name is the harness name. It does not change the folder.
+A name can have letters, digits, `.`, `_`, and `-`, and at most 64 characters. The form removes other characters and shows a note.
+
+Dev creates `strands-dev/` inside the path that you type or give to `--workspace`.
+Dev uses the path as it is when the path ends in `strands-dev` or `strands-dev-N`, or when the path is already a workspace.
+For example, `--workspace ~/my-agents` gives the workspace `~/my-agents/strands-dev/`.
+With `--workspace`, the folder field of each choice starts in that folder. Then a new harness goes into `agent/` inside the workspace.
+
+The workspace folder must be new or empty, or it must hold a workspace.
+Dev opens the workspace of the selected agent. For the workspace of another agent, dev asks you to type DELETE first.
+A workspace named `strands-dev` reopens from its parent folder or from inside it.
+To reopen a workspace with a different name, run `strands dev` inside it, or give its folder to `--workspace`.
+
+`--agent` and `--create` do not show the picker. `--agent` uses `strands-dev/` in the folder that contains the agent file, or the ZIP.
+`--create typescript` and `--create python` create `strands-workspace/` in the launch directory. `--create cli` uses `~/.strands/strands-dev/`.
+With `--workspace`, the two flags use that folder.
+
+When that folder holds the workspace of another agent, the two flags stop with an error that names the folder and the agent. They do not replace it.
+
+Initialization records the persistent agent in `.config`. It does not copy the agent.
+When `--agent` names another entrypoint of the project that the workspace binds, that entrypoint runs for one launch. `.config` does not change.
+Without a terminal, select an existing workspace, an entrypoint, or a creation option explicitly.
+`strands dev init` prepares the workspace and exits without a model request.
+
+When `.config` names an agent that is missing, dev stops with an error that names the workspace and the agent.
+To bind the workspace to another agent, run `strands dev init` in a terminal and select the agent. Dev asks you to type DELETE before it replaces the workspace.
+Without the picker, dev never replaces the workspace.
+
+New agents use the same project exporter and dependency installer as exported agents.
+A new agent from the picker is in `strands-workspace/` in the launch directory, and its workspace is inside that project.
+With `--workspace`, or for a Base CLI that has only a saved profile, the new project is in `agent/` inside the workspace.
+Selecting an existing agent records its project path without copying or regenerating its source.
+Base CLI uses the saved source project when one exists. Otherwise, the agent is the saved profile in `~/.strands/cli.toml`.
+For a profile, the agent file in `strands-dev/agent/` is only a view of the profile. Dev writes it again at each start and after each change to `cli.toml`.
+Local model modules and static imports are packaged without changing the saved profile. Credentials remain external.
+
+### Prepare and validate the selected project
+
+Discovery identifies source files without executing them. Labels show `Needs setup`, `Manual setup`, or `Check setup`; discovery does not prove that an agent runs.
+After selection, dev prepares the project automatically. There is no preparation confirmation screen.
+Selecting a project permits its declared install and build commands to run. These commands can execute project code.
+Successful preparation is cached locally. Unchanged dependencies and build inputs reuse the existing environment and outputs.
+Source changes can trigger a build without reinstalling dependencies. Missing environments, changed manifests, or changed setup files invalidate the relevant cache.
+Dev still loads the selected entrypoint on every launch, so cached setup does not hide import errors.
+
+| Project                                   | Automatic preparation                                                                                                           |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Standalone npm project                    | `npm ci` with a lockfile, otherwise `npm install` without saving or creating a lockfile. Then the declared `build` script.      |
+| Python with `requirements.txt`            | Install requirements into the project `.venv`.                                                                                  |
+| Installable Python `pyproject.toml`       | Install the local package in editable mode, including its declared dependencies. This also runs when `requirements.txt` exists. |
+| Python with `uv.lock`                     | `uv sync --locked --inexact`, using the project environment without rewriting the lockfile.                                     |
+| Other package managers or Node workspaces | Show manual setup guidance, then validate the prepared environment.                                                             |
+
+A `pyproject.toml` that contains only tool settings is not treated as an installable package.
+For packages such as `src/refund_desk`, the local package must be installed, not only `strands-harness`.
+Dev never guesses a registry package name from a missing import.
+Python 3.10 or newer is required. `PYTHON` can select the interpreter used to create a new environment.
+Installation stays in the project environment. Destination overrides cannot redirect npm or pip into global locations.
+
+After preparation, the CLI loads the entrypoint in the same runtime used by chat. Validation makes no model request.
+Dependencies and resources loaded only during a later tool call can still fail at runtime.
+
+### When setup fails
+
+The TUI stays open and shows the failed stage, relevant error, suggested next action, and private log path.
+Enter or `r` retries. `v` validates after manual setup. `d` shows details. `b` returns to selection.
+Retry re-reads the project manifests and forces setup when repair is needed. Dev does not reset source or silently rewrite lockfiles.
+Logs live under the selected project's `.strands/state/setup/`. Known credential values and authenticated URL credentials are redacted.
+
+`f` opens the Strands CLI in a new terminal tab to fix the project. The first message has the error, the project folder, and how dev loads agents.
+In a dev chat, a failed turn opens the **Agent turn failed** panel. That panel and the **Agent reload failed** panel have the same key.
+The new tab uses the built-in agent, not a saved default agent.
+
+A turn that fails because the model credentials expired opens no panel. The failed turn tells you to refresh the credentials and restart.
+
+In tmux, dev opens a new tmux window. On macOS, dev opens an iTerm2 tab, a Ghostty tab (Ghostty 1.3 or later), or a Terminal window.
+In other terminals, dev copies a command and shows it. Run that command in a new tab.
+
+If a runtime or package manager is unsupported, prepare the project with its own tooling and then validate it in dev.
+If an import is missing, check the selected root and declared dependencies. For Python src-layout projects, check package metadata and editable installation.
+
+### Workspace binding
+
+`.config` is a JSON file. It identifies the persistent project and its entrypoint. `tmp/` is a sibling directory, not part of `.config`.
+Dev writes a `.gitignore` in a new workspace. It ignores `tmp/`, `.config`, and `.strands/state/`, because they hold personal settings, permissions, chats, and run files.
+Each `.strands/state/` folder that setup makes in a project also gets a `.gitignore` that ignores the folder.
+
+A new harness from the picker has this layout:
+
+```text
+strands-workspace/
+  agent.ts
+  package.json
+  strands-dev/
+    .config
+    tmp/
+```
+
+With `--workspace`, dev puts the new project in `agent/` inside the workspace:
+
+```text
+strands-dev/
+  .config
+  agent/
+    package.json
+    agent/agent.ts
+  tmp/
+```
+
+For Python, the project contains `agent.py` and its dependency files instead.
+In `strands-workspace/`, an `agent/` folder holds the packaged model module. Dev makes this folder only when the saved profile has a local model module.
+The top-level `agent/` in a workspace exists only when dev creates a new project inside the workspace. Existing projects can be outside the workspace.
+When the workspace is inside the project, dev keeps the workspace out of `/export` and the source watcher.
+
+The Base CLI view copies only the skills that the profile configures, as `/export` does. Skills that skill discovery finds, for example in `~/.codex/skills`, stay out of the view. Unlike `/export`, dev skips a configured skill folder that does not exist.
+
+```json
+{
+  "version": 1,
+  "name": "My harness",
+  "agent": {
+    "path": "agent",
+    "entrypoint": "agent/agent.ts",
+    "language": "typescript"
+  },
+  "origin": {
+    "kind": "created"
+  }
+}
+```
+
+In `strands-workspace/strands-dev/.config`, `agent.path` is `..`.
+
+`agent.path` resolves relative to `.config`, or can be absolute. `agent.entrypoint` resolves inside that project.
+`origin.kind` is `cli`, `discovered`, or `created`. Optional source metadata records where the binding came from.
+A binding cannot point into its own `tmp/`. Dev never changes the global CLI default during creation or startup.
+
+The dev session always runs the bound persistent agent. Editing its configuration changes that agent, not a temporary copy.
+Runtime state stays separate from the agent source. The existing watcher reloads the bound project when its source changes. After a successful reload, the status shows `↻ agent.ts reloaded · session kept` (or the Python filename).
+Dev reloads the agent only when one of its source files changes. Source files are code, instruction text (`.md` and `.txt`), configuration (`.yaml`, `.yml`, `.toml`), Cedar policies, skill files, MCP configuration, and dependency manifests.
+A change to another file, for example a log, a `.json` data file, or a `.jsonl` file, does not reload the agent.
+Files in `.agent/` and `.strands/` do not reload the agent, but skill files in their `skills/` folders do.
+Reload waits for active work to finish. A failed replacement keeps the previous agent and conversation active without showing a success message.
+Legacy `.strands/config.json` agents remain in place. Startup creates a `.config` binding without moving or rewriting their source.
+For the old `strands-dev/base-cli/` layout, select Base CLI and type the folder that contains `strands-dev/`.
+Dev then creates the control files in `strands-dev/` and binds the existing agent.
+
+The dev chat keeps its sessions and memory in the `.strands/state/` folder of the workspace, apart from the stores of the agent.
+When the agent sets its own session manager, memory manager, memory stores, or storage, dev deactivates them in the dev chat.
+A notice in the chat tells you what dev deactivated. Without the session manager, dev does not save the chat.
+
+### Changes in a dev session
+
+Dev saves each change that you make in the CLI during a dev session.
+
+- `/model` and `/effort` write `model` and `effort` into the `createHarness` or `create_harness` call of the agent file. Dev uses the same code writer as `/export`.
+- For a Base CLI that is a saved profile, `/model`, `/effort`, and the Apply step of `/optimize` write the profile in `~/.strands/cli.toml`. Then dev writes the view again. Plain `strands` reads the changed profile the next time it starts.
+- The harness ignores `effort` when the agent passes a model object, for example `new BedrockModel({...})`. For a `BedrockModel`, `AnthropicModel`, or `OpenAIModel` object, `/effort` writes the reasoning fields into the object instead. These are the same fields that the harness sends for that model id at that effort, in `additionalRequestFields` or `params`. Fields for other purposes do not change.
+- `/settings`, `/permissions`, `/mcp`, and the AWS profile go into the `cli` section of `strands-dev/.config`. This section has the same shape as `cli.toml`, and dev loads it at each start.
+- For a Base CLI that is a saved profile, the **Appearance** settings (theme, transcript spacing, animations, reasoning, and tool output) go into `[settings]` of `~/.strands/cli.toml` instead, so dev and plain `strands` look the same. An open dev session takes a change at once, without a reload. Plain `strands` takes it the next time it starts. An Appearance value that the Base CLI workspace still holds from an earlier save moves to `cli.toml` the next time dev starts.
+- Dev never saves provider credentials.
+
+If the agent file sets an option in code, for example from a variable, dev does not change the file.
+The change then applies to the current chat only, and an error tells you which option to change in the code.
+
+All programmatic edits to the agent files use one lock for each agent, in `.strands/state/`.
+Each edit reads the file again while it holds the lock, and it changes only its own option.
+Thus an option change and an optimization edit do not overwrite each other, also when they come from two processes.
+
+### Experiments, evaluations, and optimization
+
+Inside a `strands dev` chat, two commands start the evaluation workflow: `/experiment` and `/optimize`.
+In each command, the agent asks one question at a time on screen. Add words after the command to skip questions, for example `/experiment refunds` or `/optimize refunds for fewer tokens`.
+
+- `/experiment` makes, runs, and reviews experiments. An experiment is a set of test cases for the agent. Its evaluators give each answer a score.
+  - The agent lists the saved experiments, **Run several experiments**, and **Create a new experiment**. For a saved experiment, you can view its last report, run it, or edit its cases.
+  - For a new experiment, the agent asks what to test. You can also say "past chats". After your approval, `strands-evals generate` makes the cases with an AWS Bedrock model. Dev saves them in `strands-dev/experiments/<name>/<name>.json`.
+  - **Run it** starts the evaluation at once, because the selection is the approval. The report gives the passed and failed cases and the reason for each failure.
+  - A run continues when you cancel the chat turn or close strands dev. Dev continues a stopped run at the next start. Cases that finished before do not run again.
+  - From a shell, `strands dev evaluate <experiment>` runs the same evaluation and prints the result.
+- `/optimize` tunes the agent against an experiment.
+  - The agent asks which experiment to use, which knobs to tune, what the run must improve, what must stay true, and the budget. Then it prints a review in the chat. Reply to change a row, or approve the review to start the run.
+  - The run continues in the background. When it finishes, its proposed edits show on screen as a diff, one edit at a time. Select **Apply this change** or **Leave it as it is**. You can also write "approve this" or "leave it" in the chat.
+  - The agent source changes only with the edits that you apply. When **Auto-accept optimization results** (`autoAcceptOptimizationResults`) is on, a run that finishes writes its edits without a review. This setting is in the **Strands dev workspace** section of `/settings`, and it is off by default. A run that you stop early still shows its edits for review.
+  - From a shell, `strands dev optimize <experiment>` runs the optimizer and prints the result. It does not change the agent source.
+- **Auto-optimize every N turns** (`autoOptimize`, in the same section) is a field for a whole number from 1 to 9999 (digits only; Enter saves, Esc cancels, and 0 or an empty field turns it off). It starts an optimization by itself: every that many chat turns, dev makes an experiment from your chats with the agent and tunes the agent on that experiment. This happens in the background and not in your chat: the agent of the workspace makes the experiment in a process of its own, which keeps no session, and dev then starts the optimizer with the defaults of the plan. You are asked nothing. One notice in the chat says that it began and then what it started, or why it started nothing, and the line below the chat input shows the work. Both number the two stages: `auto-optimize 1/2` while the experiment is made, when the agent is still unchanged, and `auto-optimize 2/2` while the optimizer runs, with what it is doing and its count of rollouts. Only the notice of the finished run has a tick, with the score before and after. The process writes its log to `strands-dev/tmp/.state/auto-optimize/`, and it stops when dev closes or when you turn the setting off. Work that dev closed on starts again at your next turn. Each of these runs is paid. It is off by default. The count of turns is kept when dev closes, and it starts again when you change the number. A run that is due waits while another optimization runs or its edits wait for your answer. You can also ask for it in the chat, for example “optimize every 20 turns from my history”. When the optimization finishes, its edits wait for your review as those of any run do; with **Auto-accept optimization results** on as well, they are written without a review.
+- Effort tuning works for a model id string, and for a `BedrockModel`, `AnthropicModel`, or `OpenAIModel` object. For a model object, each trial sets the reasoning fields of that level on a copy of the object. An accepted change writes those fields into the object.
+
+You can also ask in plain words, for example "show my experiments", "rerun the failures", or "optimize the refund harness".
+Dev adds only two slash commands for this workflow: `/experiment` and `/optimize`. Reading cases or past results does not start a run.
+On request, the agent stops an optimization or discards its pending edits.
+
+Evaluation runs and optimization trials start the agent in its project folder. An agent with the shell, write, or edit tool can change files there. Then the agent tells you so before you approve the run.
+
+Generation, evaluation, and optimization call models and can incur charges. Dev starts a paid run only after your approval.
+Running jobs show below the chat input in one row, one job at a time, as background tasks do.
+With an empty input, ↓ selects the first background task or job, and ←→ selects the next one.
+Enter or a click on a job asks the agent about that job. For an optimization with edits to review, the diff shows again.
+
+Dev keeps each experiment and its history in one folder:
+
+```text
+strands-dev/
+  experiments/
+    .gitignore               keeps the history out of git
+    <name>/
+      <name>.json            the experiment, which you can commit
+      <name>.report.json     the latest evaluation report
+      runs/<time>/           one evaluation run, with report.json and run.log
+      optimizations/<time>/  one optimization run, with optimizer/ and run.log
+  tmp/
+    .state/                  drafts and the evals environment of the workspace
+```
+
+The `.gitignore` in `experiments/` ignores `runs/`, `optimizations/`, `.state/`, and the latest reports. Thus git keeps only the experiment files.
+Dev keeps the 20 newest evaluation runs of each experiment. A rerun of the failed cases replaces only those cases in `<name>.report.json`.
+At startup, dev moves experiments from the old `tmp/experiments/`, `tmp/reports/`, and `tmp/optimization/` folders into this layout. It does not move an experiment while one of its runs is active.
+
+### Optimization runs
+
+`/optimize` runs the `strands-evals optimize run` command of strands-agents-evals 1.13.0.
+For each run, dev writes `.state/task.py` in the folder of the run. The `--agent` and `--rollout` flags of the command refer to this file.
+The file imports `strands_dev_evals`, a Python package that the CLI includes. Then the file calls `optimize_task` with the agent file, the experiment, and the space file.
+
+Dev uses the `--agent` route for each agent, because only that route can tune every marker. That route also examines each candidate before the candidate uses a rollout.
+
+Dev gives each setting to the command explicitly. These settings are the split, the iterations, the candidates per step, the runs per case, the parallel trials, the rollout cap, and the seed.
+Thus the setup page and the estimate show the numbers of the run. A run with 0 iterations measures only the baseline.
+Dev gives the decision settings only when they are different from the optimizer defaults. These settings are `--feasibility-threshold`, `--agent-failure-score`, and `--n-finalists`.
+A cautious pick rule needs a `FinalPick` object. Thus `task.py` defines `final_pick`, and dev gives `--final-pick` instead of `--n-finalists`.
+The estimate counts the end phase like the optimizer. Under `Pareto`, at least 5 finalists go to validation, and each front member goes to test.
+Like strands-evals, the setup warns when the split leaves 1 to 4 test cases or 1 train case.
+
+The objective row of the setup sets what the run improves, for example `Minimize(tokens)`.
+The constraints row sets what the chosen candidate must meet, for example `tokens <= 4000, Correctness >= 0.8`.
+Dev gives each goal to the command as one `--objective` spec, and each constraint as one `--constraint` spec.
+A metric name with a colon cannot go into an objective spec. Thus the setup shows the problem before the run starts.
+
+A run continues after strands dev closes. When a run stops, for example after a restart, dev continues the run at the next start with `strands-evals optimize resume <run folder>`.
+The upstream command reads the inputs of the run again from `cli.json` in the run folder. Thus `task.py` must stay in its folder.
+
+When the proposer fails, the search stops before the end phase, and the optimizer selects no candidate. Then `/optimize` shows the proposer error. Correct the cause, then start the run again.
+
+Dev cannot write some edits into the agent file, for example when the agent file reads the text from a variable. When a run finishes, its notice names each of these edits and the reason. The full text of the edit is in `best.diff` in the folder of the run.
+
+From a shell, `strands dev optimize <experiment>` runs the same command and prints the result. The flags after `--` go to `strands-evals optimize run`.
+For example, `strands dev optimize refunds -- --max-iterations 2 --constraint 'tokens<=4000'` runs 2 iterations with a token constraint. `--max-iterations 0` measures only the baseline.
+Dev sets the agent, the record folder, and the output format itself. Thus dev rejects `--agent`, `--build-task`, `--space`, `--config`, `--rollout`, `--search`, `--base-dir`, `--name`, `--json`, and `--rich`.
+
+The flags of the earlier dev command also work. Dev changes `--iterations`, `--width`, `--repetitions`, `--max-concurrency`, `--rewriter-model`, `--at-most`, and `--at-least` to the upstream flags.
+Dev also changes an `--objective` expression, such as `Minimize(tokens)`, to the upstream specs. `--tune instructions,effort` selects the settings to tune, as before.
+When the search stops on a proposer error, the command writes the error and exits with 1.
+
+**Limits:**
+
+- Dev tunes only what its space file declares: `createHarness` options as text, choices, and switches, plus the instructions and the effort. Dev does not tune model parameters at this time, for example the temperature.
+- At this time, evaluation runs and `/optimize` run a TypeScript agent in a Node runner, outside strands-evals. Thus its runs record only the answer and the token usage, not the trace. Dev rejects an evaluator that reads the trace. In strands-agents-evals 1.13.0, `optimize run` can run a TypeScript agent file, but `run` cannot. Thus dev keeps its runner for the two commands at this time.
+- Dev applies the champion itself, in the Apply step of `/optimize`. The upstream CLI only writes the champion to `best.diff` and `best.values.json`.
+
+### Evals UI
+
+strands-agents-evals 1.13.0 includes the evals UI. When a dev chat starts, dev starts `strands-evals ui` for `strands-dev/experiments/`.
+The evals UI is a local web page. It shows experiments, reports, and optimization runs.
+When the page server is ready, a notice in the chat gives the link.
+Ask the agent to open an experiment, its last report, or an optimization run. The agent uses the `strands_dev_open_evals_ui` tool.
+The notices for a saved experiment, a completed evaluation, and a completed optimization also have a link.
+
+The page server listens on `127.0.0.1` only, on a free port. Each start makes a new random token.
+The link contains the token. The server rejects each request that does not have the token.
+When dev runs on a remote computer over SSH, dev does not open a browser. Instead, dev shows an `ssh -N -L` command and the link.
+
+You can edit cases on the page, and the page saves them to the experiment file. When the file changes, dev reads it again.
+If the evals UI cannot start, the chat continues to work. A message gives the cause. Then ask the chat to try again.
+
+The experiment skill, workspace instructions, and `strands_dev_*` tools are injected only into the dev chat at runtime. They are not added to the base harness, saved profile, or exported agent source. Exports preserve authored files; they do not remove dev instructions that someone explicitly writes into those files.
+
+**Evals dependency:** the evaluation workflow installs `strands-agents-evals[optimization]==1.13.0` from PyPI in a separate Python environment on first use.
+Case generation currently uses a separate AWS Bedrock connection; it does not inherit the chat model, provider endpoint, or credentials. Leave the generator model empty for the evals Python SDK default, or explicitly choose a Bedrock model your AWS account can invoke. It does not change the agent being tested. Python 3.10 or later, access to your package index, and model credentials for the run are necessary.
+
+Dev installs strands-agents-evals one time for each release and Python version, in `~/.strands/evals/`. All workspaces share that environment.
+Dev deletes an environment that no workspace used for 7 days. The install uses the package index settings of your pip configuration.
+The `session-converter` skill comes from the installed package. Dev loads the `strands-evals` and `optimize` skills from the `v1.13.0` tag of strands-agents/evals.
+
+The checkout command `strands-dev` is separate: use `strands-dev dev` to run this workflow from a source checkout.
+
+## Using it
+
+Run from the repository root with:
+
+```bash
+npm run setup
+strands-dev
+```
+
+`npm run setup` installs the CLI dependencies and links the `strands-dev` command to this checkout. The
+linked launcher fingerprints the CLI source, so switching branches or editing it causes one silent rebuild
+before the CLI starts:
+
+```bash
+git switch main
+strands-dev
+
+git switch another-branch
+strands-dev
+```
+
+If a branch changes dependencies, run `npm run setup` again. A packaged npm installation contains
+compiled output and skips all source-build behavior.
+
+## Customize the agent
+
+Run `strands` or use `/setup` in chat to reopen the saved configuration. Quickstart and Customize
+edit the same profile. Import loads a harness from a file or zip. Press Esc on the opening screen to
+open chat, even before completing setup. Ctrl+C exits during initial setup. Use `/export` in chat to save the agent
+as a TypeScript or Python project.
+
+In interactive chat, the agent can also inspect and change its own configuration with `strands_config`.
+For example: “Use high reasoning, disable shell and delegation, and keep responses concise.”
+Changes are validated and applied after the turn; the conversation is retained. Quickstart, Customize,
+and TypeScript/Python exports use the updated profile. A failed rebuild restores the previous profile.
+For TypeScript agents loaded from source, the CLI edits the source definition and reloads it instead;
+source exports retain that code.
+Agent drafts and exports contain only the agent definition. CLI preferences, provider setup,
+and Ask/Bypass permissions stay under your control in `/settings`, `/setup`, and `/permissions`.
+
+## Run modes
+
+The CLI chooses a mode from its flags and terminal streams:
+
+| Mode           | Selected when                                | Behavior                                                                                     |
+| -------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| **Ink**        | stdin and stdout are terminals               | Full-screen interactive UI with panels, slash commands, mouse support, and streaming updates |
+| **Plain**      | stdin is a terminal but stdout is redirected | Readline chat with unstyled output; an initial request is answered before the prompt         |
+| **Print**      | `--print` is set, or stdin is piped          | One request, then exit; styling follows whether stdout is a terminal                         |
+| **ACP server** | `--acp-server` is set                        | Serve the agent over newline-delimited ACP on stdin/stdout                                   |
+
+Examples:
+
+```bash
+strands                                      # Ink chat in a terminal
+strands "summarize this repo"                # answer first, then keep chatting
+strands "summarize this repo" > transcript   # plain interactive chat
+strands -p "list the top-level modules"      # one answer and exit
+printf 'summarize README.md' | strands       # read the request from stdin and exit
+strands --acp-server                         # serve ACP on stdin/stdout
+```
+
+When stdin is piped, its complete contents become the request only when no positional request was
+given. In plain mode, type `exit` or `quit`; in Ink, use `/exit`. Ctrl-D exits either interactive
+mode, except while editing a queued message. In Ink, Ctrl-C cancels an active turn or exits with status 130 when idle.
+The composer stays editable during a turn: Enter queues a follow-up, and Escape interrupts without
+discarding the current draft.
+Use Alt+↑/↓ or click Edit to edit a queued message. Enter saves and Esc restores your draft.
+Click Delete, or press Ctrl+D while editing, to remove it. Saving empty text deletes a message
+unless it has attachments.
+Tab and Shift+Tab focus the queue's Edit, Steer, Delete, and reorder buttons; Enter activates
+the focused button and Esc returns to your draft. Steer redirects the running turn, or interrupts
+it and runs that queued message next when live steering is unavailable.
+Prefix an Ink input with `!` to run a shell command directly in the active workspace without
+invoking the model, for example `!git status`. Each command runs once through the agent's shell
+sandbox while the full-screen UI remains open, and its output is rendered inline without compact
+summarization. Ctrl-C cancels the active command without exiting the CLI. Output past the inline safety
+limit is saved to a file whose path is shown inline. Interactive shell sessions and prompts are not
+supported.
+
+## Options
+
+Run `strands --help` for the parser's current list.
+
+| Flag                          | Applies to      | Description                                                                                                                             |
+| ----------------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `-p`, `--print`               | Print           | Answer once and exit                                                                                                                    |
+| `--prompt <text>`             | All             | Initial request; equivalent to the positional request                                                                                   |
+| `--acp-server`                | ACP server      | Serve the agent over ACP; cannot be combined with a request, `--print`, or `--setup`                                                    |
+| `--setup`                     | Ink             | Open the provider and default-agent setup wizard                                                                                        |
+| `--agent <path>`              | All             | Load an agent ZIP, project folder, or `agent.ts`/`agent.py`, or `""` for the built-in agent                                             |
+| `--env-file <path>`           | All             | Load an explicitly trusted env file; repeat for several files, later files win                                                          |
+| `--set <field=value>`         | Harness backend | Override any portable config field; repeatable and JSON-aware                                                                           |
+| `--name <name>`               | Harness backend | Override the agent name for this invocation                                                                                             |
+| `--description <text>`        | Harness backend | Override the agent description for this invocation                                                                                      |
+| `--model <model>`             | Harness backend | A `provider/model` string or bare Amazon Bedrock model id                                                                               |
+| `--effort <level>`            | Harness backend | Reasoning effort: `auto` (default), `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`                                        |
+| `--instructions <text>`       | Harness backend | Append domain instructions to the system prompt                                                                                         |
+| `--builtin-tools <tools>`     | Harness backend | Comma-separated built-ins, or `""` for none; defaults to `shell,read,write,edit,web_fetch,web_search,programmatic_tool_caller,subagent` |
+| `--builtin-plugins <plugins>` | Harness backend | Comma-separated built-ins, or `""` for none; defaults to `todos,environment`                                                            |
+| `--caching <mode>`            | Harness backend | Prompt caching: `auto` (default) or `off`                                                                                               |
+| `--context-manager <mode>`    | Harness backend | `auto` (default), `agentic`, or `off`; object forms go through `--set`                                                                  |
+| `--session <mode>`            | Harness backend | Conversation persistence: `on` (default) or `off`                                                                                       |
+| `--session-id <id>`           | Harness backend | Resume a conversation by id (defaults to a fresh one); writes `session.id`                                                              |
+| `--skills <dirs>`             | Harness backend | Comma-separated Agent Skills directories or URLs, or `off`; defaults to `./.agent/skills`                                               |
+| `--memory <mode>`             | Harness backend | Long-term memory: `on` (default) or `off`                                                                                               |
+| `--interventions <policy>`    | Harness backend | Gate tool calls with `ask`, `smart`, a `.cedar` policy file, or a natural-language rule                                                 |
+| `--mcp-config <path>`         | All modes       | Add an MCP configuration file; repeat for multiple files                                                                                |
+
+Explicit CLI values apply only to the current invocation. Dedicated flags override `--set`, which
+overrides the saved profile or authored agent configuration. Unspecified values keep the Harness defaults:
+
+```bash
+strands --agent ./reviewer --prompt "Review this change"
+strands --set 'builtinTools=["read","web_search"]' --set agentConfig.maxParallelTools=2
+strands --set 'builtinTools.web_fetch.model="openai/gpt-5-mini"' --set 'session.dir="./.agent/sessions"'
+```
+
+## Setup and providers
+
+Run `strands` or `/setup` to configure:
+
+- enabled providers and the default model,
+- the agent name and additional instructions,
+- built-in tools, plugins, and the generalist delegate,
+- skills directories, context management, caching, and long-term memory,
+- the default tool-approval mode.
+
+Configuration is stored in `~/.strands/cli.toml`. Explicit CLI flags override the saved
+profile. Applying `/setup` changes reloads the agent while preserving the conversation.
+
+### Web search and Exa
+
+`web_search` uses the model provider's own search where it has one (OpenAI, Google, GPT-5, GPT-6, and Daybreak
+models on `bedrock-mantle`, Anthropic). On a model without native search the Tools step offers
+`web_search` through [Exa](https://exa.ai) instead, unchecked; ticking it writes
+`"web_search": "exa"` to the profile.
+
+> [!WARNING]
+> Web search through Exa sends every search query the model writes to Exa (exa.ai), a third-party
+> service. Queries leave your environment and are subject to
+> [Exa's privacy policy](https://exa.ai/privacy-policy). The wizard shows this warning while the
+> option is on; leaving it unchecked (or `"web_search": false`) keeps it off.
+
+## Appearance
+
+The CLI observes the terminal's reported background color and automatically uses a matching
+high-contrast palette, defaulting to a dark background when unavailable.
+Choose **Theme** to switch between Classic, Minimal, Homeland, Merlin, Kikker, Oak, Spectre,
+or Scarlet; arrow keys and clicks apply the theme immediately.
+The welcome banner shrinks with the terminal, keeping the composer visible.
+`/settings` also links to `/setup` for providers and the default agent.
+
+## Import and export
+
+The setup wizard imports an agent from `agent.ts` or `agent.py`, and `/export` writes a
+TypeScript or Python project with options directly inside `createHarness(...)` / `create_harness(...)`.
+The file exports `agent`, ready to import into another application, and each new CLI launch
+reads the latest edits. No separate JSON snapshot or chat runner is included. TypeScript
+projects include `npm run build` for compiling code to import into another application.
+
+In interactive mode, each TypeScript conversation runs in its own process. Reloading or
+rebuilding its agent evaluates the source again, so module globals reset and are not shared
+between conversations. Model changes and reloads keep the conversation; `/clear` starts fresh.
+
+Run `strands --agent ./agent.zip` directly: the CLI extracts the project into its cache and
+installs its declared dependencies on first launch.
+For an existing source folder, install its dependencies (`npm install`, or create `.venv`
+and install `requirements.txt` for Python), then launch with any of:
+
+```bash
+strands --agent ./project/agent.ts
+strands --agent ./project/agent.py
+strands --agent ./project
+strands --agent ./agent.zip
+```
+
+Select a trusted environment file with `--env-file ./project/.env`; existing shell values take
+precedence. Python agents run with their project `.venv` interpreter when present, otherwise
+`python3`. Both exports include the matching harness library and provider dependencies.
+
+Declare `agent` directly with the harness factory, after imports and supporting definitions.
+The CLI reads that construction to create independent sessions and apply CLI overrides; no wrapper
+function or separate config object is required in your code.
+Imported projects re-export in their authored language, preserving their source files;
+arbitrary Python tools and dependencies cannot be translated to TypeScript automatically.
+
+Imported agents run in their own language and use the directory where you launched `strands`
+as their workspace. Bundled skills, MCP configuration, and policy files resolve relative to
+the imported agent's folder. To use it in another application, import its exported `agent`
+and invoke it through the usual harness library API.
+
+Skills, module-referenced tools, subagents, plugins, models, intervention handlers, sandboxes,
+memory backends, and other executable `AgentConfig` values are bundled with their declared source
+files and dependencies, including file-based Cedar policies. Python modules with neighboring helper
+files should include `__init__.py` and use package-relative imports. Export fails when a value is
+cross-language, lacks packageable source, or would embed an MCP secret. Credentials, conversation
+sessions, memory contents, and running processes are runtime state and are intentionally not exported.
+Machine-discovered MCP servers and skills are not part of the portable definition.
+
+| Provider       | Model prefix      | Credential source                                                          |
+| -------------- | ----------------- | -------------------------------------------------------------------------- |
+| Amazon Bedrock | `bedrock/`        | Standard AWS SDK credential chain                                          |
+| Bedrock Mantle | `bedrock-mantle/` | Standard AWS SDK credential chain                                          |
+| Anthropic      | `anthropic/`      | `ANTHROPIC_API_KEY`                                                        |
+| OpenAI         | `openai/`         | `OPENAI_API_KEY`                                                           |
+| Google Gemini  | `google/`         | `GEMINI_API_KEY`                                                           |
+| Ollama         | `ollama/`         | Auto-detected locally; `OLLAMA_HOST` only for a custom server              |
+| LiteLLM proxy  | `litellm/`        | Auto-detected locally; `LITELLM_BASE_URL` for a custom proxy, optional key |
+
+The CLI does not store provider secrets. Setup detects credentials from the process environment,
+explicitly selected env files, AWS profiles, and other credential sources supported by the
+provider SDK.
+
+Workspace, saved-profile, and imported-project `.env` and `.env.local` files are not loaded automatically. Select trusted
+files explicitly, in precedence order: `strands --env-file .env --env-file .env.local`.
+This also loads custom environment variables used by agent code or MCP configuration.
+`AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE` in selected files also control setup discovery.
+Existing shell values take precedence over saved provider settings, which take precedence over selected files,
+except for an AWS profile chosen in setup or `/model`. That choice persists and overrides the shell profile
+and Bedrock API token; choose the environment/default credential chain to restore automatic authentication.
+For an imported agent, use `strands --agent ./project --env-file ./project/.env`.
+In setup, **Refresh** reloads
+those files and rechecks AWS credentials without restarting; new exports in another
+shell require restarting the CLI. Amazon Bedrock API tokens also need `AWS_REGION` or
+`AWS_DEFAULT_REGION` matching the region that issued the token.
+
+## MCP configuration
+
+The CLI accepts either `{ "mcpServers": { ... } }` or a direct JSON server map:
+
+```json
+{
+  "mcpServers": {
+    "local": {
+      "command": "node",
+      "args": ["server.js"],
+      "env": { "TOKEN": "${MCP_TOKEN}" }
+    },
+    "remote": {
+      "url": "https://example.com/mcp",
+      "transport": "streamable-http",
+      "headers": { "Authorization": "Bearer ${env:MCP_TOKEN}" }
+    }
+  }
+}
+```
+
+`${NAME}` and `${env:NAME}` interpolate environment variables. Servers can also set `cwd`,
+`disabled`, `continueOnError`, and `tasksConfig`. Discovered servers default to
+`continueOnError: true`, so a connection or missing-credential failure leaves that server
+unavailable without blocking startup. Malformed configuration in the CLI's own files stops startup; a
+problem in another tool's file skips that server or file and is listed under `/mcp`. Stdio servers
+run with their stderr discarded, so server diagnostics never print over the terminal UI.
+
+In `/mcp`, select a server and press **→** for its full error, configuration source, and recovery
+steps. **Enter** enables or disables it; the switch shows whether the server is enabled, while
+the status shows whether it connected. Press **R** to retry a failed connection with the loaded
+settings. Use **/** to search.
+
+Retry does not reread configuration or environment files. After editing those files, open
+`/setup` and save to rebuild the agent, or restart Strands. New environment variables exported
+in another shell require a restart. Remote servers need credentials configured for Strands;
+sign-in saved by another app is not shared, and the CLI has no MCP browser sign-in flow.
+
+Configuration is merged by server name. Later files replace earlier definitions; a later
+`"disabled": true` removes an earlier server.
+
+Tool names are only unique within one server, so the harness exposes each tool as `<server>_<tool>`, using
+the server's config key as the prefix (a `slack` server's `search` becomes `slack_search`; characters
+outside `[A-Za-z0-9_-]` in the key become `_`). Set `prefix` on a server to choose the namespace, or
+`""` to expose its tools under their original names.
+
+When MCP discovery is enabled, user configuration is discovered in this order:
+
+1. `~/.claude.json` (user servers, plus the current workspace's local servers and opt-outs)
+2. `~/.kiro/settings/mcp.json`
+3. `~/.gemini/settings.json` (comments allowed; `httpUrl` is streamable HTTP, `url` is SSE)
+4. `~/.codex/config.toml`
+5. `~/.strands/mcp.json`
+
+The CLI then applies trusted project configuration from `.mcp.json`, `.kiro/settings/mcp.json`,
+`.gemini/settings.json`, `.codex/config.toml`, and `.strands/mcp.json`. Repeated `--mcp-config`
+paths are applied last. Codex TOML uses its native `[mcp_servers.<name>]` tables; JSON sources use
+their native `mcpServers` container. Set `STRANDS_CLI_MCP_DISCOVERY=off` to load only `--mcp-config` paths.
+
+Project MCP files can run local commands, so the CLI asks before loading them in interactive Ink or
+plain mode. Print and ACP-server mode never prompt; they load project files only when their current
+fingerprint was approved previously.
+Approval is bound to the canonical workspace and a fingerprint of the exact project file paths and
+contents, which the CLI remembers. Changing a project file requires
+approval again, and a change between approval and loading aborts startup. Passing a project file
+explicitly with `--mcp-config` is treated as an intentional opt-in and does not prompt.
+
+The merged servers are available to the agent. In ACP server mode, they are combined with servers
+supplied by the ACP client.
+
+## Agent Skills
+
+When skill discovery is enabled, the CLI discovers Agent Skills in `~/.agents/skills`, `~/.claude/skills`, `~/.codex/skills`, and
+`~/.strands/skills`. It also scans each directory from the repository root down to the current
+working directory for `.agents/skills`, `.claude/skills`, `.codex/skills`, `.agent/skills`, and
+`.strands/skills`.
+
+Sources are applied from general to specific, so a later project skill replaces an earlier
+same-named user skill. Missing directories are skipped. The profile's skills directories (default
+`./.agent/skills`, or `--skills`) are always applied last, even when discovery would also find
+them, so a configured skill wins over a same-named discovered one. `--skills off` disables
+skills.
+
+Both kinds of discovery are off by default. Enable them with the `/settings` panel's **MCP discovery** and
+**skill discovery** toggles (they apply at the next launch). `STRANDS_CLI_MCP_DISCOVERY=off` or
+`STRANDS_CLI_SKILL_DISCOVERY=off` disables either for a single run. These switches control automatic
+source discovery, not whether MCP or skills are enabled. With MCP discovery off, the CLI loads only
+explicit `--mcp-config` paths. With skill discovery off, the CLI loads only the configured skills
+directories (`./.agent/skills` by default); `--skills off` disables skills entirely.
+
+## Tool approval and host execution
+
+The Ink backend installs the Strands Harness SDK's Cedar intervention before constructing the agent
+through `createHarness()`. Cedar automatically permits workspace-local `read` calls (after
+canonical-path and symlink checks), `todo_write`, `retrieve_context`, and `retrieve_offloaded_content`. Every other built-in
+or MCP tool call opens a permission panel with **Allow once**, **Always allow**, **Deny once**,
+and **Always deny**. Saved choices let you select a specific action or the whole tool.
+Saved allow and deny rules are written to `~/.strands/cli.toml` and apply across launches.
+Shell scopes match command text; they do not sandbox what commands execute.
+A denial is returned to the agent as a denied tool call.
+
+The CLI reads user-level permission settings from `~/.strands/cli.toml`:
+
+```toml
+[permissions]
+mode = "default"
+allow = ["shell", "edit"]
+```
+
+`permissions.mode` accepts `"default"` or `"bypassPermissions"`. Bypass mode skips approval
+prompts; saved deny rules still apply. It does not disable additional
+interventions supplied by the caller or an operating-system sandbox. Permission configuration is
+user-owned; the CLI does not load a project config file that could silently enable bypass mode.
+Use `/permissions` to inspect or change the mode and remove saved tool grants.
+Use `/settings` to persist presentation preferences in the same file. Disabling animations also
+skips the startup intro on later launches. Unrecognized or invalid presentation settings use their
+defaults without preventing startup; unknown settings keys are preserved when saving.
+
+This approval layer is not an operating-system sandbox. Unless a caller supplies a Strands
+`sandbox`, the harness's shell, file, MCP, delegate, and Background Task work runs in the host process with
+the user's permissions. Plain, print, and ACP server modes have no permission UI and therefore use
+stock harness tool behavior; library consumers can pass their own `interventions` and `sandbox` options
+to `createHarness()`.
+
+An Ink `!<command>` shell escape is an explicit user action, so it does not pass through the agent's
+tool-approval intervention. It executes through the same `agent.sandbox` used by the harness's tools and
+inherits that sandbox's isolation. With the SDK default, that environment is the local host rather
+than an operating-system sandbox.
+
+## Ink commands
+
+These commands are local to the full-screen Ink UI:
+
+| Command                        | Action                                                             |
+| ------------------------------ | ------------------------------------------------------------------ |
+| `/help`                        | Browse controls, commands, and the current agent's available tools |
+| `/context`                     | Show context usage and prompt-cache activity                       |
+| `/compact`                     | Summarize older conversation context                               |
+| `/clear`                       | Rebuild the agent with a fresh conversation                        |
+| `/tasks`                       | Show task state and live subagent progress                         |
+| `/model [model-id]`            | Browse or change the active model                                  |
+| `/effort [level]`              | Open the effort slider or set the reasoning effort directly        |
+| `/fork [request]`              | Fork the current conversation into an independent agent            |
+| `/agents`                      | View conversations and live subagents                              |
+| `/rename [name]`               | Rename the active agent                                            |
+| `/sessions`                    | Browse and resume saved sessions                                   |
+| `/skills`                      | Browse available and active Agent Skills                           |
+| `/file [clear\|<paths>...]`    | Attach files to the next message                                   |
+| `/mcp`                         | Inspect MCP servers, read failure details, and retry connections   |
+| `/permissions`                 | Configure persistent tool approvals                                |
+| `/voice [on\|off\|status]`     | Open the bidirectional voice supervisor                            |
+| `/settings`                    | Configure presentation and inspect the active runtime              |
+| `/config [typescript\|python]` | Preview generated code or view the active agent's source           |
+| `/setup`                       | Configure providers and the default agent                          |
+| `/export`                      | Write the agent as a runnable TypeScript or Python project         |
+| `!<command>`                   | Run a shell command in the active agent's sandbox                  |
+| `/exit`                        | Exit the CLI                                                       |
+
+Slash commands provide inline signatures and argument completion. Press Tab or Enter
+on a completion to replace the current argument token.
+
+Use `/file` to open the native macOS or Windows file picker, or pass one or more quoted paths
+directly. Dragging or pasting file paths into the composer attaches them too. Images, supported
+documents, and UTF-8 text files are sent with the next message; `/file clear` removes the draft
+attachments.
+
+`/help` groups **Controls**, **Commands**, and **Available tools** in a searchable panel.
+Select a control or tool for its full text, drag to copy, and press Esc to return.
+Tool names and descriptions come from the active backend; unreported tools or origins are
+marked as unknown rather than inferred from defaults. Command support follows the connection's
+capabilities, including Python and ACP backends.
+
+In a dev chat, press Ctrl+Y to copy the full text of an error message. This works in the chat error panel
+and on the dev setup screen.
+
+An available Agent Skill can also be invoked directly with `/skill-name [prompt]` or
+`$skill-name [prompt]`. The CLI activates it through the SDK's `skills` tool, then runs the trailing
+prompt with that skill's instructions active.
+
+`/voice` opens the experimental bidirectional voice control panel without starting audio. Use
+`/voice on` to start listening without opening the panel, or select **On** in the panel. Choose Amazon
+Nova Sonic or OpenAI Realtime as the conversational supervisor. It handles live audio, endpointing,
+and spoken responses, answers ordinary conversation directly, and routes status, delegation, and
+cancellation through the active harness conversation. The selected coding model still owns files,
+tools, approvals, and execution.
+
+The panel controls the provider, supported voices, and fast/balanced/patient end-of-turn detection.
+While voice mode is on, the voice model speaks directly and turns completed harness responses into
+short grounded updates. A themed frog hops into the bottom-right corner while voice is active and
+moves its mouth during speech. Voice conversation continues while delegated work runs; only an
+explicit cancel request stops that work.
+
+With an empty composer, one Space tap toggles microphone mute, including while the voice panel is
+open. Provider, voice, and endpointing changes restart an active sidecar; selections made while
+voice is off apply on the next start. `/voice off` releases the audio devices. Missing credentials
+appear as an error in the voice panel. Nova requires AWS credentials and model access; OpenAI
+requires `OPENAI_API_KEY`. Both require `uv`, Python 3.13, and PortAudio. The published npm package
+includes the Python sidecar; `uv` installs its Python dependencies on first use.
+
+## ACP server
+
+`strands --acp-server` exposes the agent to an ACP client over
+stdin/stdout. It creates a harness agent for each ACP session, supports client-supplied MCP servers, and
+supports loading saved sessions with transcript replay. Start a separate process for each workspace.
+
+The built-in and TypeScript ACP server advertises background updates through
+`_meta["strands/backgroundTasks"] = { "version": 1 }` in `initialize`. A client opts in on
+`session/new` or `session/load` with `_meta: { "strands/backgroundTasks": { "waitForCompletion": false } }`.
+For an opted-in session:
+
+- Turns can finish while background tasks run. Explicitly disabled background tasks stay disabled.
+- Task changes arrive as `tool_call_update` notifications for the original tool call, with
+  `_meta["strands/backgroundTask"] = { taskId, status }`. Final updates include the result or error.
+- An empty `session/prompt` delivers ready results through the SDK. It makes no model call when
+  nothing is ready. Like other prompts, it gets a busy error while a turn is running.
+- Restoring a session reports tasks the SDK recovered as failed; it does not restart their work.
+
+Updates are checked between turns and before the SDK consumes results. Closing the connection stops
+notifications and uses normal agent shutdown; it does not add a background-task cancellation policy.
+Clients that do not opt in, and the Python ACP server, keep their existing behavior.
+
+## Models, sessions, and background work
+
+### Choosing a model
+
+Pass a `bedrock/<id>` string or a bare Amazon Bedrock model id:
+
+```bash
+strands --model bedrock/global.anthropic.claude-sonnet-5 --effort high "explain this error"
+strands --model global.anthropic.claude-opus-5 "review my auth flow"
+```
+
+To use a preconfigured SDK `Model` instance, use the library directly (see
+[Beyond the CLI](#beyond-the-cli)).
+
+In Ink, `/model` discovers available Amazon Bedrock models. A compatible Bedrock-family change is applied
+live; changing model family rebuilds the agent immediately while preserving the conversation. The model
+and context items in the status strip remain interactive during a turn; live model changes affect
+the next model call, while rebuilds wait for the active turn to finish.
+
+### Remembering a conversation
+
+Every run persists by default, minting a fresh session id when you don't
+supply one, for interactive chats and one-shot `-p` runs alike. Use `/sessions` to browse and resume
+them. Pass `--session-id` to choose a memorable id or pick up that exact conversation directly:
+
+```bash
+strands --session-id my-project "let's refactor the parser"
+# ...later...
+strands --session-id my-project "where did we leave off?"
+```
+
+Pass `--session off` to disable conversation saving. Long-term memory is controlled separately by `--memory`.
+
+For built-in profiles and TypeScript agents, resuming restores the saved conversation while keeping
+the current agent's instructions and system prompt. Python agents follow the Python SDK: both resume
+and startup with a saved session ID restore the saved system prompt along with the conversation,
+replacing the current prompt.
+Session files are trusted input: resume only sessions you created, not ones that came with a cloned repository.
+
+When a turn fails, the conversation stays as it was before the turn. The chat shows a command that resumes the session after a restart.
+In a dev chat, when the model provider reports expired credentials, refresh the credentials. Then restart the CLI, because the CLI process can keep the expired credentials.
+A dev chat keeps each failed message, and a resumed dev chat shows it again. Thus you can send it again.
+
+Sessions use the Harness default, `./.agent/sessions`. Set `session.dir` to keep them somewhere else;
+authored agents (`--agent`) keep their own session configuration. Relative paths resolve against
+the profile's base directory, or the current workspace when no base directory is set.
+For authored agents with sessions disabled or a custom session manager, `--session-id` is ignored;
+the authored configuration controls session identity.
+In Ink, `/sessions` lists sessions from registered workspaces and can resume them across worktrees.
+The CLI keeps this catalog under `~/.strands/sessions/`; existing sessions there or under
+`~/.strands/cli/sessions/` remain available without moving them.
+
+`/sessions rename <name>` names the current saved session and updates the terminal
+title. Saved names return when you reopen the session. Leave out the name to have the agent's
+auxiliary model—or its active model when no auxiliary model is available—suggest a three-word name
+in the background from a copy of the conversation; if that fails, the existing name stays.
+
+### Background Tasks
+
+`subagent` always runs in the background. Any other compatible tool may run there when the model
+selects `_background_execution: true`. Ink uses detached mode so the composer remains
+available; `/tasks` shows task state and live subagent progress, and a ready result automatically
+starts a continuation turn.
+
+Turn token totals include delegated work. When detached work finishes, its originating turn's
+total updates; the context meter continues to measure the parent agent's prompt.
+
+Background activity appears in one row below the input. Press Down from an empty input, or Tab
+from a non-command draft, to focus it; Left/Right chooses a task and Enter opens its live activity.
+Tab stays with slash-command completion. Esc returns to the input without losing the draft.
+
+Live subagents also appear in `/agents` while they are available for peer messages. Select a card
+and press Enter (or click it) to watch its activity; Esc returns to the cards. These views are
+read-only, and the cards disappear when the delegated task finishes.
+
+`/rename <name>` names the active agent in chat, `/agents`, and peer messages, independently of its
+session title. Names are saved with file-backed sessions and restored when reopened. `/rename` without
+a name opens the editor; in `/agents`, select a card and press `R` or click **Rename**. Enter saves and
+Esc cancels.
+
+Plain, print, and direct library invocations use the normal wait-for-completion behavior, as do
+ACP sessions unless the client opts in to [background updates](#acp-server).
+Ink blocks model-family restarts and session replacement while
+Background Tasks are running or waiting for delivery. Use the library's `backgroundTasks` option
+for custom policy or to disable the feature.
+
+## Debug logging
+
+The interactive TUI has no console, so it can capture harness and SDK logs to a file instead. It is off
+by default because the log contains your prompts and tool output. Turn it on for one run with
+`STRANDS_CLI_LOG=1` (or a level name such as `STRANDS_CLI_LOG=warn`); the log lands in
+`<tmpdir>/strands/cli.log`, readable by your user only. `STRANDS_CLI_LOG_FILE` changes the path and
+`STRANDS_CLI_LOG_LEVEL` the level (`debug` | `info` | `warn` | `error`, default `debug`); neither turns
+logging on. Earlier builds wrote this log on every launch, so you may want to delete a leftover
+`<tmpdir>/strands/cli.log`.
+
+## Telemetry
+
+Each time the interactive TUI starts with the built-in profile, `strands` sends one anonymous ping to
+`https://telemetry.strandsagents.com/ping` so we can see which versions, providers, built-in tools,
+and plugins are actually in use. The whole payload is:
+
+```json
+{
+  "v": 1,
+  "cli_version": "0.1.0",
+  "provider": "bedrock",
+  "builtin_tools": ["shell", "read"],
+  "builtin_plugins": ["todos"]
+}
+```
+
+`provider` is one of the shipped provider names and is omitted for a custom model module. The payload
+carries no identifiers of any kind and no prompts, model ids, paths, or environment details, and the
+ping is fire-and-forget: startup never waits on it and failures are silent. Nothing is sent from
+`--print`, piped, plain, or `--acp-server` runs, or when running an authored agent (`--agent`, imported
+projects).
+
+Turn it off with `STRANDS_CLI_TELEMETRY=off` (or `DO_NOT_TRACK=1`), the **Usage ping** toggle in `/settings`
+(takes effect at the next launch), or `telemetry = false` under `[settings]` in `~/.strands/cli.toml`.
+
+`strands dev` does not send the launch ping. It sends one ping for each step of the dev workflow to the same
+endpoint, `https://telemetry.strandsagents.com/ping`, with the same off switches. The whole payload is:
+
+```json
+{
+  "v": 1,
+  "event": "step/1",
+  "context": { "cli_version": "0.1.0", "harness": "python" },
+  "data": { "step": "optimize_run_started" }
+}
+```
+
+`harness` is `base-cli`, `typescript`, or `python`. `step` is one of `dev_launch`, `ask_shown`, `ask_answered`,
+`ask_cancelled`, `optimize_run_started`, `optimize_run_finished`, `optimize_edits_applied`, `evals_ui_opened`,
+`experiment_created`, and `evaluation_started`. The ping has no names, paths, prompts, scores, or identifiers.
+
+## Beyond the CLI
+
+For anything past these flags (custom tools, plugins, specialist subagents, interventions, a
+bring-your-own model instance), use the library directly:
+
+- **TypeScript:** [`@strands-agents/harness`](https://www.npmjs.com/package/@strands-agents/harness)
+- **Python:** [`strands-harness`](https://pypi.org/project/strands-harness/)
+
+## Versioning
+
+The Strands CLI is 0.x. Patch releases (0.x.Y) carry bug fixes and new features; minor releases
+(0.X.0) may change or remove commands, flags, or config keys, and say so in the release notes.
+Human-readable terminal output is not a stable interface. The CLI follows the same rule as
+[Strands harness](https://strandsagents.com/docs/user-guide/harness/versioning/) and pins the
+harness library to a minor, so a harness breaking change never lands in an existing CLI install.
+Release notes: [GitHub Releases](https://github.com/strands-agents/harness-sdk/releases), tagged
+`harness-cli/v*`.
+
+## Contributing ❤️
+
+Contributions are welcome: bug reports, features, docs, or a well-scoped PR. See the
+[Contributing Guide](https://github.com/strands-agents/harness-sdk/blob/main/CONTRIBUTING.md) for
+development setup, how we work, and the pull-request flow. Please also review our
+[Code of Conduct](https://github.com/strands-agents/harness-sdk/blob/main/CODE_OF_CONDUCT.md).
+
+The cache patch in `src/terminal/ink.ts` bounds Ink 7.1.1's text-layout caches in memory during streaming.
+Review this patch when upgrading Ink; it works with read-only installations without changing dependency files.
+
+## Security
+
+See [SECURITY.md](https://github.com/strands-agents/harness-sdk/blob/main/SECURITY.md) for how to
+report a vulnerability. Please do not open a public issue for security concerns.
+
+## License
+
+Apache-2.0. See [LICENSE](https://github.com/strands-agents/harness-sdk/blob/main/strands-cli/LICENSE).

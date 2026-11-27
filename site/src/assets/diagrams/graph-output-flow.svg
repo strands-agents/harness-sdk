@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 244" width="720" height="244">
+  <!-- Type: architecture (fan-out and join). Story: the entry point gets the task, and each node's output flows along its edges to the nodes that depend on it. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Zones -->
+  <rect class="dg-zone" x="144" y="8" width="560" height="228" rx="8"/>
+  <text class="dg-eyebrow" x="160" y="30">GRAPH · OUTPUT FLOWS ALONG EDGES</text>
+
+  <!-- Edges -->
+  <path class="dg-edge" d="M120,136 H166" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M296,124 H320 Q328,124 328,116 V96 Q328,88 336,88 H358" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M296,148 H320 Q328,148 328,156 V176 Q328,184 336,184 H358" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M488,88 H512 Q520,88 520,96 V116 Q520,124 528,124 H550" marker-end="url(#arrow)"/>
+  <path class="dg-edge" d="M488,184 H512 Q520,184 520,176 V156 Q520,148 528,148 H550" marker-end="url(#arrow)"/>
+
+  <!-- Labels -->
+  <text class="dg-label" x="232" y="86" text-anchor="middle">ENTRY POINT</text>
+
+  <!-- Nodes -->
+  <rect class="dg-node is-input" x="16" y="104" width="104" height="64" rx="6"/>
+  <text class="dg-name" x="68" y="141" text-anchor="middle">Task</text>
+
+  <rect class="dg-node is-focal" x="168" y="96" width="128" height="80" rx="6"/>
+  <text class="dg-name is-focal-text" x="232" y="133" text-anchor="middle">Researcher</text>
+  <text class="dg-code" x="232" y="151" text-anchor="middle">research</text>
+
+  <rect class="dg-node" x="360" y="56" width="128" height="64" rx="6"/>
+  <text class="dg-name" x="424" y="85" text-anchor="middle">Analyst</text>
+  <text class="dg-code" x="424" y="103" text-anchor="middle">analysis</text>
+
+  <rect class="dg-node" x="360" y="152" width="128" height="64" rx="6"/>
+  <text class="dg-name" x="424" y="181" text-anchor="middle">Fact checker</text>
+  <text class="dg-code" x="424" y="199" text-anchor="middle">fact_check</text>
+
+  <rect class="dg-node" x="552" y="104" width="128" height="64" rx="6"/>
+  <text class="dg-name" x="616" y="133" text-anchor="middle">Report writer</text>
+  <text class="dg-code" x="616" y="151" text-anchor="middle">report</text>
+</svg>

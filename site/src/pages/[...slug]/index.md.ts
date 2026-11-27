@@ -9,14 +9,26 @@
  * their corresponding /index.md endpoints.
  *
  * Used by LLMs and tooling that need documentation in a machine-readable format.
- * See /docs/user-guide/build-with-ai/ for more information.
  */
 import type { APIRoute, GetStaticPaths } from 'astro'
 import { getCollection } from 'astro:content'
 import { renderEntryToMarkdown } from '@util/render-to-markdown'
+import { siteLink } from '@util/links'
+
+export function buildNotFoundMarkdown(): string {
+  return [
+    '# Page not found',
+    '',
+    'The requested page does not exist. Check the URL or use one of these machine-readable indexes:',
+    '',
+    `- [Documentation index](${siteLink('/llms.txt')})`,
+    `- [Sitemap](${siteLink('/sitemap-index.xml')})`,
+    '',
+  ].join('\n')
+}
 
 export const getStaticPaths: GetStaticPaths = async () => {
-  const docs = await getCollection('docs')
+  const docs = await getCollection('docs', ({ data }) => !data.draft && data.externalDocs?.status !== 'preview')
   return docs.map((entry) => ({
     params: { slug: entry.id },
     props: { entry },
@@ -25,6 +37,14 @@ export const getStaticPaths: GetStaticPaths = async () => {
 
 export const GET: APIRoute = async ({ props }) => {
   const { entry } = props
+  if (entry.id === '404') {
+    return new Response(buildNotFoundMarkdown(), {
+      headers: {
+        'Content-Type': 'text/markdown; charset=utf-8',
+      },
+    })
+  }
+
   const { markdown } = await renderEntryToMarkdown(entry)
 
   return new Response(markdown, {

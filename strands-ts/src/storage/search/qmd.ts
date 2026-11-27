@@ -1,4 +1,5 @@
-import type { Storage, StorageSearchResult } from '../storage.js'
+import type { LocalFileStorage } from '../local-file-storage.js'
+import type { StorageSearchResult } from '../storage.js'
 import type { SearchStrategy } from './types.js'
 
 import { STOP_WORDS, tokenize } from './keyword.js'
@@ -8,7 +9,12 @@ const COLLECTION_PREFIX = `${COLLECTION_NAME}/`
 
 /** Configuration for {@link QmdSearchStrategy}. */
 export interface QmdSearchStrategyConfig {
-  /** Path to the SQLite database file for the QMD index. Defaults to `.<dir>-qmd.sqlite` alongside the storage directory. */
+  /**
+   * Path to the SQLite database file for the QMD index. Defaults to `.<dir>-qmd.sqlite` alongside the storage
+   * directory, which gives each directory its own index. An explicit `dbPath` holds one directory's index, so a
+   * strategy with `dbPath` set throws if it is then used with a second directory (for example a second
+   * `FileMemoryStore` on the same storage).
+   */
   dbPath?: string
 }
 
@@ -20,8 +26,11 @@ export interface QmdSearchStrategyConfig {
  * document frequency, and document length normalization.
  *
  * Works only with {@link LocalFileStorage} — reads `baseDir` from the storage
- * instance to know where files live on disk. Throws if passed a storage backend
- * without a `baseDir` property.
+ * instance to know where files live on disk.
+ *
+ * Keeps one index per storage directory, so one instance can serve several
+ * namespaced storages, such as multiple `FileMemoryStore`s on the same
+ * `LocalFileStorage`, and {@link close} closes all of them.
  *
  * Requires `@tobilu/qmd` as a peer dependency.
  *
@@ -29,19 +38,28 @@ export interface QmdSearchStrategyConfig {
  * ```typescript
  * import { QmdSearchStrategy } from '@strands-agents/sdk/storage/search/qmd'
  * import { LocalFileStorage } from '@strands-agents/sdk/storage'
+ * import { FileMemoryStore } from '@strands-agents/sdk/vended-memory-stores/file-memory-store'
  *
- * const storage = new LocalFileStorage('./memory/')
- * const store = new FileMemoryStore({
- *   storage,
- *   search: new QmdSearchStrategy(),
- * })
+ * const strategy = new QmdSearchStrategy()
+ * const storage = new LocalFileStorage('./.strands/', { searchStrategy: strategy })
+ * const store = new FileMemoryStore({ name: 'agent-memory', storage })
  *
  * const results = await store.search('authentication flow')
+ * await strategy.close()
  * ```
  */
-export class QmdSearchStrategy implements SearchStrategy {
-  private _store: QmdStore | undefined
-  private _storagePath: string | undefined
+export class QmdSearchStrategy implements SearchStrategy<LocalFileStorage> {
+  /**
+   * QMD scans `baseDir` and keeps its index on the host filesystem, so `LocalFileStorage` rejects it
+   * alongside a sandbox (a type error, plus a runtime check) and `forSandbox()` drops it.
+   */
+  readonly requiresHostFs = true
+  /**
+   * One QMD index per resolved storage directory. Namespaced storages (e.g. one per `FileMemoryStore`) each get
+   * their own entry, so they share this strategy without closing each other's index. The value is the pending
+   * open, so concurrent first searches for a directory share a single `createStore` call.
+   */
+  private readonly _stores = new Map<string, Promise<QmdStore>>()
   private readonly _config: QmdSearchStrategyConfig
 
   constructor(config?: QmdSearchStrategyConfig) {
@@ -60,7 +78,7 @@ export class QmdSearchStrategy implements SearchStrategy {
    * @returns Matched keys with BM25 relevance scores, ranked best-first
    * @throws Error if storage is not a filesystem storage or `@tobilu/qmd` is not installed
    */
-  async search(storage: Storage, query: string): Promise<StorageSearchResult[]> {
+  async search(storage: LocalFileStorage, query: string): Promise<StorageSearchResult[]> {
     const store = await this._ensureStore(storage)
     await store.update()
     const ftsQuery = buildQuery(query)
@@ -77,27 +95,48 @@ export class QmdSearchStrategy implements SearchStrategy {
    *
    * @param storage - A LocalFileStorage instance
    */
-  async update(storage: Storage): Promise<void> {
+  async update(storage: LocalFileStorage): Promise<void> {
     const store = await this._ensureStore(storage)
     await store.update()
   }
 
   /**
-   * Closes the QMD store and releases resources (SQLite connection).
+   * Closes every QMD index this strategy has opened and releases resources (SQLite connections).
    */
   async close(): Promise<void> {
-    if (this._store) {
-      await this._store.close()
-      this._store = undefined
-      this._storagePath = undefined
-    }
+    const pending = [...this._stores.values()]
+    this._stores.clear()
+    // An index whose open failed has nothing to close; its error was already surfaced to the caller that opened it.
+    await Promise.allSettled(pending.map(async (store) => (await store).close()))
   }
 
-  private async _ensureStore(storage: Storage): Promise<QmdStore> {
-    const storagePath = this._resolveStoragePath(storage)
-    if (this._store && this._storagePath === storagePath) return this._store
-    if (this._store) await this.close()
+  private async _ensureStore(storage: LocalFileStorage): Promise<QmdStore> {
+    const { resolve } = await import('node:path')
+    const resolvedPath = resolve(storage.baseDir)
 
+    // No await between the lookup and the set below, so concurrent callers for one directory share one open.
+    const existing = this._stores.get(resolvedPath)
+    if (existing) return existing
+
+    const { dbPath } = this._config
+    if (dbPath !== undefined && this._stores.size > 0) {
+      const [boundPath] = this._stores.keys()
+      throw new Error(
+        `QmdSearchStrategy dbPath '${dbPath}' already indexes '${boundPath}' and cannot also index '${resolvedPath}'. ` +
+          'Omit dbPath to keep one index per directory (e.g. per FileMemoryStore), or use one strategy per storage.'
+      )
+    }
+
+    const opening = this._openStore(resolvedPath)
+    this._stores.set(resolvedPath, opening)
+    // Drop a failed open so the next search retries instead of returning the same rejection forever.
+    opening.catch(() => {
+      if (this._stores.get(resolvedPath) === opening) this._stores.delete(resolvedPath)
+    })
+    return opening
+  }
+
+  private async _openStore(resolvedPath: string): Promise<QmdStore> {
     let createStore: QmdCreateStore
     try {
       ;({ createStore } = await (import('@tobilu/qmd' as string) as Promise<{ createStore: QmdCreateStore }>))
@@ -106,11 +145,10 @@ export class QmdSearchStrategy implements SearchStrategy {
     }
     const { resolve, dirname, basename } = await import('node:path')
     const { mkdir } = await import('node:fs/promises')
-    const resolvedPath = resolve(storagePath)
     await mkdir(resolvedPath, { recursive: true })
     const dbPath = this._config.dbPath ?? resolve(dirname(resolvedPath), `.${basename(resolvedPath)}-qmd.sqlite`)
 
-    this._store = await createStore({
+    return createStore({
       dbPath,
       config: {
         collections: {
@@ -118,14 +156,6 @@ export class QmdSearchStrategy implements SearchStrategy {
         },
       },
     })
-    this._storagePath = storagePath
-    return this._store
-  }
-
-  private _resolveStoragePath(storage: Storage): string {
-    const baseDir = (storage as Storage & { baseDir?: string }).baseDir
-    if (typeof baseDir === 'string') return baseDir
-    throw new Error('QmdSearchStrategy requires a storage backend with a baseDir property (e.g. LocalFileStorage)')
   }
 }
 
@@ -145,3 +175,8 @@ function buildQuery(query: string): string | null {
   if (terms.length === 0) return null
   return terms.join(' ')
 }
+
+/** Cross-SDK alias for {@link QmdSearchStrategy}. */
+export { QmdSearchStrategy as Bm25SearchStrategy }
+/** Cross-SDK alias for {@link QmdSearchStrategyConfig}. */
+export type { QmdSearchStrategyConfig as Bm25SearchStrategyConfig }

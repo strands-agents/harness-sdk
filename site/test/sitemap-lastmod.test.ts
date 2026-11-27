@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { urlToContentPaths, newestDateUnder } from '../src/plugins/sitemap-lastmod'
+import { newestDateForSources, newestDateUnder, urlToContentPaths } from '../src/plugins/sitemap-lastmod'
 
 // The sitemap lastmod lookup matches URLs against keys produced by
 // `git log --name-only`, which are repo-root-relative with forward slashes
@@ -19,13 +19,13 @@ describe('urlToContentPaths', () => {
   })
 
   it('omits the prefix when built from the repo root (empty gitPrefix)', () => {
-    expect(urlToContentPaths('/changelog/harness/python-v1.43.0/', 'src/content', '')).toEqual([
-      'src/content/changelog/harness/python-v1.43.0.mdx',
-      'src/content/changelog/harness/python-v1.43.0.md',
-      'src/content/changelog/harness/python-v1.43.0/index.mdx',
-      'src/content/changelog/harness/python-v1.43.0/index.md',
-      'src/content/changelog/harness/python-v1.43.0/README.mdx',
-      'src/content/changelog/harness/python-v1.43.0/README.md',
+    expect(urlToContentPaths('/changelog/sdk/python-v1.43.0/', 'src/content', '')).toEqual([
+      'src/content/changelog/sdk/python-v1.43.0.mdx',
+      'src/content/changelog/sdk/python-v1.43.0.md',
+      'src/content/changelog/sdk/python-v1.43.0/index.mdx',
+      'src/content/changelog/sdk/python-v1.43.0/index.md',
+      'src/content/changelog/sdk/python-v1.43.0/README.mdx',
+      'src/content/changelog/sdk/python-v1.43.0/README.md',
     ])
   })
 
@@ -63,5 +63,31 @@ describe('newestDateUnder', () => {
 
     expect(newestDateUnder(map, 'site/src/content/blog/')).toBeUndefined()
     expect(newestDateUnder(new Map(), 'site/src/content/')).toBeUndefined()
+  })
+})
+
+describe('newestDateForSources', () => {
+  it('uses exact files and directory prefixes to date a standalone page', () => {
+    const map = new Map([
+      ['site/src/pages/box.astro', '2026-07-01T00:00:00Z'],
+      ['site/src/config/box-landing.ts', '2026-07-03T00:00:00Z'],
+      ['site/src/components/box/BoxHero.astro', '2026-07-05T00:00:00Z'],
+      ['site/src/pages/box.astro-old', '2026-07-10T00:00:00Z'],
+      ['site/src/components/other/Box.astro', '2026-07-12T00:00:00Z'],
+    ])
+
+    expect(
+      newestDateForSources(map, [
+        'site/src/pages/box.astro',
+        'site/src/config/box-landing.ts',
+        'site/src/components/box/',
+      ])
+    ).toBe('2026-07-05T00:00:00Z')
+  })
+
+  it('returns undefined when no configured source has a valid date', () => {
+    const map = new Map([['site/src/pages/box.astro', 'not-a-date']])
+
+    expect(newestDateForSources(map, ['site/src/pages/box.astro', 'site/src/components/box/'])).toBeUndefined()
   })
 })

@@ -13,11 +13,20 @@ export { StateStore } from './state-store.js'
 
 // Agent types
 export { AgentResult } from './types/agent.js'
+export type { AgentMetadata } from './agent/agent-metadata.js'
 export type { AgentConfig, ToolList, ToolExecutorStrategy } from './agent/agent.js'
 export type { BackgroundTasksConfig } from './background-tasks/types.js'
 export type { AgentAsToolOptions } from './agent/agent-as-tool.js'
 export type { ToolCaller, ToolCallerProxy, ToolHandle, DirectToolCallOptions } from './agent/tool-caller.js'
-export type { InvocationState, InvokeArgs, InvokeOptions, LocalAgent } from './types/agent.js'
+export type {
+  CancelOptions,
+  InvocationState,
+  InvokeArgs,
+  InvokeLimits,
+  InvokeOptions,
+  LocalAgent,
+} from './types/agent.js'
+export type { InvocationContext, InvocationContextUsage } from './agent/invocation-context.js'
 export type { LifecycleObserver } from './types/lifecycle-observer.js'
 
 // Snapshot types
@@ -35,6 +44,7 @@ export {
   JsonValidationError,
   ConcurrentInvocationError,
   ModelThrottledError,
+  ModelNetworkError,
   ToolValidationError,
   StructuredOutputError,
   ToolNotFoundError,
@@ -43,6 +53,7 @@ export {
 } from './errors.js'
 
 // Interrupt system
+export { InterruptError } from './interrupt.js'
 export type { Interrupt, InterruptSource } from './interrupt.js'
 export type { InterruptParams, InterruptResponse, InterruptResponseContentData } from './types/interrupt.js'
 export { InterruptResponseContent } from './types/interrupt.js'
@@ -57,16 +68,20 @@ export type {
   Role,
   StopReason,
   TextBlockData,
+  OffloadedBlockData,
   ToolUseBlockData,
   ToolResultBlockData,
   ReasoningBlockData,
   CachePointBlockData,
   GuardContentBlockData,
+  SummaryBlockData,
   GuardContentText,
   GuardContentImage,
   GuardQualifier,
   GuardImageFormat,
   GuardImageSource,
+  InjectedBlockData,
+  ToolReferenceBlockData,
   ContentBlock,
   ContentBlockData,
   MessageData,
@@ -79,11 +94,16 @@ export type {
 // Message classes
 export {
   TextBlock,
+  OffloadedBlock,
   ToolUseBlock,
   ToolResultBlock,
   ReasoningBlock,
   CachePointBlock,
   GuardContentBlock,
+  InjectedBlock,
+  SummaryBlock,
+  ToolReferenceBlock,
+  UnknownBlock,
   Message,
   JsonBlock,
   contentBlockFromData,
@@ -188,9 +208,39 @@ export {
 } from './models/streaming.js'
 
 // Model provider types
-export type { BaseModelConfig, CountTokensOptions, StreamOptions, CacheConfig } from './models/model.js'
+export type {
+  BaseModelConfig,
+  CountTokensOptions,
+  StreamOptions,
+  SummarizeOptions,
+  CacheConfig,
+} from './models/model.js'
+export type { SummarizeResult } from './models/summarize.js'
+export type { ModelCapabilities, ModelLimits, PromptCaching, DeferredToolLoading } from './models/model-info.js'
+export { ModelInfo } from './models/model-info.js'
 
 export { Model } from './models/model.js'
+
+// Decision models
+export {
+  DecisionModel,
+  DecisionsAPIDecisionModel,
+  defineQuestions,
+  LLMDecisionModel,
+  TypeSafeDecisionModel,
+  Uncertain,
+} from './decisions/index.js'
+export type {
+  AnswerOf,
+  AskOptions,
+  DecisionCallOptions,
+  DecisionInput,
+  DecisionResult,
+  DecisionsAPIDecisionModelOptions,
+  LLMDecisionModelOptions,
+  Question,
+  TypeSafeDecisionModelOptions,
+} from './decisions/index.js'
 
 // Model routing
 export { ClassifierStrategy, FallbackStrategy, ModelRouter, RoutingCandidate } from './models/routing/index.js'
@@ -276,6 +326,11 @@ export {
   type RetryDecision,
 } from './retry/index.js'
 
+// Context Manager
+// Note: the context manager is intentionally not exported here — its surface lives at
+// '@strands-agents/sdk/context-manager'. Python keeps it in a submodule too, currently
+// `strands.experimental.context_manager`.
+
 // Conversation Manager
 export {
   ConversationManager,
@@ -300,7 +355,10 @@ export type { Logger } from './logging/types.js'
 // MCP Client types and implementations
 export {
   type McpClientOptions,
+  type McpListOptions,
   type McpListToolsOptions,
+  type McpProgress,
+  type McpProgressCallback,
   type McpToolFilterCallback,
   type McpToolFilters,
   type McpToolMatcher,
@@ -310,9 +368,12 @@ export {
   type McpCallToolOptions,
   type TasksConfig,
   type McpConnectionState,
+  type McpLoadServersOptions,
   type McpServerConfig,
   type SerializableMcpToolFilters,
   McpClient,
+  McpTaskCancelledError,
+  McpTaskFailedError,
 } from './mcp/index.js'
 export type { ElicitationCallback, ElicitationContext } from './types/elicitation.js'
 
@@ -339,7 +400,13 @@ export type { Storage } from './storage/storage.js'
 // Sandbox
 export { Sandbox, type ExecuteOptions } from './sandbox/base.js'
 export { PosixShellSandbox } from './sandbox/posix-shell.js'
-export { SandboxTimeoutError, SandboxAbortError, SandboxPathNotFoundError } from './sandbox/errors.js'
+export {
+  SandboxTimeoutError,
+  SandboxAbortError,
+  SandboxPathNotFoundError,
+  SandboxIsADirectoryError,
+  SandboxPermissionError,
+} from './sandbox/errors.js'
 export type { StreamType, StreamChunk, FileInfo, OutputFile, ExecutionResult } from './sandbox/types.js'
 
 // Middleware system
@@ -394,3 +461,27 @@ export type {
   IntervalTriggerOptions,
   ModelExtractorOptions,
 } from './memory/index.js'
+
+export type { McpTaskRequestOptions } from './mcp/index.js'
+export type {
+  McpSubmitToolResult,
+  McpCancelTaskResult,
+  McpCancelledTask,
+  McpCompletedTask,
+  McpCreateTaskResult,
+  McpDetailedTask,
+  McpDirectCallToolResult,
+  McpFailedTask,
+  McpGetTaskResult,
+  McpInputRequest,
+  McpInputRequests,
+  McpInputRequiredTask,
+  McpInputResponse,
+  McpInputResponses,
+  McpTask,
+  McpTaskError,
+  McpTaskResult,
+  McpTaskStatus,
+  McpUpdateTaskResult,
+  McpWorkingTask,
+} from './mcp/index.js'

@@ -1,47 +1,183 @@
 import { tool } from '../../index.js'
 import { z } from 'zod'
-import type { NotebookState } from './types.js'
+import type { NotebookInput } from './types.js'
+import type { InvokableTool } from '../../tools/tool.js'
+
+const DEFAULT_MAX_NOTEBOOK_SIZE_BYTES = 1_048_576 // 1 MiB
+
+/** Modes that mutate `notebooks` state and must be persisted. */
+const MUTATING_MODES = new Set(['create', 'write', 'clear'])
+
+/** Modes that can grow state and therefore need size-cap enforcement. */
+const GROWING_MODES = new Set(['create', 'write'])
 
 /**
- * Zod schema for notebook input validation.
+ * Options for {@link makeNotebook}.
  */
-const notebookInputSchema = z
-  .object({
-    mode: z
-      .enum(['create', 'list', 'read', 'write', 'clear'])
-      .describe('The operation to perform: `create`, `list`, `read`, `write`, `clear`.'),
-    name: z.string().optional().describe('Name of the notebook to operate on. Defaults to "default".'),
-    newStr: z
-      .string()
-      .optional()
-      .describe('Text to append, or the new string for replacement and insertion operations.'),
-    readRange: z
-      .array(z.number())
-      .optional()
-      .describe('Optional parameter of `view` command. Line range to show [start, end]. Supports negative indices.'),
-    oldStr: z.string().optional().describe('String to replace in write mode when doing text replacement.'),
-    insertLine: z
-      .union([z.string(), z.number()])
-      .optional()
-      .describe(
-        'Line number (int) or search text (str) for insertion point in write mode.\nSupports negative indices.'
-      ),
-  })
-  .refine(
-    (data) => {
-      // Validate write mode requirements
-      if (data.mode === 'write') {
-        const hasReplacement = data.oldStr !== undefined && data.newStr !== undefined
-        const hasInsertion = data.insertLine !== undefined && data.newStr !== undefined
-        const hasAppend = data.oldStr === undefined && data.insertLine === undefined && data.newStr !== undefined
-        return hasReplacement || hasInsertion || hasAppend
+export interface MakeNotebookOptions {
+  /**
+   * Tool name exposed to the model.
+   * @defaultValue `"notebook"`
+   */
+  name?: string
+  /**
+   * Tool description shown to the model.
+   * @defaultValue The built-in notebook description string.
+   */
+  description?: string
+  /**
+   * Maximum size of a single notebook's content in bytes (UTF-8 encoded).
+   * @defaultValue `1_048_576` (1 MiB)
+   */
+  maxNotebookSizeBytes?: number
+}
+
+/**
+ * Creates a notebook tool with a custom name, description, and size cap.
+ *
+ * @param options - Configuration options for the tool.
+ * @returns A tool that manages text notebooks in agent state.
+ *
+ * @throws Error if `name` is empty or `maxNotebookSizeBytes` is not a positive integer.
+ *
+ * @example
+ * ```typescript
+ * const myNotebook = makeNotebook({ name: 'scratchpad', maxNotebookSizeBytes: 65536 })
+ * const agent = new Agent({ tools: [myNotebook] })
+ * ```
+ */
+export function makeNotebook({
+  name = 'notebook',
+  description = 'Manages text notebooks for note-taking and documentation. Supports create, list, read, write (append, replace, or insert), and clear operations. In write mode: newStr alone appends to the end; newStr with oldStr replaces matching text; newStr with insertLine inserts at a position. A write only succeeds on a notebook that already exists: use list to check, or create to start a new one (create replaces any existing content). Notebooks persist within the agent invocation.',
+  maxNotebookSizeBytes = DEFAULT_MAX_NOTEBOOK_SIZE_BYTES,
+}: MakeNotebookOptions = {}): InvokableTool<NotebookInput, string> {
+  if (!name) {
+    throw new Error('name must be a non-empty string')
+  }
+  if (!Number.isInteger(maxNotebookSizeBytes) || maxNotebookSizeBytes < 1) {
+    throw new Error('maxNotebookSizeBytes must be a positive integer')
+  }
+
+  /**
+   * Zod schema for notebook input validation.
+   */
+  const notebookInputSchema = z
+    .object({
+      mode: z
+        .enum(['create', 'list', 'read', 'write', 'clear'])
+        .describe('The operation to perform: `create`, `list`, `read`, `write`, `clear`.'),
+      name: z.string().optional().describe('Name of the notebook to operate on. Defaults to "default".'),
+      newStr: z
+        .string()
+        .optional()
+        .describe('Text to append, or the new string for replacement and insertion operations.'),
+      readRange: z
+        .array(z.number())
+        .optional()
+        .describe('Optional parameter of `read` command. Line range to show [start, end]. Supports negative indices.'),
+      oldStr: z.string().optional().describe('String to replace in write mode when doing text replacement.'),
+      insertLine: z
+        .union([z.string(), z.number()])
+        .optional()
+        .describe(
+          'Line number (int) or search text (str) for insertion point in write mode.\nSupports negative indices.'
+        ),
+    })
+    .refine(
+      (data) => {
+        // Validate write mode requirements
+        if (data.mode === 'write') {
+          const hasReplacement = data.oldStr !== undefined && data.newStr !== undefined
+          const hasInsertion = data.insertLine !== undefined && data.newStr !== undefined
+          const hasAppend = data.oldStr === undefined && data.insertLine === undefined && data.newStr !== undefined
+          const isAmbiguous = data.oldStr !== undefined && data.insertLine !== undefined
+          return (hasReplacement || hasInsertion || hasAppend) && !isAmbiguous
+        }
+        return true
+      },
+      {
+        message:
+          'Write operation requires newStr, optionally with oldStr for replacement or insertLine for insertion; ' +
+          'oldStr and insertLine cannot be combined',
       }
-      return true
+    )
+
+  return tool({
+    name,
+    description,
+    inputSchema: notebookInputSchema,
+    callback: (input, context) => {
+      if (!context) {
+        throw new Error('Tool context is required for notebook operations')
+      }
+
+      // Get notebooks from state, or initialize if not present
+      const notebooksObj = context.agent.appState.get('notebooks')
+      let notebooks: Record<string, string>
+
+      if (notebooksObj == null) {
+        notebooks = {}
+      } else if (typeof notebooksObj === 'object' && !Array.isArray(notebooksObj)) {
+        if (Object.values(notebooksObj as object).some((v) => typeof v !== 'string')) {
+          throw new Error('Malformed notebooks state: keys and values must be strings')
+        }
+        notebooks = notebooksObj as Record<string, string>
+      } else {
+        throw new Error('Malformed notebooks state: expected a plain object')
+      }
+
+      // Ensure default notebook exists
+      if (Object.keys(notebooks).length === 0) {
+        notebooks.default = ''
+      }
+
+      let result: string
+
+      switch (input.mode) {
+        case 'create':
+          result = handleCreate(notebooks, input.name ?? 'default', input.newStr)
+          break
+
+        case 'list':
+          result = handleList(notebooks)
+          break
+
+        case 'read':
+          result = handleRead(notebooks, input.name ?? 'default', input.readRange)
+          break
+
+        case 'write':
+          result = handleWrite(notebooks, input.name ?? 'default', input.oldStr, input.newStr, input.insertLine)
+          break
+
+        case 'clear':
+          result = handleClear(notebooks, input.name ?? 'default')
+          break
+
+        default:
+          throw new Error(`Unknown mode: ${input.mode}`)
+      }
+
+      if (GROWING_MODES.has(input.mode)) {
+        const notebookName = input.name ?? 'default'
+        const encoder = new TextEncoder()
+        const size = encoder.encode(notebooks[notebookName]).byteLength
+        if (size > maxNotebookSizeBytes) {
+          throw new Error(
+            `Notebook '${notebookName}' content (${size} bytes) would exceed maximum of ${maxNotebookSizeBytes} bytes`
+          )
+        }
+      }
+
+      if (MUTATING_MODES.has(input.mode)) {
+        // Persist notebooks back to state
+        context.agent.appState.set('notebooks', notebooks)
+      }
+
+      return result
     },
-    {
-      message: 'Write operation requires newStr, optionally with oldStr for replacement or insertLine for insertion',
-    }
-  )
+  })
+}
 
 /**
  * Notebook tool for managing persistent text notebooks.
@@ -63,61 +199,7 @@ const notebookInputSchema = z
  * )
  * ```
  */
-export const notebook = tool({
-  name: 'notebook',
-  description:
-    'Manages text notebooks for note-taking and documentation. Supports create, list, read, write (append, replace, or insert), and clear operations. In write mode: newStr alone appends to the end; newStr with oldStr replaces matching text; newStr with insertLine inserts at a position. A write only succeeds on a notebook that already exists: use list to check, or create to start a new one (create replaces any existing content). Notebooks persist within the agent invocation.',
-  inputSchema: notebookInputSchema,
-  callback: (input, context) => {
-    if (!context) {
-      throw new Error('Tool context is required for notebook operations')
-    }
-
-    // Get notebooks from state, or initialize if not present
-    let notebooks = context.agent.appState.get<NotebookState>('notebooks')
-
-    if (!notebooks) {
-      notebooks = {}
-    }
-
-    // Ensure default notebook exists
-    if (Object.keys(notebooks).length === 0) {
-      notebooks.default = ''
-    }
-
-    let result: string
-
-    switch (input.mode) {
-      case 'create':
-        result = handleCreate(notebooks, input.name ?? 'default', input.newStr)
-        break
-
-      case 'list':
-        result = handleList(notebooks)
-        break
-
-      case 'read':
-        result = handleRead(notebooks, input.name ?? 'default', input.readRange)
-        break
-
-      case 'write':
-        result = handleWrite(notebooks, input.name ?? 'default', input.oldStr, input.newStr, input.insertLine)
-        break
-
-      case 'clear':
-        result = handleClear(notebooks, input.name ?? 'default')
-        break
-
-      default:
-        throw new Error(`Unknown mode: ${input.mode}`)
-    }
-
-    // Persist notebooks back to state
-    context.agent.appState.set('notebooks', notebooks)
-
-    return result
-  },
-})
+export const notebook = makeNotebook()
 
 /**
  * Handles create operation.
@@ -176,13 +258,15 @@ function handleRead(notebooks: Record<string, string>, name: string, readRange?:
   }
 
   const selectedLines: string[] = []
-  for (let lineNum = start; lineNum <= end; lineNum++) {
-    if (lineNum >= 1 && lineNum <= lines.length) {
-      selectedLines.push(`${lineNum}: ${lines[lineNum - 1]}`)
-    }
+  for (let lineNum = Math.max(start, 1); lineNum <= Math.min(end, lines.length); lineNum++) {
+    selectedLines.push(`${lineNum}: ${lines[lineNum - 1]}`)
   }
 
-  return selectedLines.length > 0 ? selectedLines.join('\n') : 'No valid lines found in range'
+  if (selectedLines.length === 0) {
+    return `No lines found in range [${readRange[0]}, ${readRange[1]}]. Notebook '${name}' has ${lines.length} line(s).`
+  }
+
+  return selectedLines.join('\n')
 }
 
 /**

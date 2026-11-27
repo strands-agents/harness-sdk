@@ -8,7 +8,8 @@
 import { BashTimeoutError, BashSessionError } from '../bash/types.js'
 
 export const SANDBOX_SHELL_DESCRIPTION =
-  'Executes shell commands. Each call runs in a fresh shell; ' +
+  'Executes shell commands and returns output (stdout), error (stderr), and exit_code (non-zero means the ' +
+  'command failed). Each call runs in a fresh shell; ' +
   'state such as variables and the working directory does not persist across calls.'
 
 /**
@@ -18,9 +19,13 @@ export const SANDBOX_SHELL_DESCRIPTION =
  * type keep working; new code should catch this instead.
  */
 export class ShellTimeoutError extends BashTimeoutError {
-  constructor(message: string) {
+  /** Output captured before the command was killed, when the sandbox reported it. */
+  readonly partial?: ShellOutput
+
+  constructor(message: string, partial?: ShellOutput) {
     super(message)
     this.name = 'ShellTimeoutError'
+    if (partial) this.partial = partial
   }
 }
 
@@ -38,9 +43,8 @@ export class ShellExecutionError extends BashSessionError {
 }
 
 /**
- * Output format for shell command execution. Structurally identical to the bash
- * tool's output, so pre-rename consumers keep working, but declared standalone;
- * mirrors the Python SDK's `ShellOutput`.
+ * Output format for shell command execution. Declared standalone; mirrors the
+ * Python SDK's `ShellOutput`.
  */
 export interface ShellOutput {
   /**
@@ -55,7 +59,12 @@ export interface ShellOutput {
   error: string
 
   /**
+   * Exit code of the command. Non-zero means the command failed.
+   */
+  exit_code: number
+
+  /**
    * Allow indexing with string keys for JSONValue compatibility.
    */
-  [key: string]: string
+  [key: string]: string | number
 }

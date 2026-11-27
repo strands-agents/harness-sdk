@@ -1,4 +1,4 @@
-"""Experimental and internal. Do not export.
+"""Context management modes and strategies that operate on an agent's conversation.
 
-Context management modes and strategies that operate on an agent's conversation.
+Internal implementation. The public API is re-exported from ``strands.context_manager``.
 """

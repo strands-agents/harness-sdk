@@ -7,6 +7,7 @@ import { TextBlock, JsonBlock, ToolResultBlock, Message } from '../../types/mess
 import type { ToolResultContent } from '../../types/messages.js'
 import { ImageBlock, VideoBlock, DocumentBlock } from '../../types/media.js'
 import type { ImageFormat, VideoFormat, DocumentFormat } from '../../types/media.js'
+import { holdsToolReference } from '../../models/tool-references.js'
 import { tool } from '../../tools/tool-factory.js'
 import { z } from 'zod'
 import { logger } from '../../logging/logger.js'
@@ -346,31 +347,46 @@ export class ContextOffloader implements Plugin {
         '  { reference: "ref_1", pattern: "TODO", line_range: { start: 1, end: 50 } } → search within range',
       inputSchema: retrievalInputSchema,
       callback: async (input, context) => {
+        const storage = this._storageForToolContext(context)
+        const reference = input.reference.trim()
+
+        // Only a missing key is terminal. A throttle or an AccessDenied from the backend has to reach the
+        // model as itself: told "do not retry" it abandons content the next call would have fetched.
+        // Every backend signals a missing key with this message (`storage.ts`, `retrieveContent` above).
+        let result: { content: Uint8Array; contentType: string }
         try {
-          const storage = this._storageForToolContext(context)
-          const result = await retrieveContent(storage, input.reference)
-
-          if (!input.pattern && !input.line_range && input.context_lines === undefined) {
-            return decodeStoredContent(result.content, result.contentType, input.reference)
-          }
-
-          if (!isSearchableContent(result.contentType)) {
-            return `Error: cannot search binary content (${result.contentType}). Omit pattern/line_range/context_lines to retrieve the full content.`
-          }
-
-          const text = new TextDecoder().decode(result.content)
-          const contextLines = input.context_lines ?? 5
-          const lineRange =
-            input.line_range ?? (!input.pattern ? { start: 1, end: Math.max(1, contextLines) } : undefined)
-
-          return searchContent(
-            text,
-            { pattern: input.pattern, line_range: lineRange, context_lines: contextLines },
-            maxChars
+          result = await retrieveContent(storage, reference)
+        } catch (error) {
+          if (!(error instanceof Error) || !error.message.startsWith('Reference not found')) throw error
+          // The placeholder lists each reference with a description, so hold open the likelier reading that the
+          // model copied the decoration with it. Terminal only once it has passed the reference as listed.
+          throw new Error(
+            `reference not found: ${reference}. Pass the reference exactly as the placeholder lists it. ` +
+              'If that is what you passed, the content is unavailable — do not retry.',
+            { cause: error }
           )
-        } catch {
-          return `Error: reference not found: ${input.reference}`
         }
+
+        if (!input.pattern && !input.line_range && input.context_lines === undefined) {
+          return decodeStoredContent(result.content, result.contentType, reference)
+        }
+
+        if (!isSearchableContent(result.contentType)) {
+          throw new Error(
+            `cannot search binary content (${result.contentType}). Omit pattern/line_range/context_lines to retrieve the full content.`
+          )
+        }
+
+        const text = new TextDecoder().decode(result.content)
+        const contextLines = input.context_lines ?? 5
+        const lineRange =
+          input.line_range ?? (!input.pattern ? { start: 1, end: Math.max(1, contextLines) } : undefined)
+
+        return searchContent(
+          text,
+          { pattern: input.pattern, line_range: lineRange, context_lines: contextLines },
+          maxChars
+        )
       },
     })
   }
@@ -382,13 +398,17 @@ export class ContextOffloader implements Plugin {
   ): Promise<{ ref: string; contentType: string; description: string }> {
     if (block instanceof TextBlock && block.text) {
       const ref = await storeContent(storage, key, new TextEncoder().encode(block.text), 'text/plain')
-      return { ref, contentType: 'text/plain', description: `text, ${block.text.length.toLocaleString()} chars` }
+      return { ref, contentType: 'text/plain', description: `text, ${block.text.length.toLocaleString('en-US')} chars` }
     }
     if (block instanceof JsonBlock) {
       const jsonStr = JSON.stringify(block.json, null, 2)
       const jsonBytes = new TextEncoder().encode(jsonStr)
       const ref = await storeContent(storage, key, jsonBytes, 'application/json')
-      return { ref, contentType: 'application/json', description: `json, ${jsonBytes.length.toLocaleString()} bytes` }
+      return {
+        ref,
+        contentType: 'application/json',
+        description: `json, ${jsonBytes.length.toLocaleString('en-US')} bytes`,
+      }
     }
     if (block instanceof ImageBlock || block instanceof VideoBlock || block instanceof DocumentBlock) {
       const bytes = getBytes(block)
@@ -401,7 +421,7 @@ export class ContextOffloader implements Plugin {
       const label = block instanceof DocumentBlock ? block.name : contentType
       if (bytes) {
         const ref = await storeContent(storage, key, bytes, contentType)
-        return { ref, contentType, description: `${label}, ${bytes.length.toLocaleString()} bytes` }
+        return { ref, contentType, description: `${label}, ${bytes.length.toLocaleString('en-US')} bytes` }
       }
       return { ref: '', contentType, description: `${label}, 0 bytes` }
     }
@@ -435,7 +455,7 @@ export class ContextOffloader implements Plugin {
     }
 
     return (
-      `[Offloaded: ${content.length} blocks, ~${tokenCount.toLocaleString()} tokens]\n` +
+      `[Offloaded: ${content.length} blocks, ~${tokenCount.toLocaleString('en-US')} tokens]\n` +
       `${guidance}\n\n` +
       `${preview}\n\n` +
       `[Stored references:]\n${refLines}`
@@ -453,6 +473,8 @@ export class ContextOffloader implements Plugin {
 
     // Skip results from the retrieval tool to prevent circular offloading
     if (this._includeRetrievalTool && event.toolUse.name === RETRIEVAL_TOOL_NAME) return
+    // A tool reference is what keeps a loaded tool's schema in the model's context.
+    if (holdsToolReference(event.result)) return
 
     const content = event.result.content
     const toolUseId = event.result.toolUseId

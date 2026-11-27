@@ -6,6 +6,7 @@
  */
 
 import type { Plugin } from '../plugins/plugin.js'
+import { createAuxiliaryInvocationContext, type InvocationContext } from '../agent/invocation-context.js'
 import type { LocalAgent } from '../types/agent.js'
 import { AfterModelCallEvent, BeforeModelCallEvent } from '../hooks/events.js'
 import { ContextWindowOverflowError } from '../errors.js'
@@ -31,8 +32,9 @@ export type ConversationManagerReduceOptions = {
   agent: LocalAgent
 
   /**
-   * The model instance. Used by conversation managers that perform model-based
-   * reduction (e.g. summarization).
+   * The model of the call that triggered the reduction (the routed model under a
+   * `ModelRouter`). Use it to size the reduction (`countTokens`, `estimateUtilization`);
+   * managers that reduce via a model call should resolve their own, typically `agent.auxModel`.
    */
   model: Model
 
@@ -47,6 +49,9 @@ export type ConversationManagerReduceOptions = {
    * proceeds regardless.
    */
   error?: ContextWindowOverflowError
+
+  /** The request this reduction runs for, if any; a nested call that joins it adds to the request's usage, but the request's limits don't apply. */
+  readonly invocationContext?: InvocationContext
 }
 
 /**
@@ -167,7 +172,14 @@ export abstract class ConversationManager implements Plugin {
     // Reactive overflow recovery
     agent.addHook(AfterModelCallEvent, async (event) => {
       if (event.error instanceof ContextWindowOverflowError) {
-        if (await this.reduce({ agent: event.agent, model: event.model, error: event.error })) {
+        const auxiliaryInvocationContext = createAuxiliaryInvocationContext(event.invocationContext)
+        const reduceOptions: ConversationManagerReduceOptions = {
+          agent: event.agent,
+          model: event.model,
+          error: event.error,
+          ...(auxiliaryInvocationContext && { invocationContext: auxiliaryInvocationContext }),
+        }
+        if (await this.reduce(reduceOptions)) {
           event.retry = true
         }
       }
@@ -189,8 +201,14 @@ export abstract class ConversationManager implements Plugin {
           `projected_tokens=<${event.projectedInputTokens}>, ratio=<${ratio.toFixed(2)}>, compression_threshold=<${this._compressionThreshold}> | compression threshold exceeded, reducing context`
         )
         // Proactive compression is best-effort: swallow errors so the model call can still proceed.
+        const auxiliaryInvocationContext = createAuxiliaryInvocationContext(event.invocationContext)
+        const reduceOptions: ConversationManagerReduceOptions = {
+          agent: event.agent,
+          model: event.model,
+          ...(auxiliaryInvocationContext && { invocationContext: auxiliaryInvocationContext }),
+        }
         try {
-          await this.reduce({ agent: event.agent, model: event.model })
+          await this.reduce(reduceOptions)
         } catch (e) {
           logger.warn(`conversation_manager=<${this.name}> | proactive compression failed, continuing | error=<${e}>`)
         }

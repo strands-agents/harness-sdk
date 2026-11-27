@@ -4,15 +4,38 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
+from a2a.types import (
+    DataPart,
+    Part,
+    Role,
+    Task,
+    TaskArtifactUpdateEvent,
+    TaskState,
+    TaskStatus,
+    TaskStatusUpdateEvent,
+    TextPart,
+)
 from a2a.types import Message as A2AMessage
-from a2a.types import Part, Role, TaskArtifactUpdateEvent, TaskStatusUpdateEvent, TextPart
 
+from strands._context_manager.placeholder import offload_placeholder
 from strands.agent.agent_result import AgentResult
 from strands.multiagent.a2a._converters import (
     convert_content_blocks_to_parts,
     convert_input_to_message,
     convert_response_to_agent_result,
 )
+
+
+def _task_with_status_parts(parts: list[Part]) -> Task:
+    """Build a completed Task with the given parts in status.message and no artifacts."""
+    return Task(
+        id="t1",
+        context_id="c1",
+        status=TaskStatus(
+            state=TaskState.completed,
+            message=A2AMessage(kind="message", role=Role.agent, parts=parts, message_id="m1"),
+        ),
+    )
 
 
 def test_convert_string_input():
@@ -148,6 +171,14 @@ def test_convert_content_blocks_skips_non_text():
     assert len(parts) == 2
 
 
+def test_convert_an_offloaded_block_to_the_text_the_model_receives():
+    content_blocks = [offload_placeholder("drop", "[Dropped: ~1,200 tokens]", "tu-1", 1200)]
+
+    parts = convert_content_blocks_to_parts(content_blocks)
+
+    assert [part.root for part in parts] == [TextPart(kind="text", text="[Dropped: ~1,200 tokens] [ref: tu-1]")]
+
+
 def test_convert_task_artifact_update_event():
     """Test converting TaskArtifactUpdateEvent to AgentResult."""
     mock_task = MagicMock()
@@ -243,6 +274,24 @@ def test_convert_response_handles_missing_data():
     mock_task.artifacts = [mock_artifact]
     result = convert_response_to_agent_result((mock_task, None))
     assert len(result.message["content"]) == 0
+
+
+def test_real_task_status_message_text_is_extracted():
+    """Real Task with text in status.message and no artifacts extracts content."""
+    task = _task_with_status_parts([Part(TextPart(kind="text", text="the answer"))])
+
+    result = convert_response_to_agent_result((task, None))
+
+    assert result.message["content"] == [{"text": "the answer"}]
+
+
+def test_real_task_status_message_non_text_parts_are_skipped():
+    """Real Task whose status.message contains only non-text parts yields empty content."""
+    task = _task_with_status_parts([Part(DataPart(kind="data", data={"a": 1}))])
+
+    result = convert_response_to_agent_result((task, None))
+
+    assert result.message["content"] == []
 
 
 # =========================================================================

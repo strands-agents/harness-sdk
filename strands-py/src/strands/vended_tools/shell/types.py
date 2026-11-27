@@ -9,10 +9,12 @@ class ShellOutput(TypedDict):
     Attributes:
         output: Standard output captured from the command.
         error: Standard error captured from the command. Empty when there was none.
+        exit_code: Exit code of the command. Non-zero means the command failed.
     """
 
     output: str
     error: str
+    exit_code: int
 
 
 class ShellExecutionError(RuntimeError):
@@ -25,7 +27,8 @@ class ShellExecutionError(RuntimeError):
 
 
 SANDBOX_SHELL_DESCRIPTION = (
-    "Executes shell commands. Each call runs in a fresh shell; "
+    "Executes shell commands and returns output (stdout), error (stderr), and exit_code (non-zero means the "
+    "command failed). Each call runs in a fresh shell; "
     "state such as variables and the working directory does not persist across calls."
 )
 """Description for the shell tool."""

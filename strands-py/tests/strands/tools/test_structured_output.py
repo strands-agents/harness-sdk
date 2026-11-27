@@ -1,4 +1,5 @@
-from typing import Literal, Optional
+from enum import Enum
+from typing import Any, Literal, Optional
 
 import pytest
 from pydantic import BaseModel, Field
@@ -423,3 +424,262 @@ def test_convert_pydantic_with_refs():
         "name": "Person",
     }
     assert tool_spec == expected_spec
+
+
+def test_convert_pydantic_with_nullable_enum():
+    """Test that nullable Literal/enum fields preserve anyOf instead of creating invalid type/enum combo."""
+
+    class NullableEnum(BaseModel):
+        sentiment: Literal["positive", "negative"] | None
+        flag: Literal["x"] | None = None
+
+    tool_spec = convert_pydantic_to_tool_spec(NullableEnum)
+
+    expected_spec = {
+        "name": "NullableEnum",
+        "description": "NullableEnum structured output tool",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "sentiment": {
+                        "anyOf": [
+                            {"enum": ["positive", "negative"], "type": "string"},
+                            {"type": "null"},
+                        ],
+                        "title": "Sentiment",
+                    },
+                    "flag": {
+                        "anyOf": [
+                            {"const": "x", "type": "string"},
+                            {"type": "null"},
+                        ],
+                        "default": None,
+                        "title": "Flag",
+                    },
+                },
+                "title": "NullableEnum",
+                "required": ["sentiment"],
+            }
+        },
+    }
+
+    assert tool_spec == expected_spec
+
+    # Verify we can construct a valid ToolSpec
+    tool_spec_obj = ToolSpec(**tool_spec)
+    assert tool_spec_obj is not None
+
+
+def test_convert_pydantic_with_model_json_schema_override():
+    """Test that a model_json_schema override returning a dereferenced schema is respected."""
+
+    filters_prop = {
+        "filters": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"],
+            },
+        }
+    }
+
+    class Filter(BaseModel):
+        name: str
+
+    class FilterGroup(BaseModel):
+        filters: tuple[Filter, ...]
+
+    class Scope(BaseModel):
+        group: FilterGroup
+
+        @classmethod
+        def model_json_schema(cls, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            return {
+                "type": "object",
+                "properties": {
+                    "group": {
+                        "type": "object",
+                        "properties": filters_prop,
+                        "required": ["filters"],
+                    }
+                },
+                "required": ["group"],
+            }
+
+    # Should not raise ValueError: Missing reference: Filter
+    tool_spec = convert_pydantic_to_tool_spec(Scope)
+
+    expected_spec = {
+        "name": "Scope",
+        "description": "Scope structured output tool",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "group": {
+                        "type": "object",
+                        "description": "",
+                        "properties": filters_prop,
+                        "required": ["filters"],
+                    }
+                },
+                "required": ["group"],
+            }
+        },
+    }
+
+    assert tool_spec == expected_spec
+
+    # Verify we can construct a valid ToolSpec
+    tool_spec_obj = ToolSpec(**tool_spec)
+    assert tool_spec_obj is not None
+
+
+def test_convert_pydantic_with_nullable_str_enum():
+    """Test that nullable str Enum fields (resolved via $ref) preserve anyOf."""
+
+    class Color(str, Enum):
+        RED = "red"
+        GREEN = "green"
+        BLUE = "blue"
+
+    class Palette(BaseModel):
+        favorite: Color | None = None
+
+    tool_spec = convert_pydantic_to_tool_spec(Palette)
+
+    expected_spec = {
+        "name": "Palette",
+        "description": "Palette structured output tool",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "favorite": {
+                        "anyOf": [
+                            {"enum": ["red", "green", "blue"], "title": "Color", "type": "string"},
+                            {"type": "null"},
+                        ],
+                        "default": None,
+                    }
+                },
+                "title": "Palette",
+            }
+        },
+    }
+
+    assert tool_spec == expected_spec
+
+
+def test_convert_pydantic_with_non_nullable_literal_default():
+    """Test that a non-nullable Literal with a default does not get null injected into its type."""
+
+    class Config(BaseModel):
+        mode: Literal["fast", "slow"] = "fast"
+        flag: Literal["on"] = "on"
+
+    tool_spec = convert_pydantic_to_tool_spec(Config)
+
+    expected_spec = {
+        "name": "Config",
+        "description": "Config structured output tool",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "default": "fast",
+                        "enum": ["fast", "slow"],
+                        "title": "Mode",
+                        "type": "string",
+                    },
+                    "flag": {
+                        "const": "on",
+                        "default": "on",
+                        "title": "Flag",
+                        "type": "string",
+                    },
+                },
+                "title": "Config",
+            }
+        },
+    }
+
+    assert tool_spec == expected_spec
+
+
+def test_convert_pydantic_with_unions():
+    """Test that union fields keep every anyOf branch (#6094)."""
+
+    class Cat(BaseModel):
+        kind: Literal["cat"]
+        meows: int
+
+    class Dog(BaseModel):
+        kind: Literal["dog"]
+        barks: int
+
+    class Owner(BaseModel):
+        pet: Cat | Dog
+
+    class Pet(BaseModel):
+        pet: Cat | Dog
+        maybe_pet: Cat | Dog | None = None
+        id: int | str
+        owner: Owner | None = None
+        litter: list[Cat] | Dog
+
+    tru_spec = convert_pydantic_to_tool_spec(Pet)
+
+    cat_schema = {
+        "title": "Cat",
+        "type": "object",
+        "properties": {
+            "kind": {"const": "cat", "title": "Kind", "type": "string"},
+            "meows": {"title": "Meows", "type": "integer"},
+        },
+        "required": ["kind", "meows"],
+    }
+    dog_schema = {
+        "title": "Dog",
+        "type": "object",
+        "properties": {
+            "kind": {"const": "dog", "title": "Kind", "type": "string"},
+            "barks": {"title": "Barks", "type": "integer"},
+        },
+        "required": ["kind", "barks"],
+    }
+    exp_spec = {
+        "name": "Pet",
+        "description": "Pet structured output tool",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "pet": {"anyOf": [cat_schema, dog_schema], "title": "Pet"},
+                    "maybe_pet": {
+                        "anyOf": [cat_schema, dog_schema, {"type": "null"}],
+                        "default": None,
+                        "title": "Maybe Pet",
+                    },
+                    "id": {"anyOf": [{"type": "integer"}, {"type": "string"}], "title": "Id"},
+                    "owner": {
+                        "title": "Owner",
+                        "type": ["object", "null"],
+                        "properties": {"pet": {"anyOf": [cat_schema, dog_schema], "title": "Pet"}},
+                        "required": ["pet"],
+                    },
+                    "litter": {
+                        "anyOf": [{"items": cat_schema, "type": "array"}, dog_schema],
+                        "title": "Litter",
+                    },
+                },
+                "title": "Pet",
+                "required": ["pet", "id", "litter"],
+            }
+        },
+    }
+
+    assert tru_spec == exp_spec

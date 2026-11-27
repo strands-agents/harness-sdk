@@ -61,7 +61,8 @@ def _parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
     Raises:
         ValueError: If the frontmatter is malformed or missing required delimiters.
     """
-    stripped = content.strip()
+    # str.strip() keeps a UTF-8 BOM (U+FEFF), which some editors write at the start of the file.
+    stripped = content.lstrip("\ufeff").strip()
     if not stripped.startswith("---"):
         raise ValueError("SKILL.md must start with --- frontmatter delimiter")
 
@@ -80,7 +81,10 @@ def _parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
         # to improve cross-client compatibility. See: agentskills.io/client-implementation/adding-skills-support
         logger.warning("YAML parse failed, retrying with colon-quoting fallback")
         fixed = _fix_yaml_colons(frontmatter_str)
-        result = yaml.safe_load(fixed)
+        try:
+            result = yaml.safe_load(fixed)
+        except yaml.YAMLError as error:
+            raise ValueError(f"malformed YAML frontmatter: {error}") from error
 
     frontmatter: dict[str, Any] = result if isinstance(result, dict) else {}
     return frontmatter, body

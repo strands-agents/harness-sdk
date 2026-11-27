@@ -207,12 +207,12 @@ Agent SOPs can be used as the system prompts for your Strands agents. Simply ins
 
 ```python
 from strands import Agent
-from strands_tools import editor, shell
+from strands.vended_tools import file_editor, shell
 from strands_agents_sops import code_assist
 
 agent = Agent(
   system_prompt=code_assist,
-  tools=[editor, shell]
+  tools=[file_editor, shell]
 )
 
 agent("Start code-assist sop")
@@ -247,12 +247,12 @@ Building on the codebase-summary example from earlier, you can create a Strands 
 
 ```python
 from strands import Agent
-from strands_tools import editor, shell, git
+from strands.vended_tools import file_editor, shell
 from strands_agents_sops import codebase_summary
 
 doc_agent = Agent(
  system_prompt=codebase_summary,
- tools=[editor, shell, git]
+ tools=[file_editor, shell]
 )
 
 # Run in update mode to refresh docs based on recent commits

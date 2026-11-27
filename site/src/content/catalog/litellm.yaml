@@ -5,5 +5,5 @@ maintainedBy: strands
 languages:
   python: {}
 github: https://github.com/strands-agents/harness-sdk/blob/main/strands-py/src/strands/models/litellm.py
-docsPage: docs/user-guide/concepts/model-providers/litellm
+docsPage: docs/user-guide/sdk/model-providers/litellm
 addedDate: 2025-05-16

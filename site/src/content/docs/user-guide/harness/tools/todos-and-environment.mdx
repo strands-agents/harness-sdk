@@ -1,0 +1,92 @@
+---
+title: Task tracking and environment
+description: "Strands harness's two built-in plugins: environment injects the platform, date, working directory, and AGENTS.md, and the deprecated todos has moved to the SDK."
+sourceLinks:
+  - path: harness-py/src/strands_harness/plugins/todos.py
+  - path: harness-py/src/strands_harness/plugins/environment.py
+  - path: harness-ts/src/plugins/todos.ts
+sidebar:
+  label: "Task tracking and environment"
+---
+
+Two of Strands harness's built-ins are plugins rather than tools: `environment` and
+`todos`. Both are selected through `builtin_plugins` and shape how the agent works without
+being things the model calls the way it calls `shell` or `read`. `environment` is on by
+default; `todos` is opt-in and deprecated in favor of the SDK plugin.
+
+## todos
+
+:::caution[Moved to the SDK]
+The harness `todos` built-in is deprecated and is removed in a later harness minor. The
+plugin now ships in the SDK as `Todos`: construct it yourself and pass it in `plugins`.
+[Todos](../../../sdk/plugins/todos/) documents what it does and how to configure it, and
+[issue #5279](https://github.com/strands-agents/harness-sdk/issues/5279) tracks the move.
+:::
+
+Naming `todos` in `builtin_plugins` still adds the `todo_write` tool and still keeps the
+list in view, but it warns on construction. The SDK plugin is the same plugin, so moving
+to it changes how you attach it and nothing about how the agent behaves:
+
+<Tabs>
+  <Tab label="Python">
+    ```python
+    from strands import Agent
+    from strands.vended_plugins.todos import Todos
+
+    agent = Agent(plugins=[Todos()])
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    import { Agent } from '@strands-agents/sdk'
+    import { Todos } from '@strands-agents/sdk/vended-plugins/todos'
+
+    const agent = new Agent({ plugins: [new Todos()] })
+    ```
+  </Tab>
+</Tabs>
+
+Drop `"todos"` from `builtin_plugins` when you do. Both register a `todo_write` tool, so
+keeping each one leaves them in conflict over that name.
+
+## environment
+
+The `environment` plugin injects a small block of working-environment context before each
+user turn:
+
+- The platform and the current date.
+- The working directory.
+- The project's `AGENTS.md`, included in full up to a cap (about 16 KB); a longer file is
+  truncated with a marker, and the agent can read the rest on demand.
+- Links (not contents) to other `AGENTS.md` and `README.md` files found a couple of levels
+  down, so the block stays small and the agent reads them only as needed.
+
+Everything is read through the agent's [sandbox](../../../sdk/sandbox/), so
+the platform, directory, and files describe where the agent actually runs. The date is
+injected each turn (rather than baked into the system prompt) precisely so it does not
+change the cached prompt prefix; the rest is discovered once and reused.
+
+## Select or disable them
+
+`builtin_plugins` selects these by name, defaulting to `["environment"]`. Name both to add
+todos, or pass an empty list to turn both off:
+
+<Tabs>
+  <Tab label="Python">
+    ```python
+    from strands_harness import create_harness
+
+    agent = create_harness(builtin_plugins=["todos", "environment"])
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    import { createHarness } from '@strands-agents/harness'
+
+    const agent = await createHarness({ builtinPlugins: ['todos', 'environment'] })
+    ```
+  </Tab>
+</Tabs>
+
+For the plugin system these build on, see the Strands Harness SDK's
+[plugins](../../../sdk/plugins/) documentation.

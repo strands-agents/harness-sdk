@@ -1,0 +1,11 @@
+name: Lelu
+description: Authorization engine for AI agents that checks every tool call against policy and returns allow, deny, human review, or redirection to a safer tool.
+integrationType: intervention
+languages:
+  python:
+    package: lelu-agent-auth-sdk
+  typescript:
+    package: lelu-agent-auth
+github: https://github.com/Lelu-ai/lelu
+docsUrl: https://lelu-ai.com/docs/integrations/strands
+addedDate: 2026-09-05

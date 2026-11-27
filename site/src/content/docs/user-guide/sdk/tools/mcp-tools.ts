@@ -1,0 +1,255 @@
+import { Agent, McpClient } from '@strands-agents/sdk'
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
+import type { ElicitResult } from '@modelcontextprotocol/sdk/types.js'
+
+// --8<-- [start:quick_start]
+// Create MCP client with stdio transport
+const mcpClient = new McpClient({
+  transport: new StdioClientTransport({
+    command: 'uvx',
+    args: ['awslabs.aws-documentation-mcp-server@latest'],
+  }),
+})
+
+// Pass MCP client directly to agent
+const agent = new Agent({
+  tools: [mcpClient],
+})
+
+await agent.invoke('What is AWS Lambda?')
+// --8<-- [end:quick_start]
+
+// --8<-- [start:direct_integration]
+const mcpClientDirect = new McpClient({
+  transport: new StdioClientTransport({
+    command: 'uvx',
+    args: ['awslabs.aws-documentation-mcp-server@latest'],
+  }),
+})
+
+// MCP client passed directly - connects on first tool use
+const agentDirect = new Agent({
+  tools: [mcpClientDirect],
+})
+
+await agentDirect.invoke('What is AWS Lambda?')
+// --8<-- [end:direct_integration]
+
+// --8<-- [start:explicit_tools]
+// Explicit tool listing
+const tools = await mcpClient.listTools()
+const agentExplicit = new Agent({ tools })
+// --8<-- [end:explicit_tools]
+
+// --8<-- [start:multiple_servers]
+const localClient = new McpClient({
+  transport: new StdioClientTransport({
+    command: 'uvx',
+    args: ['awslabs.aws-documentation-mcp-server@latest'],
+  }),
+})
+
+const remoteClient = new McpClient({
+  transport: new StreamableHTTPClientTransport(
+    new URL('https://api.example.com/mcp/')
+  ) as Transport,
+})
+
+// Pass multiple MCP clients to the agent
+const agentMultiple = new Agent({
+  tools: [localClient, remoteClient],
+})
+// --8<-- [end:multiple_servers]
+
+{
+  // --8<-- [start:tool_filtering]
+  // String matching - loads only specified tools
+  const filteredClient = new McpClient({
+    transport: new StdioClientTransport({
+      command: 'uvx',
+      args: ['awslabs.aws-documentation-mcp-server@latest'],
+    }),
+    toolFilters: { allowed: ['search_documentation', 'read_documentation'] },
+  })
+
+  // Regex patterns
+  const regexClient = new McpClient({
+    transport: new StdioClientTransport({
+      command: 'uvx',
+      args: ['awslabs.aws-documentation-mcp-server@latest'],
+    }),
+    toolFilters: { allowed: [/^search_.*/] },
+  })
+
+  // Callbacks receive the tool itself
+  const callbackClient = new McpClient({
+    transport: new StdioClientTransport({
+      command: 'uvx',
+      args: ['awslabs.aws-documentation-mcp-server@latest'],
+    }),
+    toolFilters: { rejected: [(tool) => tool.name.endsWith('_internal')] },
+  })
+
+  // Combined filters - applies allowed first, then rejected
+  const combinedClient = new McpClient({
+    transport: new StdioClientTransport({
+      command: 'uvx',
+      args: ['awslabs.aws-documentation-mcp-server@latest'],
+    }),
+    toolFilters: {
+      allowed: [/.*documentation$/],
+      rejected: ['read_documentation'],
+    },
+  })
+  // --8<-- [end:tool_filtering]
+  void filteredClient
+  void regexClient
+  void callbackClient
+  void combinedClient
+}
+
+{
+  // --8<-- [start:tool_prefixing]
+  const awsDocsClient = new McpClient({
+    transport: new StdioClientTransport({
+      command: 'uvx',
+      args: ['awslabs.aws-documentation-mcp-server@latest'],
+    }),
+    prefix: 'aws_docs',
+  })
+
+  const otherClient = new McpClient({
+    transport: new StdioClientTransport({
+      command: 'uvx',
+      args: ['other-mcp-server@latest'],
+    }),
+    prefix: 'other',
+  })
+
+  // Tools will be named: aws_docs_search_documentation, other_search, etc.
+  const agent = new Agent({ tools: [awsDocsClient, otherClient] })
+  // --8<-- [end:tool_prefixing]
+  void agent
+}
+
+// --8<-- [start:mcp_server]
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { z } from 'zod'
+
+const server = new McpServer({
+  name: 'Calculator Server',
+  version: '1.0.0',
+})
+
+server.tool(
+  'calculator',
+  'Calculator tool which performs calculations',
+  {
+    x: z.number(),
+    y: z.number(),
+  },
+  async ({ x, y }) => {
+    return {
+      content: [{ type: 'text', text: String(x + y) }],
+    }
+  }
+)
+
+const transport = new StdioServerTransport()
+await server.connect(transport)
+// --8<-- [end:mcp_server]
+
+async function elicitationExample() {
+  // --8<-- [start:elicitation]
+  const client = new McpClient({
+    transport: new StdioClientTransport({
+      command: 'python',
+      args: ['/path/to/server.py'],
+    }),
+    elicitationCallback: async (_context, params): Promise<ElicitResult> => {
+      console.log(`ELICITATION: ${params.message}`)
+      // Get user confirmation...
+      return {
+        action: 'accept',
+        content: { username: 'myname' },
+      }
+    },
+  })
+
+  const agent = new Agent({ tools: [client] })
+  await agent.invoke("Delete 'a/b/c.txt' and share the name of the approver")
+  // --8<-- [end:elicitation]
+}
+void elicitationExample
+
+// --8<-- [start:tools_overview_example]
+// Create MCP client with stdio transport
+const mcpClientOverview = new McpClient({
+  transport: new StdioClientTransport({
+    command: 'uvx',
+    args: ['awslabs.aws-documentation-mcp-server@latest'],
+  }),
+})
+
+// Pass MCP client directly to agent
+const agentOverview = new Agent({
+  tools: [mcpClientOverview],
+})
+
+await agentOverview.invoke('Calculate the square root of 144')
+// --8<-- [end:tools_overview_example]
+
+async function streamableHttpOAuthExample() {
+  // --8<-- [start:streamable_http_oauth]
+  const clientId = process.env.OAUTH_CLIENT_ID
+  const clientSecret = process.env.OAUTH_CLIENT_SECRET
+
+  if (!clientId || !clientSecret) {
+    throw new Error('Set OAUTH_CLIENT_ID and OAUTH_CLIENT_SECRET')
+  }
+
+  const oauthMcpClient = new McpClient({
+    url: 'https://api.example.com/mcp/',
+    auth: {
+      clientId,
+      clientSecret,
+      scopes: ['mcp:tools'],
+    },
+    headers: { 'X-Client-Name': 'support-agent' },
+  })
+
+  const agent = new Agent({ tools: [oauthMcpClient] })
+  // --8<-- [end:streamable_http_oauth]
+  void agent
+}
+void streamableHttpOAuthExample
+
+async function loadServersExample() {
+  // --8<-- [start:load_servers]
+  const clients = await McpClient.loadServers(
+    {
+      documentation: {
+        command: 'uvx',
+        args: ['awslabs.aws-documentation-mcp-server@latest'],
+      },
+      protectedApi: {
+        url: 'https://api.example.com/mcp/',
+        auth: {
+          clientId: '${OAUTH_CLIENT_ID}',
+          clientSecret: '${OAUTH_CLIENT_SECRET}',
+          scopes: ['mcp:tools'],
+        },
+      },
+    },
+    undefined, // Skip optional client defaults
+    { prefixWithServerName: true }
+  )
+
+  const agent = new Agent({ tools: clients })
+  // --8<-- [end:load_servers]
+  void agent
+}
+void loadServersExample

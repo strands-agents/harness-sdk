@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 428" width="720" height="428">
+  <!-- Type: sequence with phase bands. Story: only names and descriptions load up front; full instructions load when the agent asks. -->
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+    <marker id="arrow-accent" viewBox="0 0 8 6" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path class="dg-head is-accent" d="M0,0 L8,3 L0,6 Z"/>
+    </marker>
+  </defs>
+
+  <!-- Phase bands -->
+  <rect class="dg-zone" x="8" y="80" width="704" height="148" rx="8"/>
+  <rect class="dg-zone" x="8" y="236" width="704" height="96" rx="8"/>
+  <rect class="dg-zone" x="8" y="340" width="704" height="76" rx="8"/>
+
+  <!-- Lifelines -->
+  <line class="dg-lifeline" x1="80" y1="64" x2="80" y2="420"/>
+  <line class="dg-lifeline" x1="256" y1="64" x2="256" y2="420"/>
+  <line class="dg-lifeline" x1="464" y1="64" x2="464" y2="420"/>
+  <line class="dg-lifeline" x1="640" y1="64" x2="640" y2="420"/>
+
+  <!-- Phase labels (masked over the first lifeline) -->
+  <rect class="dg-mask is-on-zone" x="20" y="88" width="112" height="14" rx="2"/>
+  <text class="dg-eyebrow" x="24" y="99">1 · DISCOVERY</text>
+  <rect class="dg-mask is-on-zone" x="20" y="244" width="120" height="14" rx="2"/>
+  <text class="dg-eyebrow" x="24" y="255">2 · ACTIVATION</text>
+  <rect class="dg-mask is-on-zone" x="20" y="348" width="112" height="14" rx="2"/>
+  <text class="dg-eyebrow" x="24" y="359">3 · EXECUTION</text>
+
+  <!-- Messages: time flows down, every arrow is horizontal -->
+  <path class="dg-edge" d="M80,132 H254" marker-end="url(#arrow)"/>
+  <text class="dg-msg" x="168" y="121" text-anchor="middle">configure skill sources</text>
+
+  <path class="dg-edge" d="M80,168 H462" marker-end="url(#arrow)"/>
+  <text class="dg-msg" x="168" y="157" text-anchor="middle">register the plugin</text>
+
+  <path class="dg-edge" d="M256,204 H462" marker-end="url(#arrow)"/>
+  <text class="dg-msg" x="360" y="193" text-anchor="middle">inject names + descriptions</text>
+
+  <path class="dg-edge is-accent" d="M464,284 H638" marker-end="url(#arrow-accent)"/>
+  <text class="dg-msg is-accent" x="552" y="273" text-anchor="middle">activate pdf-processing</text>
+
+  <path class="dg-edge is-dashed" d="M640,316 H466" marker-end="url(#arrow)"/>
+  <text class="dg-msg" x="552" y="305" text-anchor="middle">instructions + resources</text>
+
+  <path class="dg-edge" d="M464,380 H488 Q496,380 496,388 V392 Q496,400 488,400 H466" marker-end="url(#arrow)"/>
+  <text class="dg-msg" x="508" y="394">uses the skill</text>
+
+  <!-- Actors -->
+  <rect class="dg-node is-input" x="16" y="16" width="128" height="48" rx="6"/>
+  <text class="dg-name" x="80" y="45" text-anchor="middle">Developer</text>
+
+  <rect class="dg-node" x="176" y="16" width="160" height="48" rx="6"/>
+  <text class="dg-name" x="256" y="45" text-anchor="middle">AgentSkills plugin</text>
+
+  <rect class="dg-node" x="400" y="16" width="128" height="48" rx="6"/>
+  <text class="dg-name" x="464" y="45" text-anchor="middle">Agent</text>
+
+  <rect class="dg-node" x="576" y="16" width="128" height="48" rx="6"/>
+  <text class="dg-name" x="640" y="45" text-anchor="middle">skills tool</text>
+</svg>

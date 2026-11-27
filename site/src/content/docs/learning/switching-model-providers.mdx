@@ -1,83 +1,101 @@
 ---
-title: "Lesson 2: Switching Model Providers"
+title: "Lesson 2: Switching model providers"
 description: "This covers model providers: how Strands abstracts the underlying LLM so your agent logic stays the same regardless of which model you're calling."
 redirectFrom:
   - docs/community/learning/lesson2-switching-model-providers
 ---
 
-<YouTube id="NAEX4ORLkbQ" title="Lesson 2: Switching Model Providers" />
+import CourseNotice from '../../../components/CourseNotice.astro'
+
+<CourseNotice title="Before you follow along">
+
+This video is a snapshot in time. Some APIs and examples have changed since
+recording. Follow the code on this page, and look for "Changed since recording"
+notices below.
+
+</CourseNotice>
+
+<YouTube id="NAEX4ORLkbQ" title="Lesson 2: Switching model providers" />
 *[Watch on YouTube](https://www.youtube.com/watch?v=NAEX4ORLkbQ&list=PLDzwjhH-4yhU&index=2)*
 
-*Code for this lesson can be found
-[**here**](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/02-model-providers).*
+*Code for this lesson: [`samples/02-model-providers`](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/02-model-providers)*
 
-### Model Choice as System Architecture
+## Model choice is an architecture decision
 
-Different models are good at different things. Some are optimized for coding tasks or
-long-running workflows, while others are better at planning, deep research, or are
-optimized for speed and low-latency tasks.
+Different models have different strengths, costs, latency characteristics, and tool-use behavior. Strands abstracts providers behind a common interface so your agent code stays the same regardless of the underlying model. Your tools, system prompt, and orchestration logic don't change when you swap the model.
 
-As the agent systems you build become more sophisticated, it's common to use different
-models powering different agents within the same system. You might use one model for
-orchestration, another for specialized coding tasks, and another for validation or
-evaluation steps.
+## Configuring providers
 
-And in some cases, it's useful to use a completely different model provider for different
-tasks like evaluations, so you aren't relying on the same model and training patterns for
-both generation and verification.
+All providers follow the same pattern: instantiate a model class, pass it to the agent.
 
-We'll cover strategies for building those kinds of multi-agent systems later in the
-course, but the important thing right now is understanding that model choice becomes a
-part of your architecture because different models have different strengths, costs,
-latency characteristics, and tool use behaviors. This is one of the reasons Strands
-abstracts model providers behind a common interface: You instantiate a model class, pass
-it to the agent, and everything else stays the same.
+```python
+from strands import Agent
+from strands.models import BedrockModel
+from strands.models.anthropic import AnthropicModel
+from strands.models.ollama import OllamaModel
+from strands.models.openai import OpenAIModel
+import os
 
-### Working with the Defaults: Amazon Bedrock
+# Amazon Bedrock (default if no model specified)
+bedrock_model = BedrockModel(
+    model_id="us.anthropic.claude-opus-5"
+)
 
-Let's look at how it works. We'll start with the default provider, Amazon Bedrock.
+# Anthropic direct API
+anthropic_model = AnthropicModel(
+    client_args={"api_key": os.environ["ANTHROPIC_API_KEY"]},
+    model_id="claude-sonnet-5",
+    max_tokens=1024,
+)
 
-When you create an agent with no model arguments, Strands uses Bedrock with Claude Sonnet
-4.6 in `us-west-2`. In production, you usually want to be explicit about what model you're
-using and how it's configured. So instead, we import `BedrockModel`.
+# OpenAI
+openai_model = OpenAIModel(
+    client_args={"api_key": os.environ["OPENAI_API_KEY"]},
+    model_id="gpt-4o",
+    params={"max_tokens": 1000, "temperature": 0.7},
+)
 
-Then we create an instance of our model and pass in a specific model ID like
-`claude-opus-4-6`, and then we pass that directly to the instance of the agent when we
-create it. Now we can give this a run.
+# Local with Ollama (no cloud APIs needed)
+ollama_model = OllamaModel(
+    host="http://localhost:11434",
+    model_id="gemma4:latest",
+)
 
-Now the agent is using Opus instead of the default model.
+# Use any provider. Agent code stays identical.
+agent = Agent(model=ollama_model)
+agent("Explain the agent loop in one paragraph.")
+```
 
-### Switching to Anthropic and OpenAI APIs
+📂 [model_providers.py](https://github.com/aws-samples/sample-building-with-strands-course/tree/main/samples/02-model-providers/model_providers.py)
 
-But maybe you want to use Anthropic's APIs directly instead of running it on Bedrock.
-Well, the pattern stays the same.
+| Provider | Install | Auth |
+|----------|---------|------|
+| Bedrock (default) | `pip install strands-agents` | AWS credentials configured |
+| Anthropic | `pip install "strands-agents[anthropic]"` | `ANTHROPIC_API_KEY` |
+| OpenAI | `pip install "strands-agents[openai]"` | `OPENAI_API_KEY` |
+| Ollama (local) | `pip install "strands-agents[ollama]"` | None, runs on your machine |
 
-We import `AnthropicModel`, then we can create the instance of our Anthropic model,
-passing in an Anthropic API key, and then you would pass this into the agent instead of
-the Bedrock model.
+## Multi-model architectures
 
-You could swap this same thing out for an OpenAI model as well, and it works the same way.
+In sophisticated systems, different agents use different models:
 
-### Running Local Models with Ollama
+- Fast/cheap model for lightweight classification
+- Strong reasoning model for orchestration
+- Specialized model for code generation
+- A different provider entirely for evaluation/verification (avoids same-model bias)
 
-Now let me show you another interesting option you can set up with Strands: using local
-models with Ollama. Ollama lets you run models directly on your own hardware without cloud
-inference APIs.
+## Ollama setup
 
-In Strands, you would create an Ollama model provider just like this, and then you would
-point it at the local Ollama server that you have running. I have Gemma running locally
-already, so we can provide this model provider to our agent, save the file, and then give
-it a run.
+Ollama lets you run models entirely on your machine. Useful for development, offline use, or avoiding API costs.
 
-Local models are useful for low-cost experimentation, offline development, and
-privacy-sensitive workflows. There are trade-offs, though. Local models are often smaller
-and less capable than frontier hosted models, and tool calling quality can vary
-significantly depending on the model. You'll want to test carefully for your own specific
-use case.
+```bash
+brew install ollama
+ollama serve
+ollama pull gemma4:latest
+```
 
-### Looking Ahead
+## Resources
 
-In the next video, we'll look more at tools and Model Context Protocol, or MCP, which is
-one of the main ways agents connect to external systems and capabilities.
-
-*Learn more: [Model Providers](/docs/user-guide/concepts/model-providers/)*
+- 📖 [Model Providers](/docs/user-guide/sdk/model-providers/)
+- 📖 [Getting Started](/docs/user-guide/sdk/quickstart/python/)
+- 📂 [Course Code Repository](https://github.com/aws-samples/sample-building-with-strands-course)

@@ -1,0 +1,598 @@
+---
+import { getCollection, render } from 'astro:content';
+import chevron from '../assets/prove-cases/chevron.svg?raw';
+
+const entries = (await getCollection('testimonials')).sort(
+  (a, b) => a.data.order - b.data.order
+);
+const testimonials = await Promise.all(
+  entries.map(async (entry) => ({
+    ...entry.data,
+    Content: (await render(entry)).Content,
+  }))
+);
+---
+
+<section class="prove" aria-label="Testimonials" data-carousel>
+  <div class="prove__viewport">
+    <div class="prove__track" data-track>
+      {testimonials.map(({ Content, ...t }) => (
+        <article class="prove__card prove__card--main" data-slide>
+          <div class="prove__main-header">
+            <svg
+              class="prove__quote"
+              viewBox="0 0 31 25"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path
+                d="M0 25V12.5C0 5.596 5.596 0 12.5 0V6.25c-3.452 0-6.25 2.798-6.25 6.25H12.5V25H0zm18.5 0V12.5c0-6.904 5.596-12.5 12.5-12.5v6.25c-3.452 0-6.25 2.798-6.25 6.25H31V25H18.5z"
+                fill="var(--strands-green-3)"
+              />
+            </svg>
+          </div>
+          <blockquote class="prove__main-quote">
+            <Content />
+          </blockquote>
+          <footer class="prove__main-footer">
+            <span class="prove__main-divider" aria-hidden="true"></span>
+            <div class="prove__main-attribution">
+              {t.logo && (
+                <span class="prove__main-logos" aria-hidden="true">
+                  <img
+                    class="prove__main-logo prove__main-logo--light"
+                    src={t.logo.src}
+                    alt=""
+                    loading="lazy"
+                  />
+                  {t.dark_logo && (
+                    <img
+                      class="prove__main-logo prove__main-logo--dark"
+                      src={t.dark_logo.src}
+                      alt=""
+                      loading="lazy"
+                    />
+                  )}
+                </span>
+              )}
+              <div class="prove__main-attribution-text">
+                <p class="prove__main-name">{t.name}</p>
+                {t.title && <p class="prove__main-role">{t.title}</p>}
+              </div>
+            </div>
+          </footer>
+        </article>
+      ))}
+    </div>
+  </div>
+
+  <div class="prove__controls">
+    <div class="prove__progress" data-progress>
+      <span class="prove__progress-track" aria-hidden="true"></span>
+      <span class="prove__progress-fill" data-progress-fill aria-hidden="true"></span>
+    </div>
+    <div class="prove__chevrons">
+      <button
+        type="button"
+        class="prove__chevron prove__chevron--prev"
+        data-prev
+        aria-label="Previous"
+      >
+        <span class="prove__chevron-icon" set:html={chevron} />
+      </button>
+      <button
+        type="button"
+        class="prove__chevron prove__chevron--next"
+        data-next
+        aria-label="Next"
+      >
+        <span class="prove__chevron-icon" set:html={chevron} />
+      </button>
+    </div>
+  </div>
+</section>
+
+<style>
+  .prove {
+    position: relative;
+    background: var(--bg);
+    padding: 69px 0 45px;
+    overflow: hidden;
+  }
+
+  .prove__viewport {
+    overflow: hidden;
+    padding: 0 100px;
+  }
+
+  .prove__track {
+    display: flex;
+    align-items: stretch;
+    gap: 60px;
+    transition: transform 0.4s ease;
+    will-change: transform;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .prove__track {
+      transition: none;
+    }
+  }
+
+  .prove__card {
+    flex: none;
+    box-sizing: border-box;
+    border-radius: 24px;
+    color: var(--fg);
+  }
+
+  .prove__card--main {
+    position: relative;
+    width: 890px;
+    min-height: 500px;
+    background: var(--bg);
+    border: 1px solid var(--strands-green-3);
+    padding: 55px 47px 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .prove__main-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 32px;
+  }
+
+  .prove__quote {
+    width: 31px;
+    height: 25px;
+  }
+
+  .prove__main-logos {
+    display: inline-flex;
+    align-items: center;
+    flex: none;
+  }
+
+  .prove__main-logo {
+    display: block;
+    height: 28px;
+    width: auto;
+    max-width: 140px;
+    object-fit: contain;
+  }
+
+  .prove__main-logo--dark {
+    display: none;
+  }
+
+  :global([data-theme='dark']) .prove__main-logos:has(.prove__main-logo--dark)
+    .prove__main-logo--light {
+    display: none;
+  }
+
+  :global([data-theme='dark']) .prove__main-logo--dark {
+    display: block;
+  }
+
+  .prove__main-quote {
+    margin: 0;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  .prove__main-quote :global(p) {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 400;
+    font-size: 18px;
+    line-height: 1.4;
+    color: var(--fg);
+  }
+
+  .prove__main-quote :global(a) {
+    color: inherit;
+  }
+
+  .prove__main-footer {
+    padding: 32px 0 40px;
+  }
+
+  .prove__main-divider {
+    display: block;
+    width: 794px;
+    max-width: 100%;
+    height: 1px;
+    background: var(--divider);
+    margin-bottom: 32px;
+  }
+
+  .prove__main-attribution {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .prove__main-attribution-text {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .prove__main-name {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-weight: 700;
+    font-size: 18px;
+    line-height: 1.4;
+    color: var(--fg);
+  }
+
+  .prove__main-role {
+    margin: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 14px;
+    color: var(--fg);
+    opacity: 0.8;
+  }
+
+  .prove__controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    max-width: 1280px;
+    margin: 55px auto 0;
+    padding: 0 55px;
+  }
+
+  .prove__progress {
+    position: relative;
+    width: 257px;
+    height: 21px;
+    display: flex;
+    align-items: center;
+  }
+
+  .prove__progress-track {
+    position: absolute;
+    inset: 0;
+    top: 50%;
+    height: 3px;
+    transform: translateY(-50%);
+    background: var(--strands-grey-200);
+    border-radius: 2px;
+  }
+
+  .prove__progress-fill {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    height: 3px;
+    width: 68px;
+    background: var(--strands-pink);
+    border-radius: 2px;
+    transform: translateY(-50%);
+    transition: width 0.4s ease, left 0.4s ease;
+  }
+
+  .prove__chevrons {
+    display: flex;
+    gap: 10px;
+  }
+
+  .prove__chevron {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 47px;
+    height: 47px;
+    background: transparent;
+    border: 1px solid var(--fg);
+    border-radius: 50%;
+    color: var(--fg);
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+
+  .prove__chevron:hover {
+    background: color-mix(in srgb, var(--fg) 10%, transparent);
+  }
+
+  .prove__chevron[disabled] {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .prove__chevron-icon {
+    display: inline-flex;
+    width: 23px;
+    height: 23px;
+  }
+
+  .prove__chevron-icon :global(svg) {
+    width: 100%;
+    height: 100%;
+  }
+
+  .prove__chevron--prev .prove__chevron-icon {
+    transform: rotate(180deg);
+  }
+
+  @media (max-width: 1023px) {
+    .prove {
+      padding: 32px 0;
+    }
+
+    .prove__viewport {
+      padding: 0 19px;
+    }
+
+    .prove__track {
+      gap: 16px;
+      align-items: stretch;
+    }
+
+    .prove__card--main {
+      width: calc(100vw - 38px);
+      max-width: 402px;
+      height: auto;
+      min-height: 340px;
+      padding: 24px 20px;
+    }
+
+    .prove__main-header {
+      margin-bottom: 16px;
+    }
+
+    .prove__main-logo {
+      height: 24px;
+      max-width: 140px;
+    }
+
+    .prove__main-quote :global(p) {
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .prove__main-footer {
+      padding: 16px 0 0;
+    }
+
+    .prove__main-divider {
+      margin-bottom: 16px;
+    }
+
+    .prove__controls {
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      margin: 22px auto 0;
+      padding: 0 19px;
+    }
+
+    .prove__progress {
+      flex: 1 1 auto;
+      width: auto;
+      max-width: 257px;
+    }
+
+    .prove__chevrons {
+      gap: 10.43px;
+    }
+  }
+</style>
+
+<script>
+  // Infinite-loop carousel. To make the loop seamless we clone every real
+  // slide once on each end, so the DOM order is:
+  //   [clone(N-1)] [clone(0)] [clone(1)] ... [real(0)] [real(1)] ... [real(N-1)] [clone(0)] [clone(1)] ...
+  // We only navigate through the real range; when the user goes past either
+  // edge we let the transition finish onto a clone, then snap back to the
+  // matching real slide with transitions disabled — the user never sees
+  // the jump because the clone and real slide are visually identical.
+  const carousels = document.querySelectorAll<HTMLElement>('[data-carousel]');
+  carousels.forEach((carousel) => {
+    const track = carousel.querySelector<HTMLElement>('[data-track]');
+    const originals = Array.from(
+      carousel.querySelectorAll<HTMLElement>('[data-slide]')
+    );
+    const prev = carousel.querySelector<HTMLButtonElement>('[data-prev]');
+    const next = carousel.querySelector<HTMLButtonElement>('[data-next]');
+    const fill = carousel.querySelector<HTMLElement>('[data-progress-fill]');
+    if (!track || !originals.length || !prev || !next || !fill) return;
+
+    const N = originals.length;
+
+    // Clone every real slide onto both ends. Clones aren't focusable and
+    // aren't announced by AT.
+    const cloneFor = (el: HTMLElement) => {
+      const clone = el.cloneNode(true) as HTMLElement;
+      clone.setAttribute('aria-hidden', 'true');
+      clone.setAttribute('data-clone', '');
+      clone
+        .querySelectorAll<HTMLElement>('a, button, [tabindex]')
+        .forEach((f) => f.setAttribute('tabindex', '-1'));
+      return clone;
+    };
+    // Prepend clones (in original order) BEFORE the first real slide.
+    originals.forEach((el) => track.insertBefore(cloneFor(el), originals[0]));
+    // Append clones (in original order) AFTER the last real slide.
+    originals.forEach((el) => track.appendChild(cloneFor(el)));
+
+    const allSlides = Array.from(
+      track.querySelectorAll<HTMLElement>('[data-slide]')
+    );
+    // Real slides now occupy positions [N .. 2N-1] in allSlides.
+    const realStart = N;
+
+    // logicalIndex: 0..N-1 (which real slide is centered).
+    // renderIndex: position in allSlides currently targeted (can drift into
+    // the clone ranges on either side, then snaps back after transitionend).
+    // Desktop starts on the second card so the first and third sit as the
+    // flanking side cards. Mobile starts on the first card (no side cards).
+    const isMobile = window.matchMedia('(max-width: 1023px)').matches;
+    let logicalIndex = isMobile ? 0 : 1 % N;
+    let renderIndex = realStart + logicalIndex;
+    let animating = false;
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function currentTranslateX(): number {
+      // Read the transform already applied to the track so we can compute a
+      // relative nudge from measured rects (below).
+      const t = getComputedStyle(track).transform;
+      if (!t || t === 'none') return 0;
+      try {
+        return new DOMMatrixReadOnly(t).m41;
+      } catch {
+        return 0;
+      }
+    }
+
+    function positionTo(idx: number, withTransition: boolean) {
+      const viewport = carousel.querySelector<HTMLElement>('.prove__viewport');
+      const target = allSlides[idx];
+      if (!viewport) return;
+      // Center via measured rects + the current transform, rather than
+      // offsetLeft. offsetLeft is relative to the offset parent and ignores the
+      // viewport's horizontal padding, which left the card ~19px off-center on
+      // mobile. Rect deltas are immune to that padding/border mismatch.
+      const vpRect = viewport.getBoundingClientRect();
+      const tRect = target.getBoundingClientRect();
+      const viewportCenter = vpRect.left + vpRect.width / 2;
+      const targetCenter = tRect.left + tRect.width / 2;
+      const offset = currentTranslateX() + (viewportCenter - targetCenter);
+      if (!withTransition) {
+        track.style.transition = 'none';
+        track.style.transform = `translateX(${offset}px)`;
+        // Force reflow so the next transform picks up transitions again.
+        void track.offsetWidth;
+        track.style.transition = '';
+      } else {
+        track.style.transform = `translateX(${offset}px)`;
+      }
+    }
+
+    function updateProgress() {
+      // Guard N === 1, which would otherwise divide by zero.
+      const pct = N > 1 ? logicalIndex / (N - 1) : 0;
+      // Measured rather than hardcoded so the bar can shrink on narrow
+      // viewports without the fill drifting out of alignment.
+      const trackWidth = fill.parentElement?.clientWidth ?? 257;
+      const fillWidth = fill.offsetWidth || 68;
+      fill.style.left = `${pct * (trackWidth - fillWidth)}px`;
+    }
+
+    function go(delta: number) {
+      if (animating) return;
+      logicalIndex = (logicalIndex + delta + N) % N;
+      // Move renderIndex by delta so it can cross into a clone range for
+      // the animation, then snap back to the real range after the
+      // transition completes.
+      renderIndex += delta;
+      animating = true;
+      positionTo(renderIndex, true);
+      updateProgress();
+      // Safety net: if no transitionend arrives, settle anyway. Without
+      // this, `animating` latches on forever and every control goes dead —
+      // which is exactly what happens under prefers-reduced-motion, where
+      // .prove__track has `transition: none` so the event never fires.
+      if (settleTimer !== null) clearTimeout(settleTimer);
+      settleTimer = setTimeout(settle, 600);
+    }
+
+    function settle() {
+      if (settleTimer !== null) {
+        clearTimeout(settleTimer);
+        settleTimer = null;
+      }
+      animating = false;
+      // If we drifted into a clone range, snap to the matching real slide.
+      if (renderIndex < realStart || renderIndex >= realStart + N) {
+        renderIndex = realStart + logicalIndex;
+        positionTo(renderIndex, false);
+      }
+    }
+
+    track.addEventListener('transitionend', (e) => {
+      if (e.propertyName !== 'transform') return;
+      settle();
+    });
+
+    prev.addEventListener('click', () => {
+      stop();
+      go(-1);
+    });
+    next.addEventListener('click', () => {
+      stop();
+      go(1);
+    });
+
+    // Auto-rotation. No play/pause control (design decision) — does NOT
+    // satisfy WCAG 2.2.2. Fix: add a control as first child of .prove__controls.
+
+    const ROTATE_MS = 7000; // longer than typical — text-heavy cards need reading time
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+    let timer: ReturnType<typeof setInterval> | null = null;
+    // Sticky. Once the user takes control, rotation stays off.
+    let userStopped = false;
+    let hovering = false;
+
+    function clearTimer() {
+      if (timer !== null) {
+        clearInterval(timer);
+        timer = null;
+      }
+    }
+
+    // (Re)start ticking if nothing currently forbids it. Transient blockers
+    // (hover, hidden tab) leave userStopped untouched so rotation resumes.
+    function tick() {
+      clearTimer();
+      if (userStopped || reduceMotion.matches) return;
+      if (hovering || document.hidden) return;
+      timer = setInterval(() => go(1), ROTATE_MS);
+    }
+
+    function stop() {
+      userStopped = true;
+      clearTimer();
+    }
+
+    carousel.addEventListener('mouseenter', () => {
+      hovering = true;
+      clearTimer();
+    });
+
+    carousel.addEventListener('mouseleave', () => {
+      hovering = false;
+      tick();
+    });
+
+    carousel.addEventListener('focusin', stop);
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) clearTimer();
+      else tick();
+    });
+
+    reduceMotion.addEventListener('change', () => {
+      if (reduceMotion.matches) clearTimer();
+    });
+
+    window.addEventListener('resize', () => {
+      // Reposition without animating so a resize doesn't slide.
+      positionTo(renderIndex, false);
+      updateProgress();
+    });
+
+    // Initial paint. Wait a frame so clones' layout is computed.
+    requestAnimationFrame(() => {
+      positionTo(renderIndex, false);
+      updateProgress();
+      tick();
+    });
+  });
+</script>

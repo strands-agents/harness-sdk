@@ -1,5 +1,5 @@
 from strands import Agent, tool
-from strands_tools import python_repl, shell, file_read, file_write, editor
+from strands.vended_tools import file_editor, notebook, shell
 import json
 
 COMPUTER_SCIENCE_ASSISTANT_SYSTEM_PROMPT = """
@@ -52,7 +52,7 @@ def computer_science_assistant(query: str) -> str:
         # Create the computer science agent with relevant tools
         cs_agent = Agent(
             system_prompt=COMPUTER_SCIENCE_ASSISTANT_SYSTEM_PROMPT,
-            tools=[python_repl, shell, file_read, file_write, editor],
+            tools=[notebook, shell, file_editor],
         )
         agent_response = cs_agent(formatted_query)
         text_response = str(agent_response)

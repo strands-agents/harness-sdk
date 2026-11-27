@@ -3,9 +3,11 @@
  */
 
 import type { Storage } from '../storage/storage.js'
-import type { Stash } from './stash.js'
+import type { Archive } from './archive.js'
 import type { LocalAgent } from '../types/agent.js'
 import type { Message } from '../types/messages.js'
+import type { StrategyPresetName } from './presets.js'
+import type { InvocationContext } from '../agent/invocation-context.js'
 
 /**
  * A context reduction strategy that can offload, summarize, or otherwise
@@ -21,8 +23,11 @@ export interface ContextStrategy {
   /**
    * Called once when the ContextManager is attached to an agent.
    * Strategies can use this to register hooks (e.g., eager offloading on message arrival).
+   *
+   * `archive` is `@internal` — it is not exported, so its shape is not a stable contract for
+   * strategies outside the SDK. Pass it to `Offload` strategies rather than calling it directly.
    */
-  init?(agent: LocalAgent, stash?: Stash): void
+  init?(agent: LocalAgent, archive?: Archive): void
 
   /**
    * Attempt to reduce context. Returns true if it made changes, false if it
@@ -44,20 +49,62 @@ export interface ContextState {
   /** Current context utilization ratio (0-1+). Above 1.0 means overflow. */
   utilization: number
 
-  /** L1 stash for persisting offloaded content. Present when storage is configured. */
-  stash?: Stash
+  /**
+   * Set when running in response to a `ContextWindowOverflowError`.
+   * Strategies should bypass utilization gates when true — the provider
+   * already rejected the request, so the estimate is not trustworthy.
+   */
+  overflow?: boolean
+
+  /**
+   * L1 archive for persisting offloaded content. Present when storage is configured.
+   *
+   * `Archive` is `@internal` and not exported, so its shape is not a stable contract for strategies
+   * outside the SDK.
+   */
+  archive?: Archive
+
+  /**
+   * @deprecated Renamed to `archive`. Set to the same value. Removed in the next minor.
+   */
+  stash?: Archive
+
+  /** The request this reduction runs for, if any; a nested call that joins it adds to the request's usage, but the request's limits don't apply. */
+  readonly invocationContext?: InvocationContext
 }
 
 /**
- * Configuration for the L1 stash (offloaded content persistence).
+ * Configuration for the L1 archive (offloaded content persistence).
+ *
+ * Each agent archives under `context/<sessionId>/scopes/agent/<agentId>/`. The prefix is dropped
+ * only when a namespaced view from a built-in backend's `namespace()` is passed as this config's
+ * `storage`; that view becomes the exact archive root, so agents given the same view share one
+ * archive. Deleting a session leaves a caller-scoped archive in place, and on in-memory storage each
+ * session snapshot captures and restores the whole view.
+ *
+ * @example
+ * ```typescript
+ * const storage = new S3Storage('my-bucket')
+ *
+ * // Namespaced view passed to the archive: archives at "team/" (prefix dropped, shared).
+ * new ContextManager({ archive: { storage: storage.namespace('team') } })
+ *
+ * // Plain storage passed to the archive:
+ * // archives at "context/<sessionId>/scopes/agent/<agentId>/".
+ * new ContextManager({ archive: { storage } })
+ *
+ * // Namespaced view passed as agent-level storage: prefix still applies, under the view:
+ * // archives at "team/context/<sessionId>/scopes/agent/<agentId>/".
+ * new Agent({ storage: storage.namespace('team'), contextManager: new ContextManager() })
+ * ```
  */
-export interface StashConfig {
-  /** Storage backend. Defaults to InMemoryStorage when omitted. */
+export interface ArchiveConfig {
+  /** Storage backend. Defaults to the agent's `storage`, then InMemoryStorage, when omitted. */
   storage?: Storage
 
   /**
    * Whether to register the `retrieve_context` tool for the agent.
-   * Set to `false` to keep stash persistence without exposing the retrieval tool.
+   * Set to `false` to keep archive persistence without exposing the retrieval tool.
    * Defaults to `true`.
    */
   retrievalTool?: false
@@ -72,16 +119,25 @@ export interface ContextManagerConfig {
    * sees the output of the previous. Order determines priority — if two strategies
    * target the same content, the first one to shrink it below the next strategy's
    * threshold wins. When omitted, uses the default pipeline.
+   *
+   * Accepts raw `ContextStrategy` objects, preset name strings (e.g. `'largeToolOffloading'`),
+   * or a mix of both. Preset strings are resolved to their default strategy configurations.
    */
-  strategies?: ContextStrategy[]
+  strategies?: (ContextStrategy | StrategyPresetName)[]
 
   /**
-   * L1 stash configuration. The stash persists offloaded content so the agent can
+   * L1 archive configuration. The archive persists offloaded content so the agent can
    * retrieve it on demand via the `retrieve_context` tool.
    *
-   * - Omit or `true` → stash enabled with InMemoryStorage (default)
-   * - `{ storage }` → stash enabled with the given backend
-   * - `false` → stash disabled (no persistence, no retrieval tool)
+   * - Omit or `true` → archive enabled with InMemoryStorage (default)
+   * - `{ storage }` → archive enabled with the given backend
+   * - `false` → archive disabled (no persistence, no retrieval tool)
    */
-  stash?: StashConfig | boolean
+  archive?: ArchiveConfig | boolean
+
+  /**
+   * @deprecated Renamed to `archive`. Honored when `archive` is omitted, with a warning. Removed in
+   * the next minor.
+   */
+  stash?: ArchiveConfig | boolean
 }

@@ -1,1 +1,1 @@
-"""Experimental and internal. Context management strategies."""
+"""Context management strategies."""

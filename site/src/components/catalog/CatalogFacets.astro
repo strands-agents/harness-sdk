@@ -6,10 +6,11 @@
  * segments and the left rail's type/badge chips.
  */
 import CatalogSegments from './CatalogSegments.astro'
-import { AWS_MARK_VIEWBOX, MAINTAINED_BY_ICONS, TYPE_ICONS, VERIFIED_ICON, type FacetOption } from './types'
+import { AWS_MARK_VIEWBOX, MAINTAINED_BY_ICONS, VERIFIED_ICON, type FacetOption } from './types'
 
+// Type filtering now lives in the left sidebar (one link per type), so the
+// dialog carries only the remaining facets.
 interface Props {
-  types: FacetOption[]
   maintainedBy: FacetOption[]
   showSdkFacet: boolean
   hasVerified: boolean
@@ -17,62 +18,69 @@ interface Props {
   hasNew: boolean
 }
 
-const { types, maintainedBy, showSdkFacet, hasVerified, hasFeatured, hasNew } = Astro.props
+const { maintainedBy, showSdkFacet, hasVerified, hasFeatured, hasNew } = Astro.props
 ---
 
 <div class="cat-facet-row">
+  {/* Language is a catalog control here (All / Python / TypeScript), independent
+      of the header's site-wide language toggle. The page script binds it. */}
+  <div class="cat-seg" role="radiogroup" aria-label="Language">
+    <button class="cat-seg-btn" type="button" role="radio" aria-checked="true" data-cat-lang="">
+      All
+    </button>
+    <button class="cat-seg-btn" type="button" role="radio" aria-checked="false" data-cat-lang="python">
+      Python
+    </button>
+    <button class="cat-seg-btn" type="button" role="radio" aria-checked="false" data-cat-lang="typescript">
+      TypeScript
+    </button>
+  </div>
   <CatalogSegments showSdkFacet={showSdkFacet} />
+  {/* Maintainer and status filters share the one row with the language / SDK
+      segments, split into groups by a divider so each set of controls still
+      reads as its own filter. */}
+  <span class="cat-facet-sep" aria-hidden="true"></span>
+  <div class="cat-type-rail" role="group" aria-label="Maintained by">
+    {
+      maintainedBy.map((t) => (
+        <button class="cat-chip" type="button" data-cat-maintained={t.value} aria-label={t.label} aria-pressed="false">
+          {MAINTAINED_BY_ICONS[t.value] ? (
+            <svg width="29" height="18" viewBox={AWS_MARK_VIEWBOX} aria-hidden="true">
+              <path fill="currentColor" d={MAINTAINED_BY_ICONS[t.value]} />
+            </svg>
+          ) : (
+            t.label
+          )}
+          <span class="cat-count">{t.count}</span>
+        </button>
+      ))
+    }
+  </div>
   {
-    hasFeatured && (
-      <button class="cat-seg-btn cat-seg-btn--solo" type="button" data-cat-badge="featured" aria-pressed="false">
-        Featured
-      </button>
+    (hasFeatured || hasNew || hasVerified) && (
+      <>
+        <span class="cat-facet-sep" aria-hidden="true" />
+        <div class="cat-type-rail" role="group" aria-label="Status">
+          {hasFeatured && (
+            <button class="cat-chip" type="button" data-cat-badge="featured" aria-pressed="false">
+              Featured
+            </button>
+          )}
+          {hasNew && (
+            <button class="cat-chip" type="button" data-cat-badge="new" aria-pressed="false">
+              New
+            </button>
+          )}
+          {hasVerified && (
+            <button class="cat-chip" type="button" data-cat-badge="verified" aria-pressed="false">
+              <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
+                <path fill="currentColor" d={VERIFIED_ICON} />
+              </svg>
+              Verified
+            </button>
+          )}
+        </div>
+      </>
     )
-  }
-  {
-    hasNew && (
-      <button class="cat-seg-btn cat-seg-btn--solo" type="button" data-cat-badge="new" aria-pressed="false">
-        New
-      </button>
-    )
-  }
-  {
-    hasVerified && (
-      <button class="cat-seg-btn cat-seg-btn--solo" type="button" data-cat-badge="verified" aria-pressed="false">
-        <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
-          <path fill="currentColor" d={VERIFIED_ICON} />
-        </svg>
-        Verified
-      </button>
-    )
-  }
-</div>
-<div class="cat-type-rail" role="group" aria-label="Maintained by">
-  {
-    maintainedBy.map((t) => (
-      <button class="cat-chip" type="button" data-cat-maintained={t.value} aria-label={t.label} aria-pressed="false">
-        {MAINTAINED_BY_ICONS[t.value] ? (
-          <svg width="29" height="18" viewBox={AWS_MARK_VIEWBOX} aria-hidden="true">
-            <path fill="currentColor" d={MAINTAINED_BY_ICONS[t.value]} />
-          </svg>
-        ) : (
-          t.label
-        )}
-        <span class="cat-count">{t.count}</span>
-      </button>
-    ))
-  }
-</div>
-<div class="cat-type-rail" role="group" aria-label="Type">
-  {
-    types.map((t) => (
-      <button class="cat-chip" type="button" data-cat-type={t.value} aria-pressed="false">
-        <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true">
-          <path fill="currentColor" d={TYPE_ICONS[t.value]} />
-        </svg>
-        {t.label}
-        <span class="cat-count">{t.count}</span>
-      </button>
-    ))
   }
 </div>

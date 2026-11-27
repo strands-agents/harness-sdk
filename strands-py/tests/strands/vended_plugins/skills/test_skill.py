@@ -135,6 +135,13 @@ class TestParseFrontmatter:
         assert frontmatter["description"] == "has --- inside"
         assert body == "Body here."
 
+    def test_frontmatter_with_utf8_bom(self):
+        """A leading UTF-8 BOM does not hide the opening delimiter. Guards strands-agents/harness-sdk#6451."""
+        content = "\ufeff---\nname: test-skill\ndescription: A test\n---\nBody here."
+        frontmatter, body = _parse_frontmatter(content)
+        assert frontmatter == {"name": "test-skill", "description": "A test"}
+        assert body == "Body here."
+
 
 class TestValidateSkillName:
     """Tests for _validate_skill_name (lenient validation)."""
@@ -299,6 +306,13 @@ class TestParseFrontmatterYamlFallback:
         assert frontmatter["name"] == "my-skill"
         assert frontmatter["description"] == "A simple description"
 
+    def test_unrepairable_yaml_raises_value_error(self):
+        """Frontmatter the colon-quoting fallback cannot repair raises ValueError, not a raw
+        yaml.YAMLError, honoring the documented contract. Guards strands-agents/harness-sdk#4155."""
+        content = '---\nname: my-skill\ndescription: "unterminated\n---\nBody.'
+        with pytest.raises(ValueError, match="malformed YAML frontmatter"):
+            _parse_frontmatter(content)
+
 
 def _make_skill_dir(parent: Path, name: str, description: str = "A test skill", body: str = "Instructions.") -> Path:
     """Helper to create a skill directory with SKILL.md."""
@@ -421,6 +435,17 @@ class TestSkillFromFile:
         skill = Skill.from_file(tmp_path / "valid-skill", strict=True)
         assert skill.name == "valid-skill"
 
+    def test_from_file_with_utf8_bom(self, tmp_path):
+        """A SKILL.md saved with a UTF-8 BOM loads from disk. Guards strands-agents/harness-sdk#6451."""
+        skill_dir = tmp_path / "test-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "\ufeff---\nname: test-skill\ndescription: A test\n---\nBody here.", encoding="utf-8"
+        )
+        skill = Skill.from_file(skill_dir)
+        assert skill.name == "test-skill"
+        assert skill.instructions == "Body here."
+
 
 class TestSkillFromDirectory:
     """Tests for Skill.from_directory."""
@@ -464,6 +489,20 @@ class TestSkillFromDirectory:
         """Test FileNotFoundError for nonexistent directory."""
         with pytest.raises(FileNotFoundError):
             Skill.from_directory(tmp_path / "nonexistent")
+
+    def test_malformed_skill_does_not_abort_siblings(self, tmp_path, caplog):
+        """Test no skip for malformed YAML skills"""
+        _make_skill_dir(tmp_path, "good-skill")
+
+        bad_dir = tmp_path / "bad-skill"
+        bad_dir.mkdir()
+        (bad_dir / "SKILL.md").write_text('---\nname: bad-skill\ndescription: "unterminated\n---\nBody.')
+
+        with caplog.at_level(logging.WARNING):
+            skills = Skill.from_directory(tmp_path)
+
+        assert [s.name for s in skills] == ["good-skill"]
+        assert "skipping skill due to error: malformed YAML frontmatter" in caplog.text
 
     def test_loads_mismatched_name_with_warning(self, tmp_path, caplog):
         """Test that skills with name/directory mismatch are loaded with a warning."""

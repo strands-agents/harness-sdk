@@ -2,17 +2,28 @@ import { z } from 'zod'
 
 import { continuations } from '../agent/continuation.js'
 import { AgentAsTool } from '../agent/agent-as-tool.js'
+import type { InvocationContext } from '../agent/invocation-context.js'
 import { AfterInvocationEvent, BeforeModelCallEvent, InitializedEvent } from '../hooks/events.js'
 import { HookOrder } from '../hooks/types.js'
 import { InterruptError } from '../interrupt.js'
 import { logger } from '../logging/logger.js'
 import { InvokeModelStage, type ExecuteToolContext } from '../middleware/index.js'
 import type { Plugin } from '../plugins/plugin.js'
+import { isLoadTools } from '../tools/load-tools.js'
 import { STRUCTURED_OUTPUT_TOOL_NAME } from '../tools/structured-output-tool.js'
 import { tool } from '../tools/tool-factory.js'
 import type { Tool, ToolContext } from '../tools/tool.js'
 import type { ToolSpec } from '../tools/types.js'
-import { Message, TextBlock, ToolResultBlock, ToolUseBlock, toolResultContentFromData } from '../types/messages.js'
+import { deepCopy } from '../types/json.js'
+import {
+  JsonBlock,
+  Message,
+  TextBlock,
+  ToolResultBlock,
+  ToolUseBlock,
+  toolResultContentFromData,
+} from '../types/messages.js'
+import type { ToolResultContent } from '../types/messages.js'
 
 import { BackgroundTaskNotFoundError } from './errors.js'
 import { InProcessTaskManager } from './in-process/manager.js'
@@ -28,12 +39,24 @@ const BACKGROUND_PROPERTY = '_background_execution'
 const MANAGE_TOOL_NAME = 'strands_manage_background_task'
 const COMPOSITE_SCHEMA_KEYS = ['$ref', 'allOf', 'anyOf', 'oneOf', 'not', 'if', 'then', 'else'] as const
 const FOREGROUND_TOOL_NAMES = new Set([
-  MANAGE_TOOL_NAME,
   STRUCTURED_OUTPUT_TOOL_NAME,
   'summarize_context',
   'truncate_context',
   'pin_context',
 ])
+/** The manage tools {@link BackgroundTasks} created, recognized under any `manageToolName`. */
+const MANAGE_TOOLS = new WeakSet<Tool>()
+
+/**
+ * Whether a tool is the manage tool of a {@link BackgroundTasks}, under its default name or a `manageToolName`.
+ *
+ * @param tool - The tool to check
+ * @returns Whether {@link BackgroundTasks} created the tool
+ * @internal
+ */
+export function isManageTool(tool: Tool | undefined): boolean {
+  return tool !== undefined && MANAGE_TOOLS.has(tool)
+}
 
 /** @internal */
 export class BackgroundTasks implements Plugin {
@@ -44,6 +67,7 @@ export class BackgroundTasks implements Plugin {
   private readonly _policy: ReturnType<typeof resolvePolicy>
   private readonly _manageTool: Tool
   private readonly _tasks = new Map<string, BackgroundTask>()
+  private _raisedInterrupt = false
   private _agent!: Agent
   private _manager!: BackgroundTaskManager
 
@@ -59,9 +83,9 @@ export class BackgroundTasks implements Plugin {
     this._executeTool = executeTool
     this._policy = resolvePolicy(config)
     this._manageTool = tool({
-      name: MANAGE_TOOL_NAME,
+      name: config.manageToolName ?? MANAGE_TOOL_NAME,
       description:
-        'List, inspect, or cancel background tasks. Completed results are delivered automatically; do not poll with this tool.',
+        "List, get, or cancel background tasks. Results are delivered automatically as synthetic 'get' calls. Do not poll for results.",
       inputSchema: z.object({
         mode: z.enum(['list', 'get', 'cancel']).describe('Whether to list, inspect, or cancel background tasks.'),
         taskId: z
@@ -79,11 +103,12 @@ export class BackgroundTasks implements Plugin {
         if (!taskId) throw new TypeError(`Task ID is required for mode '${mode}'`)
         const task = this._tasks.get(taskId)
         if (!task) throw new BackgroundTaskNotFoundError(taskId)
-        if (mode === 'get') return task
+        if (mode === 'get') return taskResultContent(task)
         const cancelled = isTaskStatusTerminal(task.status) ? task : await this._manager.cancel(taskId)
         return { taskId: cancelled.taskId, status: cancelled.status }
       },
     })
+    MANAGE_TOOLS.add(this._manageTool)
   }
 
   getTools(): Tool[] {
@@ -96,7 +121,7 @@ export class BackgroundTasks implements Plugin {
       const policy = this._policyFor(tool)
       if (!policy?.exact || policy.mode === 'never') continue
       const toolName = tool.name
-      if (!canExecuteInBackground(tool)) throw new TypeError(`Tool '${toolName}' cannot run in the background`)
+      if (!this._canExecuteInBackground(tool)) throw new TypeError(`Tool '${toolName}' cannot run in the background`)
       if (policy.mode === 'agentic' && !canSelectBackground(tool)) {
         throw new TypeError(`Tool '${toolName}' cannot use agentic background selection`)
       }
@@ -116,7 +141,7 @@ export class BackgroundTasks implements Plugin {
         const tool = agent.toolRegistry.get(spec.name)
         const policy = this._policyFor(tool)
         if (policy?.mode !== 'agentic') return spec
-        if (!canExecuteInBackground(tool)) {
+        if (!this._canExecuteInBackground(tool)) {
           if (policy.exact) throw new TypeError(`Tool '${spec.name}' cannot use agentic background selection`)
           return spec
         }
@@ -162,7 +187,7 @@ export class BackgroundTasks implements Plugin {
 
     const policy = this._policyFor(effectiveTool)
     if (!policy || policy.mode === 'never') return
-    if (!canExecuteInBackground(effectiveTool)) {
+    if (!this._canExecuteInBackground(effectiveTool)) {
       return policy.exact
         ? toolError(toolUse.toolUseId, `Tool '${toolUse.name}' cannot run in the background`)
         : undefined
@@ -179,12 +204,13 @@ export class BackgroundTasks implements Plugin {
     toolUse: ToolUseData,
     invocationState: InvocationState,
     passId: string,
-    tool: Tool
+    tool: Tool,
+    invocationContext?: InvocationContext
   ): Promise<ToolResultBlock> {
     if (this._agent.cancelSignal.aborted) return toolError(toolUse.toolUseId, 'Tool execution cancelled')
 
     try {
-      const task = await this._manager.submit(toolUse, invocationState, passId, tool)
+      const task = await this._manager.submit(toolUse, invocationState, passId, tool, invocationContext)
       return new ToolResultBlock({
         toolUseId: toolUse.toolUseId,
         status: 'success',
@@ -211,7 +237,7 @@ export class BackgroundTasks implements Plugin {
 
   assertToolCanRun(tool: Tool | undefined): void {
     const policy = this._policyFor(tool)
-    if (!canExecuteInBackground(tool) || !policy || policy.mode === 'never') {
+    if (!this._canExecuteInBackground(tool) || !policy || policy.mode === 'never') {
       throw new Error('Tool cannot run in the background')
     }
   }
@@ -244,13 +270,19 @@ export class BackgroundTasks implements Plugin {
 
     const tasks = [...this._tasks.values()]
     const interrupts = tasks.flatMap((task) => (task.status === 'input_required' ? (task.interrupts ?? []) : []))
-    if (interrupts.length > 0) throw new InterruptError([...interrupts])
+    if (interrupts.length > 0) {
+      this._raisedInterrupt = true
+      throw new InterruptError([...interrupts])
+    }
     this._deliverReady(event, tasks)
   }
 
   private async _afterInvocation(event: AfterInvocationEvent): Promise<void> {
     const agent = event.agent as Agent
-    if (agent._interruptState.activated) return
+    // A cancel can drop the interrupt this invocation already returns, so the interrupt state is not enough.
+    const raisedInterrupt = this._raisedInterrupt
+    this._raisedInterrupt = false
+    if (raisedInterrupt || agent._interruptState.activated) return
     let tasks = [...this._tasks.values()]
     while (
       this._config.waitForCompletion !== false &&
@@ -265,6 +297,8 @@ export class BackgroundTasks implements Plugin {
       event.resume ??= []
       return
     }
+    // Delivering would start another pass; after a cancel the results wait for the next invocation instead.
+    if (agent._cancelRequested) return
     this._deliverReady(event, tasks)
   }
 
@@ -296,17 +330,14 @@ export class BackgroundTasks implements Plugin {
     const taskIds = terminalTasks.map((task) => task.taskId)
     continuations.addInput(event, {
       args: terminalTasks.flatMap((task) => {
-        const content = task.result?.content.map(toolResultContentFromData) ?? [
-          new TextBlock(task.error?.message ?? 'Background task cancelled'),
-        ]
         return [
           new Message({
             role: 'assistant',
             content: [
               new ToolUseBlock({
-                name: 'strands_background_task_result',
+                name: this._manageTool.name,
                 toolUseId: task.taskId,
-                input: { toolName: task.toolName },
+                input: { mode: 'get', taskId: task.taskId },
               }),
             ],
           }),
@@ -315,8 +346,9 @@ export class BackgroundTasks implements Plugin {
             content: [
               new ToolResultBlock({
                 toolUseId: task.taskId,
-                status: task.status === 'completed' ? 'success' : 'error',
-                content,
+                // The get succeeds even if the task failed; task status and errors are in the metadata.
+                status: 'success',
+                content: taskResultContent(task),
               }),
             ],
           }),
@@ -343,11 +375,28 @@ export class BackgroundTasks implements Plugin {
       }
       this._tasks.set(task.taskId, recoverTask(task))
     }
-    for (const interruptId of recoveredInterruptIds) delete this._agent._interruptState.interrupts[interruptId]
+    this._dropInterrupts(recoveredInterruptIds)
+    this._persistTasks()
+  }
+
+  /**
+   * Cancels every non-terminal task and drops the agent interrupts they raised. The tasks are recorded as
+   * cancelled before this returns; it does not wait for their tools to stop.
+   */
+  cancelAll(): void {
+    const interruptIds = [...this._tasks.values()]
+      .filter((task) => !isTaskStatusTerminal(task.status))
+      .flatMap((task) => (task.interrupts ?? []).map((interrupt) => interrupt.id))
+    for (const task of this._manager.cancelAll()) this._tasks.set(task.taskId, task)
+    this._dropInterrupts(interruptIds)
+    this._persistTasks()
+  }
+
+  private _dropInterrupts(interruptIds: Iterable<string>): void {
+    for (const interruptId of interruptIds) delete this._agent._interruptState.interrupts[interruptId]
     if (this._agent._interruptState.activated && this._agent._interruptState.getInterruptsList().length === 0) {
       this._agent._interruptState.deactivate()
     }
-    this._persistTasks()
   }
 
   private _persistTasks(): void {
@@ -367,6 +416,21 @@ export class BackgroundTasks implements Plugin {
     const wildcard = this._policy.get('*')
     return wildcard ? { mode: wildcard, exact: false } : undefined
   }
+
+  private _canExecuteInBackground(tool: Tool | undefined): tool is Tool {
+    return (
+      tool !== undefined &&
+      tool.name !== this._manageTool.name &&
+      !FOREGROUND_TOOL_NAMES.has(tool.name) &&
+      !isLoadTools(tool) &&
+      !(tool instanceof AgentAsTool && tool.delegate)
+    )
+  }
+}
+
+function taskResultContent(task: BackgroundTask): ToolResultContent[] {
+  const { result, ...metadata } = task
+  return [new JsonBlock({ json: deepCopy(metadata) }), ...(result?.content.map(toolResultContentFromData) ?? [])]
 }
 
 function toolError(toolUseId: string, message: string): ToolResultBlock {
@@ -376,10 +440,6 @@ function toolError(toolUseId: string, message: string): ToolResultBlock {
     content: [new TextBlock(message)],
     error: new Error(message),
   })
-}
-
-function canExecuteInBackground(tool: Tool | undefined): tool is Tool {
-  return tool !== undefined && !FOREGROUND_TOOL_NAMES.has(tool.name) && !(tool instanceof AgentAsTool && tool.delegate)
 }
 
 function canSelectBackground(tool: Tool): boolean {

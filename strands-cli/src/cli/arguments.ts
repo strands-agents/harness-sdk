@@ -1,0 +1,396 @@
+import { DEFAULT_HARNESS_AGENT_CONFIG, type HarnessAgentConfig } from '@strands-agents/harness'
+import { EFFORT_LEVELS, normalizeHarnessAgentConfig } from '@strands-agents/harness/internal'
+import { Command, Option } from 'commander'
+
+import {
+  isEvalsDevCommand,
+  parseEvalsDevCommandArguments,
+  type EvalsDevCommandName,
+} from '../dev/evals/shell/arguments.js'
+import { readCliVersion } from '../package-version.js'
+import { isRecord } from '../values.js'
+
+export interface DevArgs {
+  init: boolean
+  prepared?: boolean
+  workspace?: string
+  searchRoots: string[]
+  create?: 'cli' | 'typescript' | 'python'
+  evalsCommand?: { name: EvalsDevCommandName; experiment?: string; evalsArguments: string[] }
+}
+
+export interface ParsedArgs {
+  dev?: DevArgs
+  update: boolean
+  request: string | undefined
+  oneShot: boolean
+  acpServer: boolean
+  setup: boolean
+  agent: string | undefined
+  configSet: string[]
+  envFiles: string[]
+  name: string | undefined
+  description: string | undefined
+  model: string | undefined
+  effort: string | undefined
+  instructions: string | undefined
+  builtinTools: string | undefined
+  builtinPlugins: string | undefined
+  caching: string | undefined
+  contextManager: string | undefined
+  session: string | undefined
+  sessionId: string | undefined
+  skills: string | undefined
+  memory: string | undefined
+  interventions: string | undefined
+  mcpConfig: string[]
+}
+
+export type CliRunMode = 'acp' | 'ink' | 'plain' | 'print'
+
+type ChatCommandName = 'strands' | 'strands dev' | 'strands dev init'
+
+type DevSubcommandName = 'init' | EvalsDevCommandName
+
+type CommandSummary = readonly [usage: string, summary: string]
+
+const DIRECT_CONFIG_FLAGS = ['name', 'description', 'effort', 'instructions', 'interventions'] as const
+
+const COMMAND_USAGE_WIDTH = 26
+
+const EVALS_DEV_COMMAND_SUMMARIES: readonly CommandSummary[] = [
+  ['evaluate [experiment]', 'experimental: run the agent on an experiment'],
+  ['optimize [experiment]', 'experimental: tune the agent against an experiment'],
+]
+
+const COMMAND_HELP: Record<ChatCommandName, { description: string; commands: readonly CommandSummary[] }> = {
+  strands: {
+    description: 'Chat with a Strands harness agent.',
+    commands: [
+      ['dev', 'open a local harness workspace'],
+      ['update', 'update the globally installed CLI'],
+    ],
+  },
+  'strands dev': {
+    description: 'Chat with the agent of a local harness workspace. Plain strands keeps its default agent.',
+    commands: [['init', 'set up a workspace and exit'], ...EVALS_DEV_COMMAND_SUMMARIES],
+  },
+  'strands dev init': {
+    description: 'Set up a local harness workspace, then exit without a model request.',
+    commands: [],
+  },
+}
+
+export function parseArgs(argv: string[]): ParsedArgs {
+  if (argv[0] === 'update') {
+    return parseUpdateArgs(argv.slice(1))
+  }
+  if (argv[0] === 'dev') {
+    return parseDevArgs(argv.slice(1))
+  }
+  return parseChatArgs(argv, 'strands')
+}
+
+const parseDevArgs = (argv: string[]): ParsedArgs => {
+  const subcommand = findDevSubcommand(argv)
+  if (subcommand === undefined) return parseChatArgs(argv, 'strands dev')
+  if (subcommand.name === 'init') return parseChatArgs(subcommand.argv, 'strands dev init')
+  const { workspace, ...evalsCommand } = parseEvalsDevCommandArguments(subcommand.name, subcommand.argv)
+  const parsed = parseChatArgs(workspace ? ['--workspace', workspace] : [], 'strands dev')
+  return { ...parsed, dev: { ...parsed.dev!, evalsCommand } }
+}
+
+const isDevSubcommand = (token: string | undefined): token is DevSubcommandName =>
+  token === 'init' || isEvalsDevCommand(token)
+
+const findDevSubcommand = (argv: string[]): { name: DevSubcommandName; argv: string[] } | undefined => {
+  const { operands: fromFirstArgument } = chatProgram('strands dev').passThroughOptions().parseOptions(argv)
+  const position = argv.length - fromFirstArgument.length
+  const [name] = fromFirstArgument
+  if (!isDevSubcommand(name) || argv.slice(0, position).includes('--')) return undefined
+  return { name, argv: [...argv.slice(0, position), ...argv.slice(position + 1)] }
+}
+
+const commandsHelp = (commands: readonly CommandSummary[]): string =>
+  `\nCommands:\n${commands.map(([usage, summary]) => `  ${usage.padEnd(COMMAND_USAGE_WIDTH)}${summary}\n`).join('')}`
+
+const chatProgram = (name: ChatCommandName): Command => {
+  const collect = (value: string, previous: string[]): string[] => [...previous, value]
+  const dev = name !== 'strands'
+  const init = name === 'strands dev init'
+  const { description, commands } = COMMAND_HELP[name]
+  const program = new Command()
+  program
+    .name(name)
+    .description(description)
+    .version(readCliVersion())
+    .argument('[request]', init ? '' : 'an initial request to answer')
+    .addOption(new Option('-p, --print', 'answer the request and exit, without entering the chat loop').hideHelp(init))
+    .addOption(new Option('--prompt <text>', 'initial request (equivalent to the positional request)').hideHelp(init))
+    .addOption(new Option('--acp-server', 'serve the agent over ACP on stdin/stdout').hideHelp(dev))
+    .addOption(new Option('--setup', 'open the interactive provider and agent setup wizard').hideHelp(dev))
+    .option('--agent <path>', 'load an agent project ZIP, folder, or agent.ts/agent.py')
+    .option('--set <field=value>', 'override any portable agent config field (repeatable)', collect, [])
+    .option('--env-file <path>', 'load an explicitly trusted env file (repeatable)', collect, [])
+    .option('--name <name>', 'agent name')
+    .option('--description <text>', 'agent description')
+    .option('--model <model>', 'provider/model string, or a bare Bedrock model id')
+    .option('--effort <level>', `reasoning effort: ${EFFORT_LEVELS.join(', ')}`)
+    .option('--instructions <text>', 'domain instructions appended to the system prompt')
+    .option('--builtin-tools <tools>', "comma-separated built-in tools, or '' for none")
+    .option('--builtin-plugins <plugins>', "comma-separated built-in plugins, or '' for none")
+    .option('--caching <mode>', "prompt caching: 'auto' (on) or 'off'")
+    .option('--context-manager <mode>', "context management: 'auto', 'agentic', or 'off'")
+    .option('--session <mode>', "conversation persistence: 'on' or 'off'")
+    .option('--session-id <id>', 'persist and resume this conversation by id')
+    .option('--skills <dirs>', "comma-separated directories to load skills from, or 'off' to disable")
+    .option('--memory <mode>', "long-term memory: 'on' or 'off'")
+    .option(
+      '--interventions <policy>',
+      "gate tool calls: 'ask', 'smart', a .cedar file path, or a natural-language rule"
+    )
+    .option('--mcp-config <path>', 'additional MCP configuration file (repeatable)', collect, [])
+    .allowExcessArguments(false)
+    .exitOverride()
+
+  if (init) program.usage('[options]')
+  if (dev) {
+    program
+      .option('--workspace <path>', 'open this dev workspace, or create strands-dev/ in this folder')
+      .option('--search-root <path>', 'search another folder for harnesses (repeatable)', collect, [])
+      .option('--create <language>', 'create a cli, typescript, or python harness')
+  }
+  if (commands.length) program.addHelpText('after', commandsHelp(commands))
+  return program
+}
+
+const parseChatArgs = (argv: string[], name: ChatCommandName): ParsedArgs => {
+  const dev = name !== 'strands'
+  const init = name === 'strands dev init'
+  const program = chatProgram(name)
+  program.parse(argv, { from: 'user' })
+  const opts = program.opts()
+  if (dev) {
+    if (opts.setup || opts.acpServer) program.error('error: strands dev does not support --setup or --acp-server.')
+    if (opts.create !== undefined && !['cli', 'typescript', 'python'].includes(opts.create)) {
+      program.error('error: --create must be cli, typescript, or python.')
+    }
+    if (opts.create && opts.agent) program.error('error: --create and --agent cannot be combined.')
+    if (init && (opts.print || opts.prompt !== undefined || program.args.length > 0)) {
+      program.error('error: strands dev init configures a workspace and does not accept a request.')
+    }
+  }
+  if (opts.prompt !== undefined && program.args[0] !== undefined) {
+    program.error('error: pass the initial request either positionally or with --prompt, not both.')
+  }
+  return {
+    ...(dev ? { dev: { init, workspace: opts.workspace, searchRoots: opts.searchRoot, create: opts.create } } : {}),
+    update: false,
+    request: opts.prompt ?? program.args[0],
+    oneShot: Boolean(opts.print),
+    acpServer: Boolean(opts.acpServer),
+    setup: Boolean(opts.setup),
+    agent: opts.agent,
+    configSet: opts.set,
+    envFiles: opts.envFile,
+    name: opts.name,
+    description: opts.description,
+    model: opts.model,
+    effort: opts.effort,
+    instructions: opts.instructions,
+    builtinTools: opts.builtinTools,
+    builtinPlugins: opts.builtinPlugins,
+    caching: opts.caching,
+    contextManager: opts.contextManager,
+    session: opts.session,
+    sessionId: opts.sessionId,
+    skills: opts.skills,
+    memory: opts.memory,
+    interventions: opts.interventions,
+    mcpConfig: opts.mcpConfig,
+  }
+}
+
+function parseUpdateArgs(argv: string[]): ParsedArgs {
+  const program = new Command()
+  program
+    .name('strands update')
+    .description('Update the globally installed Strands CLI.')
+    .allowExcessArguments(false)
+    .exitOverride()
+    .parse(argv, { from: 'user' })
+
+  return {
+    update: true,
+    request: undefined,
+    oneShot: false,
+    acpServer: false,
+    setup: false,
+    agent: undefined,
+    configSet: [],
+    envFiles: [],
+    name: undefined,
+    description: undefined,
+    model: undefined,
+    effort: undefined,
+    instructions: undefined,
+    builtinTools: undefined,
+    builtinPlugins: undefined,
+    caching: undefined,
+    contextManager: undefined,
+    session: undefined,
+    sessionId: undefined,
+    skills: undefined,
+    memory: undefined,
+    interventions: undefined,
+    mcpConfig: [],
+  }
+}
+
+/** Apply arbitrary portable config values, followed by the dedicated CLI flag shorthands. */
+export function agentConfig(args: ParsedArgs, defaults: HarnessAgentConfig): HarnessAgentConfig {
+  const config = globalThis.structuredClone(defaults) as unknown as Record<string, unknown>
+  for (const assignment of args.configSet) {
+    applyConfigAssignment(config, assignment)
+  }
+  for (const key of DIRECT_CONFIG_FLAGS) {
+    if (args[key] !== undefined) {
+      config[key] = args[key]
+    }
+  }
+  if (args.model !== undefined) {
+    config.model = modelSpecifier(args.model, '--model')
+  }
+  if (
+    (args.model !== undefined || args.configSet.some((assignment) => assignment.startsWith('model='))) &&
+    !args.configSet.some((assignment) => /^modelModule[.=]/u.test(assignment))
+  ) {
+    config.modelModule = null
+  }
+  if (args.builtinTools !== undefined) {
+    config.builtinTools = commaSeparated(args.builtinTools)
+  }
+  if (args.builtinPlugins !== undefined) {
+    config.builtinPlugins = commaSeparated(args.builtinPlugins)
+  }
+  if (args.caching !== undefined) {
+    config.caching = args.caching !== 'off'
+  }
+  if (args.contextManager !== undefined) {
+    config.contextManager = args.contextManager === 'off' ? false : args.contextManager
+  }
+  // `on` keeps an object form already present (a saved `dir`, a `--set` sub-key) rather than flattening it.
+  for (const key of ['session', 'memory'] as const) {
+    if (args[key] === undefined) continue
+    if (args[key] === 'off') {
+      config[key] = false
+    } else if (args[key] === 'on') {
+      config[key] ||= true
+    } else {
+      throw new Error(`--${key} must be 'on' or 'off'.`)
+    }
+  }
+  // `--session off` (or a disabled saved profile) wins over the id.
+  if (args.sessionId !== undefined && config.session !== false) {
+    const session = config.session
+    config.session = { ...(typeof session === 'object' && session !== null ? session : {}), id: args.sessionId }
+  }
+  if (args.skills !== undefined) {
+    config.skills = args.skills === 'off' ? false : commaSeparated(args.skills)
+  }
+  return normalizeHarnessAgentConfig(config)
+}
+
+export function projectConfigOverrides(args: ParsedArgs): Partial<HarnessAgentConfig> {
+  const fields = new Set(args.configSet.map((assignment) => assignment.split('=')[0]!.split('.')[0]!))
+  for (const key of [
+    ...DIRECT_CONFIG_FLAGS,
+    'model',
+    'builtinTools',
+    'builtinPlugins',
+    'caching',
+    'contextManager',
+    'session',
+    'skills',
+    'memory',
+  ] as const) {
+    if (args[key] !== undefined) fields.add(key)
+  }
+  if (args.sessionId !== undefined) fields.add('session')
+  const config = agentConfig(args, DEFAULT_HARNESS_AGENT_CONFIG)
+  return Object.fromEntries(Object.entries(config).filter(([key]) => fields.has(key)))
+}
+
+export function shouldPersistModelChanges(args: ParsedArgs): boolean {
+  const assignedFields = args.configSet.map((assignment) => assignment.slice(0, assignment.indexOf('=')))
+  return (
+    !args.agent &&
+    args.model === undefined &&
+    args.effort === undefined &&
+    !assignedFields.some((field) => field === 'model' || field === 'effort')
+  )
+}
+
+function applyConfigAssignment(config: Record<string, unknown>, assignment: string): void {
+  const separator = assignment.indexOf('=')
+  if (separator <= 0) {
+    throw new Error(`--set expects field=value; received ${JSON.stringify(assignment)}.`)
+  }
+  const path = assignment.slice(0, separator)
+  const keys = path.split('.')
+  if (
+    keys.some(
+      (key) =>
+        !/^[A-Za-z_][A-Za-z0-9_-]*$/u.test(key) || key === '__proto__' || key === 'prototype' || key === 'constructor'
+    )
+  ) {
+    throw new Error(`--set contains an invalid config field ${JSON.stringify(path)}.`)
+  }
+  if (!(keys[0]! in DEFAULT_HARNESS_AGENT_CONFIG)) {
+    throw new Error(`--set contains an unknown agent config field ${JSON.stringify(keys[0])}.`)
+  }
+  let target = config
+  for (const key of keys.slice(0, -1)) {
+    const value = target[key]
+    if (!isRecord(value)) {
+      target[key] = {}
+    }
+    target = target[key] as Record<string, unknown>
+  }
+  const raw = assignment.slice(separator + 1)
+  try {
+    target[keys.at(-1)!] = JSON.parse(raw) as unknown
+  } catch {
+    target[keys.at(-1)!] = raw
+  }
+}
+
+function commaSeparated(value: string): string[] {
+  return value
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+}
+
+function modelSpecifier(value: string, option: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) {
+    throw new Error(`${option} requires a model ID.`)
+  }
+  const separator = trimmed.indexOf('/')
+  if (separator === -1) {
+    return trimmed
+  }
+  const provider = trimmed.slice(0, separator)
+  const model = trimmed.slice(separator + 1)
+  if (!/^[a-z][a-z0-9_-]*$/i.test(provider)) {
+    return trimmed
+  }
+  const providers = ['bedrock', 'bedrock-mantle', 'anthropic', 'openai', 'google', 'ollama', 'litellm']
+  if (!providers.includes(provider) || !model) {
+    throw new Error(
+      `${option} must use a supported provider/model string: ${providers.slice(0, -1).join(', ')}, or ${providers.at(-1)}.`
+    )
+  }
+  return trimmed
+}

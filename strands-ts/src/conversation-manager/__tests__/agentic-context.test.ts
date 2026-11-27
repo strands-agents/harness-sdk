@@ -5,7 +5,7 @@ import {
   pinContextTool,
 } from '../../context-manager/modes/agentic/agentic-context.js'
 import { pinMessage } from '../compression/pin-message.js'
-import { Message, TextBlock, ToolUseBlock, ToolResultBlock } from '../../types/messages.js'
+import { Message, TextBlock, ToolUseBlock, ToolResultBlock, OffloadedBlock } from '../../types/messages.js'
 
 function textMsg(role: 'user' | 'assistant', text: string): Message {
   return new Message({ role, content: [new TextBlock(text)] })
@@ -23,13 +23,15 @@ function mockModel(summaryText = 'Summary of older messages') {
         .fn()
         .mockResolvedValueOnce({ done: false, value: undefined })
         .mockResolvedValueOnce({ done: true, value: { message } }),
-      [Symbol.asyncIterator]: vi.fn(),
+      [Symbol.asyncIterator]() {
+        return this
+      },
     })),
   }
 }
 
-function makeContext(messages: Message[], model?: any) {
-  return { agent: { messages, model: model ?? {} } } as any
+function makeContext(messages: Message[], model?: any, auxModel?: any) {
+  return { agent: { messages, model: model ?? {}, auxModel: auxModel ?? model ?? {} } } as any
 }
 
 describe('summarizeContextTool', () => {
@@ -52,6 +54,19 @@ describe('summarizeContextTool', () => {
     expect(result).toContain('message(s)')
     expect(messages.length).toBeLessThan(20)
     expect(messages[0]!.role).toBe('user')
+  })
+
+  it('summarizes with agent.auxModel', async () => {
+    const mainModel = mockModel('Main')
+    const auxModel = mockModel('Summary')
+    const messages = makeMessages(20)
+    const result = await summarizeContextTool.invoke(
+      { keepRecent: 10, summaryRatio: 0.5 },
+      makeContext(messages, mainModel, auxModel)
+    )
+    expect(result).toContain('Summarized')
+    expect(auxModel.streamAggregated).toHaveBeenCalledTimes(1)
+    expect(mainModel.streamAggregated).not.toHaveBeenCalled()
   })
 
   it('assigns a durable tracking id to the generated summary', async () => {
@@ -153,7 +168,9 @@ describe('summarizeContextTool', () => {
     const model = {
       streamAggregated: vi.fn(() => ({
         next: vi.fn().mockRejectedValueOnce(new Error('model error')),
-        [Symbol.asyncIterator]: vi.fn(),
+        [Symbol.asyncIterator]() {
+          return this
+        },
       })),
     }
     const messages = makeMessages(20)
@@ -297,6 +314,25 @@ describe('pinContextTool', () => {
       expect(result).toContain('1 message(s)')
       expect(messages[2]!.metadata?.custom?.pinned).toBe(true)
       expect(messages[3]!.metadata?.custom?.pinned).toBeUndefined()
+    })
+
+    it('treats a user turn whose text was offloaded as the turn boundary and as user text', async () => {
+      const messages = [
+        textMsg('user', 'Old'),
+        textMsg('assistant', 'Old'),
+        new Message({
+          role: 'user',
+          content: [new OffloadedBlock({ text: '[Dropped] [ref: m_0]', method: 'drop', ref: 'm_0' })],
+        }),
+        textMsg('assistant', 'New answer'),
+      ]
+      const result = await pinContextTool.invoke(
+        { select: 'last_turn', filter: 'user', action: 'pin' as const },
+        makeContext(messages)
+      )
+      expect(result).toContain('1 message(s)')
+      expect(messages[2]!.metadata?.custom?.pinned).toBe(true)
+      expect(messages[0]!.metadata?.custom?.pinned).toBeUndefined()
     })
   })
 
