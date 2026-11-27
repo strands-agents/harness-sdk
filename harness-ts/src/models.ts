@@ -80,7 +80,16 @@ const OPENAI_HIGH_ONLY_LEVELS = ['high'] as const
 const OPENAI_GPT5_LEVELS = ['minimal', 'low', 'medium', 'high'] as const
 const OPENAI_GPT5_1_LEVELS = ['none', 'low', 'medium', 'high'] as const
 const OPENAI_REASONING_BASIC_LEVELS = ['low', 'medium', 'high'] as const
-const OPENAI_NON_REASONING_PREFIXES = ['gpt-4o', 'gpt-4.1', 'gpt-4.5', 'gpt-4-', 'gpt-3.5', 'chatgpt-'] as const
+const OPENAI_NON_REASONING_PREFIXES = [
+  'gpt-4o',
+  'gpt-4.1',
+  'gpt-4.5',
+  'gpt-4',
+  'gpt-3.5',
+  'chatgpt',
+  'o1-mini',
+  'o1-preview',
+] as const
 // Ordered from specialized variants (-pro, -codex) to broader version families.
 const OPENAI_LEVEL_RULES: readonly [readonly string[], readonly string[]][] = [
   [['gpt-5-pro'], OPENAI_HIGH_ONLY_LEVELS],
@@ -97,9 +106,10 @@ const OPENAI_LEVEL_RULES: readonly [readonly string[], readonly string[]][] = [
     ],
     OPENAI_LOW_TO_XHIGH_LEVELS,
   ],
-  [['gpt-5-codex', 'gpt-5.1-codex', 'o1-', 'o3', 'o4-', 'codex-mini', 'gpt-oss-'], OPENAI_REASONING_BASIC_LEVELS],
+  [['gpt-5-codex', 'gpt-5.1-codex', 'o1', 'o3', 'o4', 'codex-mini', 'gpt-oss'], OPENAI_REASONING_BASIC_LEVELS],
   [['gpt-5.2', 'gpt-5.4', 'gpt-5.5'], OPENAI_NO_MINIMAL_LEVELS],
   [['gpt-5.1'], OPENAI_GPT5_1_LEVELS],
+  [['gpt-5'], OPENAI_GPT5_LEVELS],
 ]
 const BEDROCK_GPT_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 // Converse rejects max on GPT-5.4/5.5 and none on GPT-6 Astra/6.1 Sol.
@@ -348,29 +358,25 @@ async function bedrockMantle(
   })
 }
 
+function matchesOpenaiPrefix(modelId: string, prefixes: readonly string[]): boolean {
+  return prefixes.some((prefix) => modelId === prefix || modelId.startsWith(`${prefix}-`))
+}
+
 function openaiLevels(modelId: string): readonly string[] {
   if (
-    modelId === 'gpt-4' ||
     modelId === 'chat-latest' ||
     modelId.includes('-chat-latest') ||
-    modelId === 'o1-mini' ||
-    modelId.startsWith('o1-mini-') ||
-    modelId === 'o1-preview' ||
-    modelId.startsWith('o1-preview-') ||
-    OPENAI_NON_REASONING_PREFIXES.some((prefix) => modelId.startsWith(prefix))
+    matchesOpenaiPrefix(modelId, OPENAI_NON_REASONING_PREFIXES)
   ) {
     return NO_THINKING_LEVELS
   }
-  if (modelId === 'o1') {
-    return OPENAI_REASONING_BASIC_LEVELS
-  }
-  const matched = OPENAI_LEVEL_RULES.find(([prefixes]) => prefixes.some((prefix) => modelId.startsWith(prefix)))
+  const matched = OPENAI_LEVEL_RULES.find(([prefixes]) => matchesOpenaiPrefix(modelId, prefixes))
   if (matched !== undefined) {
     return matched[1]
   }
-  if (modelId === 'gpt-5' || modelId.startsWith('gpt-5-')) {
-    return OPENAI_GPT5_LEVELS
-  }
+  // Unmatched OpenAI/shared codenames (e.g. gpt-5.6*, gpt-6-sol, gpt-6-luna,
+  // gpt-6.1-terra, gpt-6-cyber) fail open to full OPENAI_LEVELS, matching Bedrock's
+  // unrestricted GPT defaults and CLI setup-policy tests (only astra/6.1-sol/6.2-* drop none/minimal).
   return OPENAI_LEVELS
 }
 

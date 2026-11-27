@@ -1082,6 +1082,19 @@ describe('web_fetch summarizer on a repointed endpoint', () => {
     expect(model.getConfig().modelId).toBe('gpt-oss-20b')
   })
 
+  it('applies model-specific effort=off behavior when OPENAI_BASE_URL is set for gpt-6.2-sol and gpt-4o', async () => {
+    // https://github.com/strands-agents/harness-sdk/issues/6522
+    process.env.OPENAI_BASE_URL = 'https://example.invalid/v1'
+
+    const sol = await resolveWebFetchModel('openai/gpt-6.2-sol', undefined)
+    expect(sol.getConfig().modelId).toBe('gpt-6.2-sol')
+    expect(sol.getConfig().params).toBeUndefined()
+
+    const gpt4o = await resolveWebFetchModel('openai/gpt-4o', undefined)
+    expect(gpt4o.getConfig().modelId).toBe('gpt-4o')
+    expect(gpt4o.getConfig().params).toBeUndefined()
+  })
+
   it('still uses the small model on the first-party endpoint', async () => {
     const model = await resolveWebFetchModel('anthropic/claude-opus-4-5-20251101', undefined)
     expect(model.getConfig().modelId).toBe('claude-haiku-4-5-20251001')
@@ -1413,6 +1426,78 @@ describe('OpenAI per-model reasoning effort', () => {
         ['off', null],
       ],
       ['minimal', 'max'],
+    ],
+    // Token-boundary checks: gpt-4.10 / gpt-5.10 must not match gpt-4.1 / gpt-5.1 prefixes.
+    [
+      'gpt-4.10',
+      [
+        ['auto', 'high'],
+        ['minimal', 'minimal'],
+        ['xhigh', 'xhigh'],
+        ['off', 'none'],
+      ],
+      ['max'],
+    ],
+    [
+      'gpt-5.10',
+      [
+        ['auto', 'high'],
+        ['minimal', 'minimal'],
+        ['xhigh', 'xhigh'],
+        ['off', 'none'],
+      ],
+      ['max'],
+    ],
+    // Unmatched shared codenames fail open to full OPENAI_LEVELS.
+    [
+      'gpt-5.6-sol',
+      [
+        ['auto', 'low'],
+        ['minimal', 'minimal'],
+        ['xhigh', 'xhigh'],
+        ['off', 'none'],
+      ],
+      ['max'],
+    ],
+    [
+      'gpt-6-sol',
+      [
+        ['auto', 'medium'],
+        ['minimal', 'minimal'],
+        ['xhigh', 'xhigh'],
+        ['off', 'none'],
+      ],
+      ['max'],
+    ],
+    [
+      'gpt-6-luna',
+      [
+        ['auto', 'medium'],
+        ['minimal', 'minimal'],
+        ['xhigh', 'xhigh'],
+        ['off', 'none'],
+      ],
+      ['max'],
+    ],
+    [
+      'gpt-6.1-terra',
+      [
+        ['auto', 'low'],
+        ['minimal', 'minimal'],
+        ['xhigh', 'xhigh'],
+        ['off', 'none'],
+      ],
+      ['max'],
+    ],
+    [
+      'gpt-6-cyber',
+      [
+        ['auto', 'high'],
+        ['minimal', 'minimal'],
+        ['xhigh', 'xhigh'],
+        ['off', 'none'],
+      ],
+      ['max'],
     ],
   ] as [string, [Effort, string | null][], Effort[]][])(
     'validates reasoning effort capabilities for %s',

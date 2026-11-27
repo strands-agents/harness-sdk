@@ -104,7 +104,16 @@ _OPENAI_HIGH_ONLY_LEVELS = ("high",)
 _OPENAI_GPT5_LEVELS = ("minimal", "low", "medium", "high")
 _OPENAI_GPT5_1_LEVELS = ("none", "low", "medium", "high")
 _OPENAI_REASONING_BASIC_LEVELS = ("low", "medium", "high")
-_OPENAI_NON_REASONING_PREFIXES = ("gpt-4o", "gpt-4.1", "gpt-4.5", "gpt-4-", "gpt-3.5", "chatgpt-")
+_OPENAI_NON_REASONING_PREFIXES = (
+    "gpt-4o",
+    "gpt-4.1",
+    "gpt-4.5",
+    "gpt-4",
+    "gpt-3.5",
+    "chatgpt",
+    "o1-mini",
+    "o1-preview",
+)
 # Ordered from specialized variants (-pro, -codex) to broader version families.
 _OPENAI_LEVEL_RULES = (
     (("gpt-5-pro",), _OPENAI_HIGH_ONLY_LEVELS),
@@ -122,11 +131,12 @@ _OPENAI_LEVEL_RULES = (
         _OPENAI_LOW_TO_XHIGH_LEVELS,
     ),
     (
-        ("gpt-5-codex", "gpt-5.1-codex", "o1-", "o3", "o4-", "codex-mini", "gpt-oss-"),
+        ("gpt-5-codex", "gpt-5.1-codex", "o1", "o3", "o4", "codex-mini", "gpt-oss"),
         _OPENAI_REASONING_BASIC_LEVELS,
     ),
     (("gpt-5.2", "gpt-5.4", "gpt-5.5"), _OPENAI_NO_MINIMAL_LEVELS),
     (("gpt-5.1",), _OPENAI_GPT5_1_LEVELS),
+    (("gpt-5",), _OPENAI_GPT5_LEVELS),
 )
 _BEDROCK_GPT_LEVELS = ("none", "low", "medium", "high", "xhigh", "max")
 # Converse rejects max on GPT-5.4/5.5 and none on GPT-6 Astra/6.1 Sol.
@@ -423,24 +433,23 @@ def _check_effort(effort: object) -> None:
     raise ValueError(f"Unknown effort {effort!r}. Choose one of: {', '.join(EFFORT_LEVELS)}.")
 
 
+def _matches_openai_prefix(model_id: str, prefixes: tuple[str, ...]) -> bool:
+    return any(model_id == prefix or model_id.startswith(f"{prefix}-") for prefix in prefixes)
+
+
 def _openai_levels(model_id: str) -> tuple[str, ...]:
     if (
-        model_id in ("gpt-4", "chat-latest")
+        model_id == "chat-latest"
         or "-chat-latest" in model_id
-        or model_id == "o1-mini"
-        or model_id.startswith("o1-mini-")
-        or model_id == "o1-preview"
-        or model_id.startswith("o1-preview-")
-        or model_id.startswith(_OPENAI_NON_REASONING_PREFIXES)
+        or _matches_openai_prefix(model_id, _OPENAI_NON_REASONING_PREFIXES)
     ):
         return ()
-    if model_id == "o1":
-        return _OPENAI_REASONING_BASIC_LEVELS
     for prefixes, levels in _OPENAI_LEVEL_RULES:
-        if model_id.startswith(prefixes):
+        if _matches_openai_prefix(model_id, prefixes):
             return levels
-    if model_id == "gpt-5" or model_id.startswith("gpt-5-"):
-        return _OPENAI_GPT5_LEVELS
+    # Unmatched OpenAI/shared codenames (e.g. gpt-5.6*, gpt-6-sol, gpt-6-luna,
+    # gpt-6.1-terra, gpt-6-cyber) fail open to full _OPENAI_LEVELS, matching Bedrock's
+    # unrestricted GPT defaults and CLI setup-policy tests (only astra/6.1-sol/6.2-* drop none/minimal).
     return _OPENAI_LEVELS
 
 

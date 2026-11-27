@@ -32,6 +32,7 @@ describe('model display names', () => {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
 })
 
 class BedrockModel {
@@ -224,15 +225,27 @@ describe('AgentModelRuntime thinking controls', () => {
     'us.anthropic.claude-sonnet-4-6-v1:0',
     'openai.gpt-oss-120b-1:0',
     'us.qwen.qwen3-32b-v1:0',
+    'openai/gpt-5',
+    'openai/gpt-5.1',
+    'openai/gpt-5.4',
+    'openai/gpt-5.4-pro',
+    'openai/gpt-5.2-codex',
+    'openai/gpt-6-astra',
+    'openai/gpt-6.1-sol',
+    'openai/gpt-6.2-sol',
+    'openai/o3',
+    'openai/gpt-5.6-sol',
   ])('offers only levels the library accepts for %s', async (modelId) => {
+    const spec = modelId.includes('/') ? modelId : `bedrock/${modelId}`
+    if (spec.startsWith('openai/')) {
+      vi.stubEnv('OPENAI_API_KEY', 'test-key')
+    }
     const offered = runtimeFor(modelId, 'auto')
       .listEfforts()
       .map((option) => option.id)
     const rejected: string[] = []
     for (const level of offered) {
-      await resolveModel(`bedrock/${modelId}`, `bedrock/${modelId}`, profileEffort(level)).catch(() =>
-        rejected.push(level)
-      )
+      await resolveModel(spec, spec, profileEffort(level)).catch(() => rejected.push(level))
     }
 
     expect(offered.length).toBeGreaterThan(0)
@@ -319,11 +332,16 @@ describe('AgentModelRuntime thinking controls', () => {
     ['openai/gpt-5.2-pro', ['medium', 'high', 'xhigh']],
     ['openai/gpt-5.2-codex', ['low', 'medium', 'high', 'xhigh']],
     ['openai/gpt-5.3-codex', ['low', 'medium', 'high', 'xhigh']],
+    ['openai/gpt-5.4', ['none', 'low', 'medium', 'high', 'xhigh']],
     ['openai/gpt-5.4-pro', ['medium', 'high', 'xhigh']],
     ['openai/gpt-5.5', ['none', 'low', 'medium', 'high', 'xhigh']],
     ['openai/gpt-5.5-pro', ['medium', 'high', 'xhigh']],
+    ['openai/gpt-6-astra', ['low', 'medium', 'high', 'xhigh']],
+    ['openai/gpt-6.1-sol', ['low', 'medium', 'high', 'xhigh']],
     ['openai/gpt-6.2-astra', ['low', 'medium', 'high', 'xhigh']],
     ['openai/gpt-6.2-sol', ['low', 'medium', 'high', 'xhigh']],
+    ['openai/gpt-4.10', ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']],
+    ['openai/gpt-5.10', ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']],
   ])('offers the OpenAI effort levels accepted by %s', (modelId, expected) => {
     expect(effortOptions(modelId, 'auto').map((option) => option.id)).toEqual(expected)
   })
@@ -334,6 +352,8 @@ describe('AgentModelRuntime thinking controls', () => {
       'auto',
       async () => ({ model: new OpenAIModel('gpt-5') }) as unknown as Agent
     )
+    expect(runtime.listEfforts().map((option) => option.id)).toEqual(['minimal', 'low', 'medium', 'high'])
+    await expect(runtime.setEffort('minimal')).resolves.toBe('minimal')
     await expect(runtime.setEffort('none')).rejects.toThrow('not supported')
     await expect(runtime.setEffort('xhigh')).rejects.toThrow('not supported')
     await expect(runtime.setEffort('off')).resolves.toBe('off')
@@ -665,8 +685,12 @@ function runtimeFor(
   thinking: string | null,
   restartAgent?: (options: { thinking?: EffortInput }) => Promise<Agent>
 ): AgentModelRuntime {
-  return new AgentModelRuntime({ model: new BedrockModel(modelId) } as unknown as Agent, {
-    initialModel: `bedrock/${modelId}`,
+  const initialModel = modelId.includes('/') ? modelId : `bedrock/${modelId}`
+  const model = initialModel.startsWith('openai/')
+    ? new OpenAIModel(initialModel.slice('openai/'.length))
+    : new BedrockModel(modelId)
+  return new AgentModelRuntime({ model } as unknown as Agent, {
+    initialModel,
     thinking,
     ...(restartAgent ? { restartAgent } : {}),
   })

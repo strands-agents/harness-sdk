@@ -1123,6 +1123,15 @@ def test_openai_non_reasoning_model_preserves_web_search_without_reasoning():
         ("gpt-6.1-sol", [("auto", "low"), ("low", "low"), ("xhigh", "xhigh"), ("off", None)], ["minimal", "max"]),
         ("gpt-6.2-astra", [("auto", "low"), ("low", "low"), ("xhigh", "xhigh"), ("off", None)], ["minimal", "max"]),
         ("gpt-6.2-sol", [("auto", "low"), ("low", "low"), ("xhigh", "xhigh"), ("off", None)], ["minimal", "max"]),
+        # Token-boundary checks: gpt-4.10/gpt-5.10 must not match gpt-4.1/gpt-5.1 prefixes.
+        ("gpt-4.10", [("auto", "high"), ("minimal", "minimal"), ("xhigh", "xhigh"), ("off", "none")], ["max"]),
+        ("gpt-5.10", [("auto", "high"), ("minimal", "minimal"), ("xhigh", "xhigh"), ("off", "none")], ["max"]),
+        # Unmatched shared codenames fail open to full _OPENAI_LEVELS.
+        ("gpt-5.6-sol", [("auto", "low"), ("minimal", "minimal"), ("xhigh", "xhigh"), ("off", "none")], ["max"]),
+        ("gpt-6-sol", [("auto", "medium"), ("minimal", "minimal"), ("xhigh", "xhigh"), ("off", "none")], ["max"]),
+        ("gpt-6-luna", [("auto", "medium"), ("minimal", "minimal"), ("xhigh", "xhigh"), ("off", "none")], ["max"]),
+        ("gpt-6.1-terra", [("auto", "low"), ("minimal", "minimal"), ("xhigh", "xhigh"), ("off", "none")], ["max"]),
+        ("gpt-6-cyber", [("auto", "high"), ("minimal", "minimal"), ("xhigh", "xhigh"), ("off", "none")], ["max"]),
     ],
 )
 def test_openai_effort_validation_matches_model_capabilities(model_id, accepted, rejected):
