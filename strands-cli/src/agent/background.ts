@@ -383,7 +383,7 @@ function formatToolResult(content: readonly ToolResultContent[]): string {
         if (block.type === 'documentBlock') {
           return `[document: ${block.name}.${block.format}]`
         }
-        return JSON.stringify(block.data, null, 2)
+        return '[unsupported content]'
       })
       .join('\n')
   )

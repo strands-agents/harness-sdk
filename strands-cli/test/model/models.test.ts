@@ -145,6 +145,19 @@ describe('AgentModelRuntime model ordering', () => {
   })
 })
 
+describe('AgentModelRuntime provider', () => {
+  it('reports Bedrock for the AnthropicModel the harness builds for Claude on Bedrock', async () => {
+    vi.stubEnv('AWS_REGION', 'us-east-1')
+    const model = await resolveModel(undefined, 'bedrock/global.anthropic.claude-opus-5-5')
+    const runtime = new AgentModelRuntime({ model } as unknown as Agent)
+
+    expect(model.constructor.name).toBe('AnthropicModel')
+    expect(runtime.provider).toBe('bedrock')
+    expect(runtime.changeMode('bedrock/us.anthropic.claude-opus-5-5')).toBe('live')
+    vi.unstubAllEnvs()
+  })
+})
+
 describe('AgentModelRuntime thinking controls', () => {
   it('offers granular Claude effort levels behind a cross-region prefix', () => {
     const model = 'global.anthropic.claude-opus-4-8'

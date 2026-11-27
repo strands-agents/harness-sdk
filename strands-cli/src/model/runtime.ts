@@ -384,8 +384,15 @@ function modelProvider(model: Model): string {
   switch (model.constructor.name) {
     case 'BedrockModel':
       return 'bedrock'
-    case 'AnthropicModel':
-      return 'anthropic'
+    case 'AnthropicModel': {
+      // The harness builds Claude on Bedrock as an AnthropicModel on Anthropic's Bedrock clients.
+      const client = (model as unknown as { _client?: object })._client?.constructor.name
+      return client === 'AnthropicBedrock'
+        ? 'bedrock'
+        : client === 'AnthropicBedrockMantle'
+          ? 'bedrock-mantle'
+          : 'anthropic'
+    }
     case 'OpenAIModel':
       return 'openai'
     case 'GoogleModel':

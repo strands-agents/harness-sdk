@@ -208,7 +208,7 @@ function summarizeToolResult(content: readonly ToolResultContent[]): string {
         case 'documentBlock':
           return `[document: ${block.name}.${block.format}]`
         case 'unknownBlock':
-          return JSON.stringify(block.data)
+          return '[unsupported content]'
       }
     })
     .map(sanitizeTerminalText)

@@ -108,7 +108,7 @@ async function estimateContext(context: InvokeModelContext): Promise<ContextEsti
     other: [],
   }
   const lastIndex = context.messages.length - 1
-  const latestUser = context.messages.findLastIndex((message) => message.role === 'user')
+  const latestUser = context.messages.map((message) => message.role).lastIndexOf('user')
   for (const [messageIndex, message] of context.messages.entries()) {
     const injectionStart =
       messageIndex === lastIndex && message.role === 'user'

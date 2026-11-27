@@ -649,8 +649,8 @@ describe('setup presentation', () => {
       expect(frame).toContain('Reasoning')
       await scroll('Reasoning', 65)
       expect(frame).toContain('Web search')
-      await click('Native')
-      expect(frame).toContain("Provider's built-in search")
+      await click('AgentCore')
+      expect(frame).toContain('Bedrock AgentCore web search')
       await scroll('Web search', 64)
       expect(frame).toContain('Reasoning')
       if (columns === 80) {

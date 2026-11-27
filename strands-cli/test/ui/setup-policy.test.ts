@@ -167,7 +167,6 @@ describe('setup feature controls', () => {
       memory: { dir: './private-memory' },
       contextManager: 'agentic',
       agentConfig: { backgroundTasks: { maxConcurrency: 2, timeout: 23000 }, maxParallelTools: 3 },
-      builtinPlugins: ['todos', 'environment'],
     })
     const controls = setupControls(profile, discovery)
     await harnessAgentOptionsFromConfig(profile)
@@ -543,7 +542,7 @@ describe('setup web_search availability', () => {
 
   it.each([
     ['Exa', 'ollama', 'exa'],
-    ['Native', 'bedrock', 'native'],
+    ['AgentCore', 'bedrock', 'native'],
     ['Native', 'bedrock-mantle', 'native'],
   ] as const)('offers an explicit %s web search opt-in for %s', (label, provider, mode) => {
     const draft = quickstartDraft(`${provider}/openai.gpt-6.1-sol`)
