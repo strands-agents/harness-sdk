@@ -440,7 +440,12 @@ def _as_float(value: DogwoodValue) -> DogwoodValue:
     if isinstance(value, bool):
         return value
     if isinstance(value, int):
-        return float(value)
+        try:
+            return float(value)
+        except OverflowError:
+            # Out of `decimal` range either way, so Dogwood is left to name the mismatch rather
+            # than this raising out of the handler and reaching `on_error`.
+            return value
     if isinstance(value, list):
         return [_as_float(item) for item in value]
     return value
