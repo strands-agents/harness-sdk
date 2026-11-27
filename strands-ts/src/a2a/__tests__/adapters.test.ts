@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { partsToContentBlocks, contentBlocksToParts } from '../adapters.js'
 import { TextBlock, ToolUseBlock, ReasoningBlock, OffloadedBlock } from '../../types/messages.js'
 import type { ContentBlock } from '../../types/messages.js'
-import { ImageBlock, VideoBlock, DocumentBlock, encodeBase64 } from '../../types/media.js'
+import { AudioBlock, ImageBlock, VideoBlock, DocumentBlock, encodeBase64 } from '../../types/media.js'
 import type { Part } from '@a2a-js/sdk'
 
 describe('adapters', () => {
@@ -25,6 +25,10 @@ describe('adapters', () => {
       { mimeType: 'image/png', BlockClass: ImageBlock, format: 'png' },
       { mimeType: 'image/jpeg', BlockClass: ImageBlock, format: 'jpeg' },
       { mimeType: 'video/mp4', BlockClass: VideoBlock, format: 'mp4' },
+      { mimeType: 'audio/mpeg', BlockClass: AudioBlock, format: 'mp3' },
+      { mimeType: 'audio/wav', BlockClass: AudioBlock, format: 'wav' },
+      { mimeType: 'audio/x-wav', BlockClass: AudioBlock, format: 'wav' },
+      { mimeType: 'audio/wave', BlockClass: AudioBlock, format: 'wav' },
       { mimeType: 'application/pdf', BlockClass: DocumentBlock, format: 'pdf' },
       { mimeType: 'application/vnd.ms-excel', BlockClass: DocumentBlock, format: 'xls' },
       { mimeType: 'application/octet-stream', BlockClass: DocumentBlock, format: 'octet-stream' },
@@ -37,9 +41,51 @@ describe('adapters', () => {
 
         expect(blocks).toHaveLength(1)
         expect(blocks[0]).toBeInstanceOf(BlockClass)
-        expect((blocks[0] as ImageBlock | VideoBlock | DocumentBlock).format).toBe(format)
+        expect((blocks[0] as AudioBlock | ImageBlock | VideoBlock | DocumentBlock).format).toBe(format)
       }
     )
+
+    it.each([
+      { mimeType: 'text/plain; charset=utf-8', BlockClass: DocumentBlock, format: 'txt' },
+      { mimeType: 'application/pdf; name=x', BlockClass: DocumentBlock, format: 'pdf' },
+      { mimeType: 'audio/mpeg; charset=binary', BlockClass: AudioBlock, format: 'mp3' },
+    ])('ignores MIME parameters in $mimeType', ({ mimeType, BlockClass, format }) => {
+      const parts: Part[] = [{ kind: 'file', file: { bytes: encodeBase64('fake-data'), mimeType } }]
+
+      const [block] = partsToContentBlocks(parts)
+
+      expect(block).toBeInstanceOf(BlockClass)
+      expect((block as AudioBlock | DocumentBlock).format).toBe(format)
+    })
+
+    it('treats unsupported audio MIME types as documents', () => {
+      const [block] = partsToContentBlocks([
+        { kind: 'file', file: { bytes: encodeBase64('audio'), mimeType: 'audio/aiff' } },
+      ])
+
+      expect(block).toBeInstanceOf(DocumentBlock)
+      expect(block).not.toBeInstanceOf(AudioBlock)
+    })
+
+    it('round trips audio/x-m4a as AudioBlock with audio/mp4', () => {
+      const blocks = partsToContentBlocks([
+        { kind: 'file', file: { bytes: encodeBase64('audio'), mimeType: 'audio/x-m4a' } },
+      ])
+
+      expect(blocks[0]).toBeInstanceOf(AudioBlock)
+      expect((blocks[0] as AudioBlock).format).toBe('m4a')
+      expect(contentBlocksToParts(blocks)).toStrictEqual([
+        { kind: 'file', file: { bytes: encodeBase64('audio'), mimeType: 'audio/mp4' } },
+      ])
+    })
+
+    it.each(['audio/x-wav', 'audio/wave'])('canonicalizes %s to audio/wav on round trip', (mimeType) => {
+      const blocks = partsToContentBlocks([{ kind: 'file', file: { bytes: encodeBase64('audio'), mimeType } }])
+
+      expect(contentBlocksToParts(blocks)).toStrictEqual([
+        { kind: 'file', file: { bytes: encodeBase64('audio'), mimeType: 'audio/wav' } },
+      ])
+    })
 
     it.each([
       {
@@ -128,6 +174,11 @@ describe('adapters', () => {
         desc: 'VideoBlock with bytes',
         block: new VideoBlock({ format: 'mp4', source: { bytes: new Uint8Array([0, 0, 0]) } }),
         expected: { kind: 'file', file: { bytes: encodeBase64(new Uint8Array([0, 0, 0])), mimeType: 'video/mp4' } },
+      },
+      {
+        desc: 'AudioBlock with bytes',
+        block: new AudioBlock({ format: 'mp3', source: { bytes: new Uint8Array([0, 0, 0]) } }),
+        expected: { kind: 'file', file: { bytes: encodeBase64(new Uint8Array([0, 0, 0])), mimeType: 'audio/mpeg' } },
       },
       {
         desc: 'DocumentBlock with bytes',
