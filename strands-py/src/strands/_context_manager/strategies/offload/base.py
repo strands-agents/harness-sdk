@@ -229,15 +229,20 @@ class BaseOffloadStrategy(ABC):
     async def _removable_messages(self, context: ContextState) -> list[Message]:
         """Messages outside ``preserve_recent`` and larger than ``block_threshold``.
 
-        Message 0, pinned messages, and messages whose tool partner is protected are left out, since removing a
-        message removes its partner too.
+        Message 0, the user message that opened the current turn, pinned messages, and messages whose tool partner is
+        protected are left out, since removing a message removes its partner too. Removing the current turn's opener
+        would leave the request the agent is working on only in an assistant-voiced summary, and the agent can then
+        answer an earlier request instead.
         """
         messages = context.messages
         unprotected = {id(message) for message in self._unprotected_matches(messages, build_tool_name_map(messages))}
+        opener = current_turn_opener(messages)
         removable = [
             message
             for index, message in enumerate(messages)
             if index > 0
+            # The last message is never removed, so it is left to the existing checks as before.
+            and (index != opener or index == len(messages) - 1)
             and id(message) in unprotected
             and all(id(partner) in unprotected for partner in collect_removable_with_pair(messages, index))
         ]
@@ -402,3 +407,15 @@ class EmergencyTruncateStrategy:
 def _pinned_ids(messages: Messages) -> set[int]:
     """The identities of the pinned messages, since equal messages are not the same message."""
     return {id(message) for index, message in enumerate(messages) if is_pinned(messages, index)}
+
+
+def current_turn_opener(messages: Messages) -> int | None:
+    """The index of the user message that opened the current turn, the last one holding no tool result.
+
+    Returns None when that is message 0, which is protected already, or when there is none.
+    """
+    for index in range(len(messages) - 1, 0, -1):
+        message = messages[index]
+        if message["role"] == "user" and not any("toolResult" in block for block in message["content"]):
+            return index
+    return None

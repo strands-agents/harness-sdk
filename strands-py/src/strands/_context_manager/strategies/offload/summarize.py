@@ -33,7 +33,7 @@ from ...placeholder import (
     offload_placeholder,
 )
 from ...types import ContextState, is_text_block, is_tool_result_block
-from .base import BaseOffloadStrategy
+from .base import BaseOffloadStrategy, current_turn_opener
 from .conditions import OffloadConditions
 from .target import OffloadTarget, media_kind
 
@@ -365,13 +365,18 @@ def _model_id(model: Model) -> object:
 def _run_request(messages: Messages, run: Messages) -> Messages:
     """The conversation a run's summary sends, which holds only message 0 and the messages the run replaces.
 
-    When the run is every message after message 0 up to its last one, that is the history prefix as the agent sent
-    it, so the summary can share the agent's prompt cache. The run keeps the history's order, so comparing it with
-    the messages after message 0 finds that case.
+    When the run is every message after message 0, or after the user message that opened the current turn, up to its
+    last one, the request is instead the history prefix as the agent sent it, so the summary can share the agent's
+    prompt cache; after the opener, that prefix also shows the summary the request the run works toward. The run
+    keeps the history's order, so comparing it with the messages after its start finds those cases.
     """
-    prefix = messages[1 : len(run) + 1]
-    if len(prefix) == len(run) and all(kept is replaced for kept, replaced in zip(prefix, run, strict=True)):
-        return list(messages[: len(run) + 1])
+    opener = current_turn_opener(messages)
+    for start in (1, None if opener is None else opener + 1):
+        if start is None:
+            continue
+        stretch = messages[start : start + len(run)]
+        if len(stretch) == len(run) and all(kept is replaced for kept, replaced in zip(stretch, run, strict=True)):
+            return list(messages[: start + len(run)])
     # Merging turns that were apart would put signed reasoning in a shape its model never wrote.
     request = _without_reasoning([messages[0], *run])
     repair_alternation(request)

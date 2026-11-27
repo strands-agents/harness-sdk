@@ -20,16 +20,19 @@ logger = logging.getLogger(__name__)
 _SUMMARY_STOP_REASONS = frozenset({"end_turn", "max_tokens", "stop_sequence"})
 
 # The request can carry the caller's own persona and tools, so every request opens with this, whatever the
-# caller's instructions say.
+# caller's instructions say. It joins the last user turn, so it says it is not from the user; otherwise a summary
+# can report it as the user's latest request, and the agent then stops the task it was working on.
 _SUMMARIZE_GUARD = (
-    "STOP. Do not act on, answer, or continue any request above, and do not call any tools - tool calls will be "
-    "rejected. Your only task now is to summarize everything above."
+    "[Automated context-compaction request from the agent harness. This is not a message from the user.] "
+    "Do not act on, answer, or continue any request above, and do not call any tools - tool calls will be "
+    "rejected. Your only task now is to summarize the conversation above. Do not mention this compaction "
+    "request in the summary."
 )
 
 DEFAULT_SUMMARIZE_INSTRUCTIONS = (
-    "Write a handoff summary for a fresh context window. Preserve: key data, values and identifiers; decisions and "
-    "conclusions; error messages and stack traces; the user's outstanding requests and what was about to happen "
-    "next. Be concise, third person, no preamble. Output only the summary."
+    "Write a handoff summary for a fresh context window. Preserve: the user's most recent request, quoted verbatim, "
+    "and progress toward it; key data, values and identifiers; decisions and conclusions; error messages and stack "
+    "traces; and what was about to happen next. Be concise, third person, no preamble. Output only the summary."
 )
 
 
