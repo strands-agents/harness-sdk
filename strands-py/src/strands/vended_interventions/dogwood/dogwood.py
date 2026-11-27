@@ -224,7 +224,14 @@ class DogwoodAuthorization(InterventionHandler):
         default_type = None if self._default_principal is None else self._default_principal.get("type")
         if default_type is not None and not self._declares_principal_type(default_type):
             raise ValueError(f"`principal` must be of type `{self._principal_type}`, got `{default_type}`")
-        undeclared = self._tools_without_context_group(ENRICHED_GROUP)
+        # Only the actions a tool call can land on, told apart by declaring `input`: no call is ever
+        # decided against the schema's own gateway-level actions.
+        undeclared = sorted(
+            tool
+            for tool in self._actions_by_tool
+            if self._declares_context_group(tool, INPUT_GROUP)
+            and not self._declares_context_group(tool, ENRICHED_GROUP)
+        )
         if context_enricher and undeclared:
             raise ValueError(
                 f"`context_enricher` requires an `action_schema` declaring a `{ENRICHED_GROUP}` context group on every "
@@ -357,18 +364,6 @@ class DogwoodAuthorization(InterventionHandler):
     def _declares_context_group(self, tool_name: str, group: str) -> bool:
         """Whether the action for ``tool_name`` admits ``group`` in its context."""
         return group in self._context_groups.get(tool_name, frozenset())
-
-    def _tools_without_context_group(self, group: str) -> list[str]:
-        """The tools whose action does not admit ``group``, sorted.
-
-        Only the actions a tool call can land on, told apart by declaring ``input``: no call is
-        ever decided against the schema's own gateway-level actions.
-        """
-        return sorted(
-            tool
-            for tool in self._actions_by_tool
-            if self._declares_context_group(tool, INPUT_GROUP) and not self._declares_context_group(tool, group)
-        )
 
     def _event_fields(
         self, tool_input: Any, tool_name: str, timestamp: int, invocation_state: dict[str, Any]
