@@ -101,31 +101,24 @@ caching.
 
 ### OpenAI models on the Converse API
 
-Where Strands relies on implicit caching for an OpenAI model on Converse, the injection
-gap above applies: with a context injector that fires on every model call, every call
-writes to the cache and none reads from it. On GPT-5.6 and later, writes cost 1.25 times
-the input rate.
-
-The `auto` strategy places cache points for GPT-5.6 and later on Converse.
-Amazon Bedrock documents only implicit caching for these models on Converse, but Converse
-accepts the points under the same rules as Amazon Nova: none after the tool definitions,
-no TTL, and a point only directly after text. In a tool loop, the later user messages
-hold only tool results and injected text, so no point follows them. Each call reads the
-tools, the system prompt, and the first user message from the cache, and the tool-loop
-turns are written again. If Converse refuses cache points for one of these models,
-Strands resends the request without them, logs a warning, and sends none for that model
-in that region for the rest of the process.
-
-To cache the whole conversation, including tool-loop turns, use the Responses API
-through <Syntax py="OpenAIResponsesModel" ts="OpenAIModel" /> with Bedrock Mantle and a
-cache configuration.
+The `auto` strategy places cache points for GPT-5.6 and later on Converse under the same
+rules as Amazon Nova: none on the tool definitions, no TTL, and only directly after text.
+Amazon Bedrock documents only implicit caching for these models on Converse. In a tool
+loop, the later user messages hold only tool results and injected text, so each call
+reads the tools, the system prompt, and the first user message from the cache and writes
+the tool-loop turns again. To cache those turns too, use the Responses API through
+<Syntax py="OpenAIResponsesModel" ts="OpenAIModel" /> with Bedrock Mantle and a cache
+configuration. If Converse refuses the points, Strands resends the request without them,
+logs a warning, and sends none for that model in that region for the rest of the process.
 
 Converse rejects cache points for GPT-5.5 and earlier, `gpt-oss`, and xAI models with an
 `AccessDeniedException`, so don't place them by hand or use the
-<Syntax py='"anthropic"' ts="'anthropic'" /> strategy with these models. The default
-`auto` strategy places none for them. Without a cache configuration, Strands places no
-cache points on GPT-5.6 and later either. To stay on Converse without paying for writes
-that are never read, turn implicit caching off:
+<Syntax py='"anthropic"' ts="'anthropic'" /> strategy with them; `auto` places none.
+These models, and GPT-5.6 and later without a cache configuration, rely on implicit
+caching, so the injection gap above applies: with a context injector that fires on every
+model call, every call writes to the cache and none reads from it. On GPT-5.6 and later,
+writes cost 1.25 times the input rate. To stay on Converse without paying for writes that
+are never read, turn implicit caching off:
 
 <Tabs>
 <Tab label="Python">
