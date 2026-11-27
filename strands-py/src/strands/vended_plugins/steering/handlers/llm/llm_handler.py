@@ -22,7 +22,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class _LLMSteering(BaseModel):
+# The class name is the provider-facing tool name. Nova strips a leading underscore, which breaks registry lookup.
+class LLMSteering(BaseModel):
     """Structured output model for LLM steering decisions."""
 
     decision: Literal["proceed", "guide", "interrupt"] = Field(
@@ -95,11 +96,11 @@ class LLMSteeringHandler(SteeringHandler):
         )
 
         # Get LLM decision
-        llm_result: _LLMSteering = cast(
-            _LLMSteering,
+        llm_result: LLMSteering = cast(
+            LLMSteering,
             steering_agent(
                 prompt,
-                structured_output_model=_LLMSteering,
+                structured_output_model=LLMSteering,
                 invocation_context=_create_auxiliary_invocation_context(invocation_context),
             ).structured_output,
         )
