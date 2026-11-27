@@ -375,7 +375,7 @@ export class Tracer {
    * @param options - Options for starting the model invocation span
    */
   startModelInvokeSpan(options: StartModelInvokeSpanOptions): Span | null {
-    const { messages, modelId, systemPrompt } = options
+    const { messages, modelId, systemPrompt, toolSpecs } = options
 
     // Create local model trace as child of current cycle
     this._traceState.currentModel = new AgentTrace(
@@ -386,6 +386,16 @@ export class Tracer {
     try {
       const attributes = this._getCommonAttributes('chat')
       if (modelId) attributes['gen_ai.request.model'] = modelId
+
+      if (this._includeToolDefinitions && toolSpecs?.length) {
+        const toolDefinitions = toolSpecs.map(({ name, description, inputSchema }) => ({
+          type: 'function',
+          name,
+          description,
+          parameters: inputSchema,
+        }))
+        attributes['gen_ai.tool.definitions'] = JSON.stringify(toolDefinitions, jsonReplacer)
+      }
 
       const span = this._startSpan({
         name: 'chat',
