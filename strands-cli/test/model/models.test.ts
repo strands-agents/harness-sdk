@@ -281,15 +281,27 @@ describe('AgentModelRuntime thinking controls', () => {
     'us.anthropic.claude-sonnet-4-6-v1:0',
     'openai.gpt-oss-120b-1:0',
     'us.qwen.qwen3-32b-v1:0',
+    'openai/gpt-5',
+    'openai/gpt-5.1',
+    'openai/gpt-5.4',
+    'openai/gpt-5.4-pro',
+    'openai/gpt-5.2-codex',
+    'openai/gpt-6-astra',
+    'openai/gpt-6.1-sol',
+    'openai/gpt-6.2-sol',
+    'openai/o3',
+    'openai/gpt-5.6-sol',
   ])('offers only levels the library accepts for %s', async (modelId) => {
+    const spec = modelId.includes('/') ? modelId : `bedrock/${modelId}`
+    if (spec.startsWith('openai/')) {
+      vi.stubEnv('OPENAI_API_KEY', 'test-key')
+    }
     const offered = runtimeFor(modelId, 'auto')
       .listEfforts()
       .map((option) => option.id)
     const rejected: string[] = []
     for (const level of offered) {
-      await resolveModel(`bedrock/${modelId}`, `bedrock/${modelId}`, profileEffort(level)).catch(() =>
-        rejected.push(level)
-      )
+      await resolveModel(spec, spec, profileEffort(level)).catch(() => rejected.push(level))
     }
 
     expect(offered.length).toBeGreaterThan(0)
@@ -340,6 +352,67 @@ describe('AgentModelRuntime thinking controls', () => {
 
     expect(runtime.listEfforts().map((option) => option.id)).toEqual(['low', 'medium', 'high', 'xhigh'])
     expect(runtime.listEfforts()).toContainEqual(expect.objectContaining({ id: 'high', active: true }))
+  })
+
+  // https://github.com/strands-agents/harness-sdk/issues/6522
+  it.each([
+    'openai/gpt-4o',
+    'openai/gpt-4o-mini-2024-07-18',
+    'openai/gpt-4.1',
+    'openai/gpt-4.5-preview',
+    'openai/gpt-5-chat-latest',
+    'openai/o1-mini',
+    'openai/o1-preview',
+    'openai/o1-preview-2024-09-12',
+  ])('offers no effort options for non-reasoning OpenAI model %s', async (modelId) => {
+    const runtime = runtimeFor(modelId, 'auto')
+    expect(runtime.listEfforts()).toEqual([])
+    await expect(runtime.setEffort('high')).rejects.toThrow('not supported')
+  })
+
+  // https://github.com/strands-agents/harness-sdk/issues/6522
+  it.each([
+    ['openai/o1', ['low', 'medium', 'high']],
+    ['openai/o3-2025-04-16', ['low', 'medium', 'high']],
+    ['openai/o4-mini', ['low', 'medium', 'high']],
+    ['openai/codex-mini-latest', ['low', 'medium', 'high']],
+    ['openai/gpt-oss-120b', ['low', 'medium', 'high']],
+    ['openai/gpt-5', ['minimal', 'low', 'medium', 'high']],
+    ['openai/gpt-5-pro', ['high']],
+    ['openai/gpt-5-codex', ['low', 'medium', 'high']],
+    ['openai/gpt-5.1', ['none', 'low', 'medium', 'high']],
+    ['openai/gpt-5.1-codex', ['low', 'medium', 'high']],
+    ['openai/gpt-5.1-codex-mini', ['low', 'medium', 'high']],
+    ['openai/gpt-5.1-codex-max', ['low', 'medium', 'high', 'xhigh']],
+    ['openai/gpt-5.2', ['none', 'low', 'medium', 'high', 'xhigh']],
+    ['openai/gpt-5.2-pro', ['medium', 'high', 'xhigh']],
+    ['openai/gpt-5.2-codex', ['low', 'medium', 'high', 'xhigh']],
+    ['openai/gpt-5.3-codex', ['low', 'medium', 'high', 'xhigh']],
+    ['openai/gpt-5.4', ['none', 'low', 'medium', 'high', 'xhigh']],
+    ['openai/gpt-5.4-pro', ['medium', 'high', 'xhigh']],
+    ['openai/gpt-5.5', ['none', 'low', 'medium', 'high', 'xhigh']],
+    ['openai/gpt-5.5-pro', ['medium', 'high', 'xhigh']],
+    ['openai/gpt-6-astra', ['low', 'medium', 'high', 'xhigh']],
+    ['openai/gpt-6.1-sol', ['low', 'medium', 'high', 'xhigh']],
+    ['openai/gpt-6.2-astra', ['low', 'medium', 'high', 'xhigh']],
+    ['openai/gpt-6.2-sol', ['low', 'medium', 'high', 'xhigh']],
+    ['openai/gpt-4.10', ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']],
+    ['openai/gpt-5.10', ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']],
+  ])('offers the OpenAI effort levels accepted by %s', (modelId, expected) => {
+    expect(effortOptions(modelId, 'auto').map((option) => option.id)).toEqual(expected)
+  })
+
+  it('rejects unsupported effort levels on subset OpenAI models while keeping off', async () => {
+    const runtime = runtimeFor(
+      'openai/gpt-5',
+      'auto',
+      async () => ({ model: new OpenAIModel('gpt-5') }) as unknown as Agent
+    )
+    expect(runtime.listEfforts().map((option) => option.id)).toEqual(['minimal', 'low', 'medium', 'high'])
+    await expect(runtime.setEffort('minimal')).resolves.toBe('minimal')
+    await expect(runtime.setEffort('none')).rejects.toThrow('not supported')
+    await expect(runtime.setEffort('xhigh')).rejects.toThrow('not supported')
+    await expect(runtime.setEffort('off')).resolves.toBe('off')
   })
 })
 
@@ -668,8 +741,12 @@ function runtimeFor(
   thinking: string | null,
   restartAgent?: (options: { thinking?: EffortInput }) => Promise<Agent>
 ): AgentModelRuntime {
-  return new AgentModelRuntime({ model: new BedrockModel(modelId) } as unknown as Agent, {
-    initialModel: `bedrock/${modelId}`,
+  const initialModel = modelId.includes('/') ? modelId : `bedrock/${modelId}`
+  const model = initialModel.startsWith('openai/')
+    ? new OpenAIModel(initialModel.slice('openai/'.length))
+    : new BedrockModel(modelId)
+  return new AgentModelRuntime({ model } as unknown as Agent, {
+    initialModel,
     thinking,
     ...(restartAgent ? { restartAgent } : {}),
   })
@@ -702,7 +779,7 @@ describe('AgentModelRuntime persistence', () => {
     const runtime = new AgentModelRuntime({ model: new BedrockModel() } as unknown as Agent, {
       initialModel: 'bedrock/anthropic.claude-current-v1:0',
       thinking: 'auto',
-      restartAgent: async () => ({ model: new OpenAIModel('gpt-5') }) as unknown as Agent,
+      restartAgent: async () => ({ model: new OpenAIModel('gpt-5.4') }) as unknown as Agent,
       onModelChange,
     })
 
@@ -724,11 +801,11 @@ describe('AgentModelRuntime persistence', () => {
       effort: 'high',
     })
 
-    await runtime.restart('openai/gpt-5')
-    expect(onModelChange).toHaveBeenLastCalledWith({ model: 'openai/gpt-5', effort: 'high' })
+    await runtime.restart('openai/gpt-5.4')
+    expect(onModelChange).toHaveBeenLastCalledWith({ model: 'openai/gpt-5.4', effort: 'high' })
 
     await runtime.setEffort('none')
-    expect(onModelChange).toHaveBeenLastCalledWith({ model: 'openai/gpt-5', effort: 'off' })
+    expect(onModelChange).toHaveBeenLastCalledWith({ model: 'openai/gpt-5.4', effort: 'off' })
 
     await expect(runtime.setEffort('turbo')).rejects.toThrow('not supported')
     expect(onModelChange).toHaveBeenCalledTimes(6)

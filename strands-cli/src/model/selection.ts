@@ -8,6 +8,44 @@ import type { DetectedProviderEnvironment } from './environment.js'
 
 const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 const OPENAI_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const
+const OPENAI_NO_MINIMAL_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh'] as const
+const OPENAI_LOW_TO_XHIGH_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const
+const OPENAI_MEDIUM_TO_XHIGH_EFFORTS = ['medium', 'high', 'xhigh'] as const
+const OPENAI_HIGH_ONLY_EFFORTS = ['high'] as const
+const OPENAI_GPT5_EFFORTS = ['minimal', 'low', 'medium', 'high'] as const
+const OPENAI_GPT5_1_EFFORTS = ['none', 'low', 'medium', 'high'] as const
+const OPENAI_REASONING_BASIC_EFFORTS = ['low', 'medium', 'high'] as const
+const OPENAI_NON_REASONING_PREFIXES = [
+  'gpt-4o',
+  'gpt-4.1',
+  'gpt-4.5',
+  'gpt-4',
+  'gpt-3.5',
+  'chatgpt',
+  'o1-mini',
+  'o1-preview',
+] as const
+// Ordered from specialized variants (-pro, -codex) to broader version families.
+const OPENAI_EFFORT_RULES: readonly [readonly string[], readonly string[]][] = [
+  [['gpt-5-pro'], OPENAI_HIGH_ONLY_EFFORTS],
+  [['gpt-5.2-pro', 'gpt-5.4-pro', 'gpt-5.5-pro'], OPENAI_MEDIUM_TO_XHIGH_EFFORTS],
+  [
+    [
+      'gpt-5.1-codex-max',
+      'gpt-5.2-codex',
+      'gpt-5.3-codex',
+      'gpt-6-astra',
+      'gpt-6.1-sol',
+      'gpt-6.2-astra',
+      'gpt-6.2-sol',
+    ],
+    OPENAI_LOW_TO_XHIGH_EFFORTS,
+  ],
+  [['gpt-5-codex', 'gpt-5.1-codex', 'o1', 'o3', 'o4', 'codex-mini', 'gpt-oss'], OPENAI_REASONING_BASIC_EFFORTS],
+  [['gpt-5.2', 'gpt-5.4', 'gpt-5.5'], OPENAI_NO_MINIMAL_EFFORTS],
+  [['gpt-5.1'], OPENAI_GPT5_1_EFFORTS],
+  [['gpt-5'], OPENAI_GPT5_EFFORTS],
+]
 const GOOGLE_EFFORTS = ['low', 'medium', 'high'] as const
 const GOOGLE_MINIMAL_EFFORTS = ['minimal', 'low', 'medium', 'high'] as const
 // Per-model levels by provider; mirrors MODEL_LEVELS in harness-ts src/models.ts.
@@ -125,8 +163,33 @@ export function profileEffort(thinking: EffortInput): ProfileEffort {
   return EFFORT_LEVELS.find((level) => level === value) ?? 'auto'
 }
 
+function matchesOpenaiPrefix(modelId: string, prefixes: readonly string[]): boolean {
+  return prefixes.some((prefix) => modelId === prefix || modelId.startsWith(`${prefix}-`))
+}
+
+function openaiEfforts(modelId: string): readonly string[] {
+  if (
+    modelId === 'chat-latest' ||
+    modelId.includes('-chat-latest') ||
+    matchesOpenaiPrefix(modelId, OPENAI_NON_REASONING_PREFIXES)
+  ) {
+    return []
+  }
+  const matched = OPENAI_EFFORT_RULES.find(([prefixes]) => matchesOpenaiPrefix(modelId, prefixes))
+  if (matched !== undefined) {
+    return matched[1]
+  }
+  // Unmatched OpenAI/shared codenames (e.g. gpt-5.6*, gpt-6-sol, gpt-6-luna,
+  // gpt-6.1-terra, gpt-6-cyber) fail open to full OPENAI_EFFORTS, matching Bedrock's
+  // unrestricted GPT defaults and setup-policy tests (only astra/6.1-sol/6.2-* drop none/minimal).
+  return OPENAI_EFFORTS
+}
+
 function effortLevels(modelId: string): readonly string[] {
   const target = resolveModelTarget(modelId)
+  if (target.provider === 'openai') {
+    return openaiEfforts(target.modelId)
+  }
   if (!supportsThinking(target.specifier)) {
     return []
   }
@@ -137,7 +200,7 @@ function effortLevels(modelId: string): readonly string[] {
   if (target.provider === 'anthropic') {
     return CLAUDE_EFFORTS
   }
-  if (target.provider === 'openai' || target.provider === 'bedrock-mantle') {
+  if (target.provider === 'bedrock-mantle') {
     return OPENAI_EFFORTS
   }
   if (target.provider === 'google') {

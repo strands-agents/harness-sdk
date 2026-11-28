@@ -564,6 +564,19 @@ def test_summarizer_reuses_the_main_model_on_a_repointed_openai_endpoint(monkeyp
     assert model.get_config()["model_id"] == "gpt-oss-20b"
 
 
+def test_summarizer_with_openai_base_url_applies_model_specific_off_effort(monkeypatch):
+    # https://github.com/strands-agents/harness-sdk/issues/6522
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://example.invalid/v1")
+
+    sol = resolve_web_fetch_model("openai/gpt-6.2-sol", None)
+    assert sol.get_config()["model_id"] == "gpt-6.2-sol"
+    assert "reasoning" not in sol.get_config().get("params", {})
+
+    gpt4o = resolve_web_fetch_model("openai/gpt-4o", None)
+    assert gpt4o.get_config()["model_id"] == "gpt-4o"
+    assert "params" not in gpt4o.get_config()
+
+
 def test_summarizer_still_uses_the_small_model_on_the_first_party_endpoint(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
     model = resolve_web_fetch_model("anthropic/claude-opus-4-5-20251101", None)

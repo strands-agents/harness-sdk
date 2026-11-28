@@ -994,3 +994,156 @@ def test_supports_media_requires_every_router_candidate_to_support_it():
         ]
     )
     assert _supports_media(mixed) is False
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "gpt-4o",
+        "gpt-4o-mini",
+        "gpt-4o-mini-2024-07-18",
+        "gpt-4.1",
+        "gpt-4.1-mini",
+        "gpt-4.1-nano",
+        "gpt-4.5-preview",
+        "gpt-4-turbo",
+        "gpt-4",
+        "gpt-3.5-turbo",
+        "chatgpt-4o-latest",
+        "chat-latest",
+        "gpt-5-chat-latest",
+        "gpt-5.2-chat-latest",
+        "o1-mini",
+        "o1-mini-2024-09-12",
+        "o1-preview",
+        "o1-preview-2024-09-12",
+    ],
+)
+def test_openai_non_reasoning_models_omit_reasoning_params(model_id):
+    # https://github.com/strands-agents/harness-sdk/issues/6522
+    spec = f"openai/{model_id}"
+    assert supports_thinking(spec) is False
+    for effort in ("auto", "off"):
+        assert "params" not in resolve(spec, effort=effort).config
+    with pytest.raises(ValueError, match="supports no reasoning levels"):
+        resolve(spec, effort="high")
+
+
+def test_openai_non_reasoning_model_preserves_web_search_without_reasoning():
+    # https://github.com/strands-agents/harness-sdk/issues/6522
+    model = resolve("openai/gpt-4o", web_search=True)
+    assert model.config["params"] == {"tools": [{"type": "web_search"}]}
+
+
+@pytest.mark.parametrize(
+    ("model_id", "accepted", "rejected"),
+    [
+        (
+            "o1",
+            [("auto", "high"), ("low", "low"), ("medium", "medium"), ("high", "high"), ("off", None)],
+            ["minimal", "xhigh", "max"],
+        ),
+        ("o3", [("auto", "high"), ("low", "low"), ("high", "high"), ("off", None)], ["minimal", "xhigh", "max"]),
+        (
+            "o3-2025-04-16",
+            [("auto", "high"), ("low", "low"), ("high", "high"), ("off", None)],
+            ["minimal", "xhigh", "max"],
+        ),
+        ("o3-mini", [("auto", "high"), ("medium", "medium"), ("off", None)], ["minimal", "xhigh", "max"]),
+        ("o3-pro", [("auto", "high"), ("medium", "medium"), ("off", None)], ["minimal", "xhigh", "max"]),
+        ("o4-mini", [("auto", "high"), ("low", "low"), ("off", None)], ["minimal", "xhigh", "max"]),
+        (
+            "codex-mini-latest",
+            [("auto", "high"), ("low", "low"), ("high", "high"), ("off", None)],
+            ["minimal", "xhigh", "max"],
+        ),
+        (
+            "gpt-oss-120b",
+            [("auto", "medium"), ("low", "low"), ("high", "high"), ("off", None)],
+            ["minimal", "xhigh", "max"],
+        ),
+        ("gpt-5", [("auto", "medium"), ("minimal", "minimal"), ("high", "high"), ("off", None)], ["xhigh", "max"]),
+        (
+            "gpt-5-mini",
+            [("auto", "high"), ("minimal", "minimal"), ("high", "high"), ("off", None)],
+            ["xhigh", "max"],
+        ),
+        (
+            "gpt-5-pro",
+            [("auto", "high"), ("high", "high"), ("off", None)],
+            ["minimal", "low", "medium", "xhigh", "max"],
+        ),
+        (
+            "gpt-5-codex",
+            [("auto", "high"), ("low", "low"), ("high", "high"), ("off", None)],
+            ["minimal", "xhigh", "max"],
+        ),
+        (
+            "gpt-5.1",
+            [("auto", "medium"), ("low", "low"), ("high", "high"), ("off", "none")],
+            ["minimal", "xhigh", "max"],
+        ),
+        (
+            "gpt-5.1-codex",
+            [("auto", "high"), ("low", "low"), ("high", "high"), ("off", None)],
+            ["minimal", "xhigh", "max"],
+        ),
+        (
+            "gpt-5.1-codex-mini",
+            [("auto", "high"), ("low", "low"), ("high", "high"), ("off", None)],
+            ["minimal", "xhigh", "max"],
+        ),
+        (
+            "gpt-5.1-codex-max",
+            [("auto", "high"), ("low", "low"), ("xhigh", "xhigh"), ("off", None)],
+            ["minimal", "max"],
+        ),
+        ("gpt-5.2", [("auto", "medium"), ("xhigh", "xhigh"), ("off", "none")], ["minimal", "max"]),
+        (
+            "gpt-5.2-pro",
+            [("auto", "high"), ("medium", "medium"), ("xhigh", "xhigh"), ("off", None)],
+            ["minimal", "low", "max"],
+        ),
+        ("gpt-5.2-codex", [("auto", "high"), ("low", "low"), ("xhigh", "xhigh"), ("off", None)], ["minimal", "max"]),
+        ("gpt-5.3-codex", [("auto", "high"), ("low", "low"), ("xhigh", "xhigh"), ("off", None)], ["minimal", "max"]),
+        ("gpt-5.4", [("auto", "medium"), ("xhigh", "xhigh"), ("off", "none")], ["minimal", "max"]),
+        ("gpt-5.4-2026-03-05", [("auto", "medium"), ("xhigh", "xhigh"), ("off", "none")], ["minimal", "max"]),
+        (
+            "gpt-5.4-pro",
+            [("auto", "high"), ("medium", "medium"), ("xhigh", "xhigh"), ("off", None)],
+            ["minimal", "low", "max"],
+        ),
+        ("gpt-5.5", [("auto", "medium"), ("xhigh", "xhigh"), ("off", "none")], ["minimal", "max"]),
+        (
+            "gpt-5.5-pro",
+            [("auto", "high"), ("medium", "medium"), ("xhigh", "xhigh"), ("off", None)],
+            ["minimal", "low", "max"],
+        ),
+        ("gpt-6-astra", [("auto", "low"), ("low", "low"), ("xhigh", "xhigh"), ("off", None)], ["minimal", "max"]),
+        ("gpt-6.1-sol", [("auto", "low"), ("low", "low"), ("xhigh", "xhigh"), ("off", None)], ["minimal", "max"]),
+        ("gpt-6.2-astra", [("auto", "low"), ("low", "low"), ("xhigh", "xhigh"), ("off", None)], ["minimal", "max"]),
+        ("gpt-6.2-sol", [("auto", "low"), ("low", "low"), ("xhigh", "xhigh"), ("off", None)], ["minimal", "max"]),
+        # Token-boundary checks: gpt-4.10/gpt-5.10 must not match gpt-4.1/gpt-5.1 prefixes.
+        ("gpt-4.10", [("auto", "high"), ("minimal", "minimal"), ("xhigh", "xhigh"), ("off", "none")], ["max"]),
+        ("gpt-5.10", [("auto", "high"), ("minimal", "minimal"), ("xhigh", "xhigh"), ("off", "none")], ["max"]),
+        # Unmatched shared codenames fail open to full _OPENAI_LEVELS.
+        ("gpt-5.6-sol", [("auto", "low"), ("minimal", "minimal"), ("xhigh", "xhigh"), ("off", "none")], ["max"]),
+        ("gpt-6-sol", [("auto", "medium"), ("minimal", "minimal"), ("xhigh", "xhigh"), ("off", "none")], ["max"]),
+        ("gpt-6-luna", [("auto", "medium"), ("minimal", "minimal"), ("xhigh", "xhigh"), ("off", "none")], ["max"]),
+        ("gpt-6.1-terra", [("auto", "low"), ("minimal", "minimal"), ("xhigh", "xhigh"), ("off", "none")], ["max"]),
+        ("gpt-6-cyber", [("auto", "high"), ("minimal", "minimal"), ("xhigh", "xhigh"), ("off", "none")], ["max"]),
+    ],
+)
+def test_openai_effort_validation_matches_model_capabilities(model_id, accepted, rejected):
+    # https://github.com/strands-agents/harness-sdk/issues/6522
+    spec = f"openai/{model_id}"
+    assert supports_thinking(spec) is True
+    for effort, expected in accepted:
+        config = resolve(spec, effort=effort).config
+        if expected is None:
+            assert "params" not in config
+        else:
+            assert config["params"]["reasoning"] == {"effort": expected}
+    for effort in rejected:
+        with pytest.raises(ValueError, match=f"not supported by model {model_id}"):
+            resolve(spec, effort=effort)
