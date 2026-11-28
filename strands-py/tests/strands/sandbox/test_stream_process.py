@@ -225,3 +225,24 @@ async def test_input_is_fed_to_stdin_and_closed():
 async def test_input_to_a_child_that_exits_early_does_not_hang_or_raise():
     _, result = await _collect(_stream_process("sh", ["-c", "exit 0"], timeout=5, input="x" * 1_000_000))
     assert result is not None and result.exit_code == 0
+
+
+@pytest.mark.asyncio
+async def test_multibyte_characters_survive_read_boundaries():
+    # Guards #4461: 100k three-byte characters span five 64 KiB reads, so some
+    # characters straddle a boundary and must still arrive intact -- in the
+    # streamed chunks and in the final result.
+    script = "import sys; sys.stdout.buffer.write(('\\u2615' * 100000).encode())"
+    chunks, result = await _collect(_stream_process(sys.executable, ["-c", script]))
+    expected = "\u2615" * 100000
+    assert result.stdout == expected
+    assert "".join(c.data for c in chunks if c.stream_type == "stdout") == expected
+
+
+@pytest.mark.asyncio
+async def test_truncated_multibyte_character_at_eof_is_replaced():
+    # The stream ends in the first two bytes of a three-byte character.
+    script = "import sys; sys.stdout.buffer.write(b'ab\\xe2\\x98')"
+    chunks, result = await _collect(_stream_process(sys.executable, ["-c", script]))
+    assert result.stdout == "ab\ufffd"
+    assert "".join(c.data for c in chunks if c.stream_type == "stdout") == "ab\ufffd"
