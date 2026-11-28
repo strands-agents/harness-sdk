@@ -30,6 +30,7 @@ from ...placeholder import (
     REMOVED_MESSAGES,
     format_offloaded,
     format_summarized,
+    is_offloaded,
     offload_placeholder,
 )
 from ...types import ContextState, is_text_block, is_tool_result_block
@@ -131,6 +132,10 @@ class SummarizeStrategy(BaseOffloadStrategy):
         runs = _bridge_opener(messages, _split_into_runs(messages, with_pairs(messages, removable)), opener)
         # Last run first, so removing a run leaves the earlier runs' positions unchanged.
         for run in reversed(runs):
+            # A run of earlier placeholders holds nothing new to summarize, and summarizing it again would count as
+            # progress, which holds back the emergency truncation an overflow needs.
+            if all(is_offloaded(block) for message in run for block in message["content"]):
+                continue
             summary = await self._summarize_run(context, model, run)
             if not summary:
                 continue

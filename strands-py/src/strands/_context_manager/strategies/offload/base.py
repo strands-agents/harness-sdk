@@ -365,7 +365,8 @@ class EmergencyTruncateStrategy:
 
     It recomputes utilization once every user-configured strategy has run, and is appended internally by the
     ContextManager rather than being part of the public API. Pins are ignored so an all-pinned overflow is still
-    recoverable.
+    recoverable, but the user message that opened the current turn is kept, so the agent does not go on to answer an
+    earlier request.
     """
 
     name = "offload:emergency-truncate"
@@ -391,8 +392,18 @@ class EmergencyTruncateStrategy:
             if context.agent.model.estimate_utilization(tokens) < 1.0:
                 return False
 
-        removable = messages[1:]
-        remove_count = max(1, int(len(removable) * _EMERGENCY_REMOVAL_RATIO))
+        opener = current_turn_opener(messages)
+        remove_count = max(1, int(len(messages[1:]) * _EMERGENCY_REMOVAL_RATIO))
+        # With an opener kept, a message of only placeholders would come back as a fresh marker, so it is skipped.
+        removable = [
+            message
+            for index, message in enumerate(messages)
+            if index > 0
+            and index != opener
+            and (opener is None or not all(is_offloaded(block) for block in message["content"]))
+        ]
+        if len(removable) <= remove_count:
+            return False
         # Cut just before an assistant message, which holds no tool result to orphan and never merges into message 0.
         if removable[remove_count]["role"] != "assistant":
             remove_count += 1
