@@ -244,6 +244,29 @@ describe('resolveModel', () => {
     }
   )
 
+  // https://github.com/strands-agents/harness-sdk/issues/6557
+  it.each([
+    'gpt-6-astra',
+    'gpt-6-astra-healthcare',
+    'gpt-6.1-sol',
+    'gpt-6.1-sol-healthcare',
+    'gpt-6.2-sol',
+    'gpt-6.2-sol-healthcare',
+    'gpt-6.2-astra-healthcare',
+  ])('resolves OpenAI GPT-6 effort without none or minimal and accepts max for %s', async (modelId) => {
+    for (const effort of ['low', 'medium', 'high', 'xhigh', 'max'] as const) {
+      const model = await resolve(`openai/${modelId}`, effort)
+      expect((model.getConfig().params as Record<string, unknown> | undefined)?.reasoning).toEqual({ effort })
+    }
+    const offParams = (await resolve(`openai/${modelId}`, 'off')).getConfig().params as
+      | Record<string, unknown>
+      | undefined
+    expect(offParams?.reasoning).toBeUndefined()
+    await expect(resolve(`openai/${modelId}`, 'minimal')).rejects.toThrow(
+      "Supported levels: low, medium, high, xhigh, max (or 'auto', 'off')."
+    )
+  })
+
   // https://github.com/strands-agents/harness-sdk/issues/5191
   it.each(['openai.gpt-5.4', 'us.openai.gpt-5.4', 'openai.gpt-5.5', 'us.openai.gpt-5.5', 'global.openai.gpt-5.5'])(
     'resolves GPT-5.4/5.5 effort without max for %s',

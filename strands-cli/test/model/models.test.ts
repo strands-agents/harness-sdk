@@ -330,6 +330,9 @@ describe('AgentModelRuntime thinking controls', () => {
     ['google/gemini-4-argon', ['low', 'medium', 'high']],
     ['google/gemini-3.6-flash', ['minimal', 'low', 'medium', 'high']],
     ['google/gemini-3.1-flash-lite-image', ['minimal', 'high']],
+    ['openai/gpt-6-astra', ['low', 'medium', 'high', 'xhigh', 'max']],
+    ['openai/gpt-6.1-sol-healthcare', ['low', 'medium', 'high', 'xhigh', 'max']],
+    ['openai/gpt-6.2-sol-healthcare', ['low', 'medium', 'high', 'xhigh', 'max']],
     ['bedrock-mantle/google.gemma-4-31b', ['none', 'high']],
   ])('offers the per-model effort levels the harness accepts for %s', (modelId, expected) => {
     expect(effortOptions(modelId, 'auto').map((option) => option.id)).toEqual(expected)

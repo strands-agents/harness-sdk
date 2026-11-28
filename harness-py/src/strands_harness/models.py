@@ -97,6 +97,7 @@ _BEDROCK_WEB_FETCH_FAMILY_MODELS = {
 # provider's set so an unsupported level fails here rather than as a request error.
 _ANTHROPIC_LEVELS = ("low", "medium", "high", "xhigh", "max")
 _OPENAI_LEVELS = ("minimal", "low", "medium", "high", "xhigh", "none")
+_OPENAI_GPT_6_LEVELS = ("low", "medium", "high", "xhigh", "max")
 _BEDROCK_GPT_LEVELS = ("none", "low", "medium", "high", "xhigh", "max")
 # Converse rejects max on GPT-5.4/5.5 and none on GPT-6 Astra/6.1 Sol.
 _BEDROCK_GPT_NO_MAX_LEVELS = ("none", "low", "medium", "high", "xhigh")
@@ -110,6 +111,11 @@ _GOOGLE_MINIMAL_LEVELS = ("minimal", "low", "medium", "high")
 # Per-model levels: https://ai.google.dev/gemini-api/docs/thinking#controlling-thinking for Gemini;
 # Gemma 4 on Mantle only reasons at ``high``.
 _MODEL_LEVELS = {
+    "openai": (
+        ("gpt-6-astra", _OPENAI_GPT_6_LEVELS),
+        ("gpt-6.1-sol", _OPENAI_GPT_6_LEVELS),
+        ("gpt-6.2-", _OPENAI_GPT_6_LEVELS),
+    ),
     "google": (
         ("gemini-3.1-flash-lite-image", ("minimal", "high")),
         ("gemini-3.6-flash", _GOOGLE_MINIMAL_LEVELS),
