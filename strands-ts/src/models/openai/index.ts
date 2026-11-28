@@ -24,3 +24,4 @@ export type {
   OpenAIResponsesConfig,
 } from './types.js'
 export type { BedrockMantleConfig } from './mantle.js'
+export { formatChatRequest, mapChatChunkToEvents } from './chat-adapter.js'
