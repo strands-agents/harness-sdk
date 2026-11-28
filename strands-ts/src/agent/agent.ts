@@ -2494,7 +2494,10 @@ export class Agent implements LocalAgent, InvokableAgent {
     toolChoice?: ToolChoice,
     structuredOutputSchema?: z.ZodSchema
   ): AsyncGenerator<AgentStreamEvent, StreamAggregatedResult, undefined> {
+    const maxEmptyToolUseRetries = 2
     let attemptCount = 1
+    let emptyToolUseAttempts = 0
+    let emptyToolUseError: Error | undefined
     while (true) {
       // An abort during retry backoff must stop before another model attempt begins.
       this._throwIfCancelled()
@@ -2620,6 +2623,26 @@ export class Agent implements LocalAgent, InvokableAgent {
           continue
         }
 
+        if (
+          result.stopReason === 'toolUse' &&
+          !result.message.content.some((block) => block.type === 'toolUseBlock')
+        ) {
+          emptyToolUseAttempts += 1
+          if (emptyToolUseAttempts <= maxEmptyToolUseRetries) {
+            logger.warn(
+              `attempt=<${emptyToolUseAttempts}> | toolUse stop with no toolUseBlock | retrying the model call`
+            )
+            attemptCount = this._nextAttemptCount(routedModel, invocationState, attemptCount)
+            continue
+          }
+          // Break out before throwing so the catch block does not emit a duplicate AfterModelCallEvent.
+          emptyToolUseError = new Error(
+            `Model returned stopReason "toolUse" but the response contains no toolUseBlock in ` +
+              `${emptyToolUseAttempts} attempts. The reply was discarded rather than reported as a completed turn.`
+          )
+          break
+        }
+
         return result
       } catch (error) {
         const routedModel = this._modelRouter?.getRoutedModel(this, invocationState) ?? selectedModel
@@ -2649,6 +2672,8 @@ export class Agent implements LocalAgent, InvokableAgent {
         throw error
       }
     }
+
+    throw emptyToolUseError!
   }
 
   private _modelForAttempt(invocationState: InvocationState): Model {

@@ -234,4 +234,34 @@ describe('Agent retryStrategy wiring', () => {
     })
     await expect(agent2.invoke('hi')).rejects.toThrow(/already attached to another agent/)
   })
+
+  it('re-asks the model when stopReason is toolUse with no toolUseBlock and succeeds on retry', async () => {
+    const model = new MockMessageModel()
+      .addTurn({ type: 'textBlock', text: 'glitched' }, { stopReason: 'toolUse' })
+      .addTurn({ type: 'textBlock', text: 'recovered answer' }, { stopReason: 'endTurn' })
+
+    const agent = new Agent({ model })
+    const result = await agent.invoke('hi')
+
+    expect(model.callCount).toBe(2)
+    expect(result.stopReason).toBe('endTurn')
+    expect(result.lastMessage.content[0]).toEqual({ type: 'textBlock', text: 'recovered answer' })
+  })
+
+  it('throws after exhausting empty toolUse retries without firing a duplicate AfterModelCallEvent', async () => {
+    const model = new MockMessageModel()
+      .addTurn({ type: 'textBlock', text: 'bad 1' }, { stopReason: 'toolUse' })
+      .addTurn({ type: 'textBlock', text: 'bad 2' }, { stopReason: 'toolUse' })
+      .addTurn({ type: 'textBlock', text: 'bad 3' }, { stopReason: 'toolUse' })
+
+    const afterEvents: AfterModelCallEvent[] = []
+    const agent = new Agent({ model })
+    agent.addHook(AfterModelCallEvent, (event) => {
+      afterEvents.push(event)
+    })
+
+    await expect(agent.invoke('hi')).rejects.toThrow(/stopReason "toolUse".*no toolUseBlock.*3 attempts/)
+    expect(model.callCount).toBe(3)
+    expect(afterEvents).toHaveLength(3)
+  })
 })
