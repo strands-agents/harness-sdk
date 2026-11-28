@@ -16,7 +16,7 @@ import { clearStoredContext, persistContext, restoreContext, storeContext } from
 import { sanitizeTerminalText } from '../terminal/text.js'
 import { latestRootModelUsage, RunUsage } from '../usage.js'
 import type { BackgroundAgentActivity, BackgroundAgentActivityStore } from './background.js'
-import { hasReadyBackgroundResults, readBackgroundTasks } from './background.js'
+import { hasReadyBackgroundResults, isBackgroundTaskTool, readBackgroundTasks } from './background.js'
 import { ContextBreakdownCapture } from './context.js'
 import { projectAgentEvent, projectAgentResult } from './events.js'
 import type { LiveSteering } from './messaging.js'
@@ -410,7 +410,7 @@ export class StrandsChatBackend implements ChatBackend {
       const runUsage = RunUsage.start(this._runtime.agent)
       let latestModelUsage: Usage | undefined
       let next = await stream.next()
-      const projectionOptions = this._runtime.agent.tools.some((tool) => tool.name === 'strands_manage_background_task')
+      const projectionOptions = this._runtime.agent.tools.some((tool) => isBackgroundTaskTool(tool.name))
         ? { alwaysBackgroundTools: ALWAYS_BACKGROUND_TOOL_NAMES }
         : {}
       while (!next.done) {

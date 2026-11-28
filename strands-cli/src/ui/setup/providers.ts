@@ -92,7 +92,6 @@ export function quickstartDraft(model = DEFAULT_HARNESS_AGENT_CONFIG.model): Set
     profile: compatibleProfile({
       ...DEFAULT_HARNESS_AGENT_CONFIG,
       model,
-      builtinTools: withoutProfileTool(DEFAULT_HARNESS_AGENT_CONFIG.builtinTools, 'web_search'),
       caching: !localProvider,
       effort: localProvider ? 'off' : DEFAULT_HARNESS_AGENT_CONFIG.effort,
     }),

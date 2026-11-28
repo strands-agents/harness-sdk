@@ -580,13 +580,13 @@ function withContextOffloadThreshold(
   ) {
     return options
   }
-  const summarizeUtilization = contextManager === 'agentic' ? 1 : 0.85
+  const summarizeUtilization = contextManager === 'agentic' ? '100%' : '85%'
   return {
     ...options,
     contextManager: {
       strategies: [
-        Offload.truncate('toolResults', { previewTokens: 750 }).when({ threshold }),
-        Offload.summarize('*').when({ utilization: summarizeUtilization, preserveRecent: 4 }),
+        Offload.truncate('toolResults', { previewTokens: 750 }).when({ blockThreshold: threshold }),
+        Offload.summarize('*').when({ contextUtilization: summarizeUtilization, preserveRecent: 4 }),
       ],
     },
   }

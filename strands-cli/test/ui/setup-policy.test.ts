@@ -61,12 +61,15 @@ function setupControls(profile: Partial<HarnessAgentConfig>, discovery = true) {
   }
 }
 
+// A model with no built-in web search, where web_search goes through the Exa opt-in.
+const NO_SEARCH_MODEL = 'ollama/llama3.2'
+
 const configuredTools: HarnessConfigBuiltinTools = {
   shell: { description: 'Custom shell' },
   read: { media: false },
   web_fetch: { model: 'bedrock/anthropic.claude-haiku-4-5-20251001-v1:0' },
   programmatic_tool_caller: { timeout: 60, allowedTools: ['read'] },
-  subagent: { maxDepth: 0 },
+  subagent: { maxDepth: 1 },
 }
 
 describe('setup feature controls', () => {
@@ -186,7 +189,7 @@ describe('setup feature controls', () => {
 
   it.each([false, true])('preserves configured tools and explicit Exa=%s through bulk toggles', async (exa) => {
     const tools = { ...configuredTools, web_search: exa ? ('exa' as const) : false }
-    const controls = setupControls({ builtinTools: tools })
+    const controls = setupControls({ model: NO_SEARCH_MODEL, builtinTools: tools })
     await harnessAgentOptionsFromConfig(controls.draft.profile)
     expect(controls.row(3, 'select-all').label).toBe('Deselect all')
     controls.row(3, 'select-all').activate()
@@ -196,8 +199,22 @@ describe('setup feature controls', () => {
     expect(controls.row(3, 'select-all').label).toBe('Deselect all')
   })
 
+  it.each([
+    [[], ['environment']],
+    [['todos'], ['todos', 'environment']],
+  ] as const)('leaves opt-in Todos as it was when selecting all from plugins %j', (plugins, selected) => {
+    const controls = setupControls({ builtinPlugins: [...plugins] })
+    expect(controls.row(4, 'select-all').label).toBe('Select all')
+    controls.row(4, 'select-all').activate()
+    expect(controls.draft.profile.builtinPlugins).toEqual(selected)
+    expect(controls.row(4, 'select-all').label).toBe('Deselect all')
+    controls.row(4, 'select-all').activate()
+    expect(controls.draft.profile.builtinPlugins).toEqual([])
+  })
+
   it('enables defaults without adding Exa or converting a tool list to a mapping', () => {
     const controls = setupControls({
+      model: NO_SEARCH_MODEL,
       skills: [],
       memory: false,
       contextManager: false,
@@ -524,12 +541,17 @@ describe('setup provider credentials', () => {
 })
 
 describe('setup web_search availability', () => {
-  it.each(['bedrock', 'bedrock-mantle', 'openai'] as const)(
-    'enables every quickstart capability except web_search for %s',
-    (provider) => {
+  it.each([
+    ['bedrock', true],
+    ['bedrock-mantle', true],
+    ['openai', true],
+    ['ollama', false],
+  ] as const)(
+    'enables every quickstart capability for %s, with web_search only where the model has search',
+    (provider, search) => {
       const draft = quickstartDraft(`${provider}/openai.gpt-6.1-sol`)
       expect(enabledProfileTools(draft.profile.builtinTools)).toEqual(
-        enabledProfileTools(DEFAULT_HARNESS_AGENT_CONFIG.builtinTools).filter((tool) => tool !== 'web_search')
+        enabledProfileTools(DEFAULT_HARNESS_AGENT_CONFIG.builtinTools).filter((tool) => search || tool !== 'web_search')
       )
       expect(draft.profile.builtinPlugins).toEqual(DEFAULT_HARNESS_AGENT_CONFIG.builtinPlugins)
       expect(draft.settings).toEqual({ mcpDiscovery: true, skillDiscovery: true, agentMessaging: true })
@@ -537,9 +559,10 @@ describe('setup web_search availability', () => {
   )
 
   it.each([
-    ['Exa', 'bedrock', 'exa'],
+    ['Exa', 'ollama', 'exa'],
+    ['AgentCore', 'bedrock', 'native'],
     ['Native', 'bedrock-mantle', 'native'],
-  ] as const)('offers an explicit %s web search opt-in for %s', (label, provider, mode) => {
+  ] as const)('offers %s web search for %s', (label, provider, mode) => {
     const draft = quickstartDraft(`${provider}/openai.gpt-6.1-sol`)
     let profile = draft.profile
     const rows = rowsForStep(
@@ -560,9 +583,10 @@ describe('setup web_search availability', () => {
       () => {}
     )
     const webSearch = rows.find((row) => row.id === 'quickstart-web-search')
+    const searchByDefault = mode === 'native'
     expect(webSearch?.choices?.map((choice) => [choice.label, choice.active])).toEqual([
-      ['Off', true],
-      [label, false],
+      ['Off', !searchByDefault],
+      [label, searchByDefault],
     ])
 
     webSearch?.choices?.[1]?.activate()
@@ -570,6 +594,43 @@ describe('setup web_search availability', () => {
     expect(profileToolEnabled(profile.builtinTools, 'web_search')).toBe(true)
     expect(webSearchFallback(profile.builtinTools)).toBe(mode === 'exa' ? 'exa' : undefined)
   })
+
+  it.each([
+    [{ AWS_BEARER_TOKEN_BEDROCK: 'token' }, [], 'Needs IAM credentials, not an API token'],
+    [{ AWS_BEARER_TOKEN_BEDROCK: 'token', AWS_ACCESS_KEY_ID: 'key' }, [], 'Bedrock AgentCore web search'],
+    [{ AWS_BEARER_TOKEN_BEDROCK: 'token', AWS_PROFILE: 'dev' }, [], 'Bedrock AgentCore web search'],
+    [{ AWS_BEARER_TOKEN_BEDROCK: 'token' }, ['default'], 'Bedrock AgentCore web search'],
+    [{}, [], 'Bedrock AgentCore web search'],
+  ])(
+    'describes AgentCore web search for Bedrock credentials %j and profiles %j',
+    (variables, profiles, description) => {
+      const detected = Object.fromEntries(
+        Object.entries(variables).map(([key, value]) => [key, { value, source: 'process' as const }])
+      )
+      const rows = rowsForStep(
+        1,
+        'quickstart',
+        quickstartDraft(),
+        '',
+        {},
+        detected,
+        'bedrock',
+        ['bedrock'],
+        { profiles, regions: [] },
+        undefined,
+        () => {},
+        () => {},
+        () => {}
+      )
+      expect(rows.find(({ id }) => id === 'quickstart-web-search')).toMatchObject({
+        description,
+        choices: [
+          { label: 'Off', active: false },
+          { label: 'AgentCore', active: true },
+        ],
+      })
+    }
+  )
 
   it('keeps the Exa web search opt-in for Bedrock', () => {
     const bedrock = quickstartDraft().profile

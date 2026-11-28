@@ -325,9 +325,10 @@ export class AgentModelRuntime {
   private _listProviderModels(provider: ProviderId): Promise<readonly SelectableModel[]> {
     if (provider === 'bedrock') {
       const config = this._agent.model.getConfig() as { region?: unknown }
-      const configRegion = typeof config.region === 'string' ? config.region : undefined
+      const clientRegion = anthropicClient(this._agent.model)?.awsRegion
       const region =
-        configRegion ??
+        (typeof config.region === 'string' ? config.region : undefined) ??
+        (typeof clientRegion === 'string' ? clientRegion : undefined) ??
         this._providerEnvironment.AWS_REGION?.value ??
         this._providerEnvironment.AWS_DEFAULT_REGION?.value
       return this._listBedrockModels(region)
@@ -380,12 +381,20 @@ export function modelChangeMode(current: string, provider: string, modelId: stri
   return 'restart'
 }
 
+function anthropicClient(model: Model): { baseURL?: unknown; awsRegion?: unknown } | undefined {
+  return (model as unknown as { _client?: { baseURL?: unknown; awsRegion?: unknown } })._client
+}
+
 function modelProvider(model: Model): string {
   switch (model.constructor.name) {
     case 'BedrockModel':
       return 'bedrock'
-    case 'AnthropicModel':
-      return 'anthropic'
+    case 'AnthropicModel': {
+      // The harness builds Claude on Bedrock as an AnthropicModel on Anthropic's Bedrock clients.
+      const baseURL = anthropicClient(model)?.baseURL
+      const host = typeof baseURL === 'string' ? /\bbedrock-(runtime|mantle)(?:-fips)?\./.exec(baseURL)?.[1] : undefined
+      return host === 'runtime' ? 'bedrock' : host === 'mantle' ? 'bedrock-mantle' : 'anthropic'
+    }
     case 'OpenAIModel':
       return 'openai'
     case 'GoogleModel':
