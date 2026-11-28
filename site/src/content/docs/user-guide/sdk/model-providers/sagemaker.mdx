@@ -1,12 +1,12 @@
 ---
 title: Amazon SageMaker
 description: 'Run Strands agents against models deployed on Amazon SageMaker inference endpoints, including JumpStart models and custom fine-tuned models.'
-languages: Python
 sidebar:
   label: "SageMaker"
 integrationType: model-provider
 sourceLinks:
   - path: strands-py/src/strands/models/sagemaker.py
+  - path: strands-ts/src/models/sagemaker/model.ts
 ---
 
 [Amazon SageMaker](https://aws.amazon.com/sagemaker/) is a fully managed machine learning service that provides infrastructure and tools for building, training, and deploying ML models at scale. The Strands Agents SDK implements a SageMaker provider, allowing you to run agents against models deployed on SageMaker inference endpoints, including both pre-trained models from SageMaker JumpStart and custom fine-tuned models. The provider is designed to work with models that support OpenAI-compatible chat completion APIs.
@@ -17,13 +17,29 @@ For example, you can expose models like [Mistral-Small-24B-Instruct-2501](https:
 
 SageMaker is configured as an optional dependency in Strands Agents. To install, run:
 
+<Tabs>
+<Tab label="Python">
+
 ```bash
 pip install 'strands-agents[sagemaker]'
 ```
 
+</Tab>
+<Tab label="TypeScript">
+
+```bash
+npm install @strands-agents/sdk @aws-sdk/client-sagemaker-runtime
+```
+
+</Tab>
+</Tabs>
+
 ## Usage
 
 After installing the SageMaker dependencies, you can import and initialize the Strands Agents' SageMaker provider as follows:
+
+<Tabs>
+<Tab label="Python">
 
 ```python
 from strands import Agent
@@ -45,6 +61,26 @@ model = SageMakerAIModel(
 agent = Agent(model=model, tools=[notebook])
 response = agent('Create a notebook named "ideas" and add three project ideas.')
 ```
+
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/sagemaker_imports.ts:basic_usage_imports"
+
+--8<-- "user-guide/sdk/model-providers/sagemaker.ts:basic_usage"
+```
+
+To reuse a configured client, for example one with custom retries or credentials, pass it as `client`:
+
+```typescript
+--8<-- "user-guide/sdk/model-providers/sagemaker_imports.ts:custom_client_imports"
+
+--8<-- "user-guide/sdk/model-providers/sagemaker.ts:custom_client"
+```
+
+</Tab>
+</Tabs>
 
 **Note**: Tool calling support varies by model. Models like [Mistral-Small-24B-Instruct-2501](https://aws.amazon.com/blogs/machine-learning/mistral-small-24b-instruct-2501-is-now-available-on-sagemaker-jumpstart-and-amazon-bedrock-marketplace/) have demonstrated reliable tool calling capabilities, but not all models deployed on SageMaker support this feature. Verify your model's capabilities before implementing tool-based workflows.
 
@@ -76,6 +112,25 @@ The `payload_config` configures the model inference parameters:
 | `top_k` | Top-k sampling parameter | Optional | `50` |
 | `stop` | List of stop sequences | Optional | `["Human:", "AI:"]` |
 
+### TypeScript Configuration
+
+In TypeScript, endpoint and payload settings are passed together to the `SageMakerModel` constructor:
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `endpointName` | Name of the SageMaker endpoint (required) | - |
+| `region` | AWS region of the endpoint | `clientConfig.region`, then `AWS_REGION`, then `us-west-2` |
+| `inferenceComponentName` | Name of the inference component | - |
+| `targetModel` | Specific model to invoke (multi-model endpoints) | - |
+| `targetVariant` | Production variant to invoke | - |
+| `additionalRequestArgs` | Other `InvokeEndpoint` parameters, such as `CustomAttributes` | - |
+| `client` | Pre-built `SageMakerRuntimeClient`; cannot be combined with `region` or `clientConfig` | - |
+| `clientConfig` | Configuration for the `SageMakerRuntimeClient` the provider creates | - |
+| `maxTokens`, `temperature`, `topP`, `topK`, `stop` | Sampling settings | Container default |
+| `stream` | Stream the response | `true` |
+| `toolResultsAsUserMessages` | Send tool results as user messages, for containers that reject the `tool` role | `false` |
+| `additionalPayloadArgs` | Other request body fields; set a field to `null` to omit it | - |
+
 ## Model Compatibility
 
 The SageMaker provider is designed to work with models that support OpenAI-compatible chat completion APIs. During development and testing, the provider has been validated with [Mistral-Small-24B-Instruct-2501](https://aws.amazon.com/blogs/machine-learning/mistral-small-24b-instruct-2501-is-now-available-on-sagemaker-jumpstart-and-amazon-bedrock-marketplace/), which demonstrated reliable performance across various conversational AI tasks.
@@ -96,6 +151,12 @@ If you encounter `ModuleNotFoundError: No module named 'boto3'` or similar, inst
 
 ```bash
 pip install 'strands-agents[sagemaker]'
+```
+
+In TypeScript, the error `SageMakerModel requires the '@aws-sdk/client-sagemaker-runtime' package` means the optional peer dependency is missing:
+
+```bash
+npm install @aws-sdk/client-sagemaker-runtime
 ```
 
 ### Authentication

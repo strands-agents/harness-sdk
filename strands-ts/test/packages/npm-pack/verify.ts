@@ -47,6 +47,7 @@ import { ContextManager, Offload } from '@strands-agents/sdk/context-manager'
 import { AgentSkills } from '@strands-agents/sdk/vended-plugins/skills'
 import { ContextOffloader, InMemoryStorage } from '@strands-agents/sdk/vended-plugins/context-offloader'
 import { GoalLoop } from '@strands-agents/sdk/vended-plugins/goal'
+import { SageMakerModel } from '@strands-agents/sdk/models/sagemaker'
 import { SageMakerDecisionModel } from '@strands-agents/sdk/decisions/sagemaker'
 import { HttpDecisionModel, sigV4Auth } from '@strands-agents/sdk/decisions/http'
 
@@ -141,6 +142,13 @@ if (!(sageMaker instanceof SageMakerDecisionModel)) {
   throw new Error('SageMakerDecisionModel construction failed')
 }
 console.log('[pack-test] decisions/sagemaker constructible without its optional peer')
+
+// models/sagemaker loads the same optional peer only on the first request.
+const sageMakerModel = new SageMakerModel({ endpointName: 'pack-test-endpoint' })
+if (!(sageMakerModel instanceof SageMakerModel)) {
+  throw new Error('SageMakerModel construction failed')
+}
+console.log('[pack-test] models/sagemaker constructible without its optional peer')
 
 // SigV4 signing uses only the SDK's own dependencies, so a signed model constructs with no extra install.
 const http = new HttpDecisionModel({

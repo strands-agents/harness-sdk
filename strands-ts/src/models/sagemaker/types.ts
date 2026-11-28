@@ -2,6 +2,11 @@
  * Type definitions for the SageMaker model provider.
  */
 
+import type {
+  InvokeEndpointCommandInput,
+  SageMakerRuntimeClient,
+  SageMakerRuntimeClientConfig,
+} from '@aws-sdk/client-sagemaker-runtime'
 import type { BaseModelConfig } from '../model.js'
 
 /**
@@ -48,8 +53,11 @@ export interface SageMakerModelConfig extends BaseModelConfig {
   toolResultsAsUserMessages?: boolean
 
   /**
-   * Additional payload parameters passed through to the model endpoint.
-   * @see https://bit.ly/djl-lmi-request-schema
+   * Other request body fields, for parameters the container accepts beyond the ones above (for example
+   * `repetition_penalty`, or `stream_options: null` for a container that rejects the field). The fields
+   * this provider manages (`messages`, `stream`, sampling settings, `tools`) win.
+   *
+   * @see https://docs.djl.ai/master/docs/serving/serving/docs/lmi/user_guides/chat_input_output_schema.html
    */
   additionalPayloadArgs?: Record<string, unknown>
 }
@@ -62,11 +70,6 @@ export interface SageMakerEndpointConfig {
    * Name of the SageMaker endpoint to invoke.
    */
   endpointName: string
-
-  /**
-   * AWS region of the endpoint. Falls back to `AWS_REGION` env var, then `us-west-2`.
-   */
-  region?: string
 
   /**
    * Inference component name, for multi-model endpoints.
@@ -84,9 +87,10 @@ export interface SageMakerEndpointConfig {
   targetVariant?: string
 
   /**
-   * Additional parameters to pass to the SageMaker Runtime `InvokeEndpoint` / `InvokeEndpointWithResponseStream` API.
+   * Other `InvokeEndpoint` / `InvokeEndpointWithResponseStream` parameters, such as `CustomAttributes`
+   * or `SessionId`. The fields this provider sets (endpoint, body, content types, routing) win.
    */
-  additionalRequestArgs?: Record<string, unknown>
+  additionalRequestArgs?: Partial<Omit<InvokeEndpointCommandInput, 'Body' | 'EndpointName'>>
 }
 
 /**
@@ -94,14 +98,18 @@ export interface SageMakerEndpointConfig {
  */
 export interface SageMakerModelOptions extends SageMakerModelConfig, SageMakerEndpointConfig {
   /**
-   * Pre-built SageMaker Runtime client. When provided, `region` is ignored.
-   * Cannot be combined with `clientConfig`.
+   * AWS region of the endpoint. Takes precedence over `clientConfig.region`, then `AWS_REGION`,
+   * then `us-west-2`. Cannot be combined with `client`.
    */
-  client?: import('@aws-sdk/client-sagemaker-runtime').SageMakerRuntimeClient
+  region?: string
 
   /**
-   * Configuration passed to the SageMaker Runtime client constructor.
-   * Cannot be combined with `client`.
+   * Pre-built SageMaker Runtime client, used as is. Cannot be combined with `region` or `clientConfig`.
    */
-  clientConfig?: import('@aws-sdk/client-sagemaker-runtime').SageMakerRuntimeClientConfig
+  client?: SageMakerRuntimeClient
+
+  /**
+   * Configuration passed to the SageMaker Runtime client constructor. Cannot be combined with `client`.
+   */
+  clientConfig?: SageMakerRuntimeClientConfig
 }

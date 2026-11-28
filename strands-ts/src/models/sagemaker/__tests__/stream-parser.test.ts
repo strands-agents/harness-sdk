@@ -106,8 +106,22 @@ describe('parseResponseBody', () => {
         usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
       })
     )
-    const result = parseResponseBody(body)
+    const result = parseResponseBody(body) as { choices: unknown[]; usage: { prompt_tokens: number } }
     expect(result.choices).toHaveLength(1)
-    expect(result.usage?.prompt_tokens).toBe(3)
+    expect(result.usage.prompt_tokens).toBe(3)
+  })
+
+  it('throws ModelError on a non-JSON body', () => {
+    expect(() => parseResponseBody(new TextEncoder().encode('<html>'))).toThrow('non-JSON response')
+  })
+})
+
+describe('parseEventStream errors', () => {
+  it('throws an InternalStreamFailure event', async () => {
+    const failure = new Error('internal')
+    const body = (async function* () {
+      yield { InternalStreamFailure: failure }
+    })()
+    await expect(collectChunks(parseEventStream(body))).rejects.toBe(failure)
   })
 })
