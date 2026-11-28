@@ -2,20 +2,21 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, Literal
 
-from strands import Agent, BackgroundTasksConfig
+from strands import Agent, AgentBase, BackgroundTasksConfig
 from strands.context_manager import ContextManager
 from strands.memory import MemoryManager
 from strands.models import Model, ModelRouter
 from strands.plugins import Plugin
 from strands.session import SessionManager, SnapshotSessionManager
 from strands.storage import LocalFileStorage
-from strands.tools.mcp import MCPClient, MCPServerConfig
+from strands.tools.mcp import MCPAgentTool, MCPClient, MCPServerConfig
 from strands.types.tools import AgentTool
 from strands.vended_plugins.skills import AgentSkills, SkillSources
 from strands.vended_tools import make_shell
@@ -201,9 +202,54 @@ def _check_name_collisions(*sources: tuple[str, bool, list[Any]]) -> None:
             seen[key] = (label, is_builtin)
 
 
-def _drop_sandbox_tools(agent: Agent) -> None:
-    """Drop the tools the sandbox vends (e.g. ``sandbox_bash``); the harness's built-ins already route through it."""
+_AGENTIC_CONTEXT_TOOL_NAMES = frozenset({"summarize_context", "truncate_context", "pin_context"})
+
+
+def _collect_preserved_tools(tools: Iterable[Any]) -> tuple[set[int], set[str]]:
+    """Collect object ids (and names for deferred specs) of non-sandbox tools before ``Agent`` init."""
+    ids: set[int] = set()
+    names: set[str] = set()
+    for item in tools:
+        if isinstance(item, AgentTool):
+            ids.add(id(item))
+        elif isinstance(item, AgentBase):
+            name = getattr(item, "name", None)
+            if isinstance(name, str) and name:
+                names.add(name)
+        elif inspect.ismodule(item):
+            module_tools = [attr for attr in vars(item).values() if isinstance(attr, AgentTool)]
+            if module_tools:
+                ids.update(id(tool) for tool in module_tools)
+            else:
+                names.add(item.__name__.split(".")[-1])
+        elif isinstance(item, Iterable) and not isinstance(item, (str, bytes, bytearray, Mapping)):
+            nested_ids, nested_names = _collect_preserved_tools(item)
+            ids.update(nested_ids)
+            names.update(nested_names)
+    return ids, names
+
+
+def _drop_sandbox_tools(
+    agent: Agent,
+    preserved_ids: set[int],
+    preserved_names: set[str],
+) -> None:
+    """Drop the tools the sandbox vends (e.g. ``sandbox_bash``); the harness's built-ins already route through it.
+
+    Leaves any tool already registered ahead of the sandbox's tools (built-ins, consumer tools, MCP
+    tools, dynamically loaded tools), because the SDK skipped the sandbox's colliding copy.
+    """
     for tool in agent.sandbox.get_tools():
+        registered = agent.tool_registry.registry.get(tool.tool_name)
+        if registered is None:
+            continue
+        if (
+            id(registered) in preserved_ids
+            or tool.tool_name in preserved_names
+            or registered.is_dynamic
+            or isinstance(registered, MCPAgentTool)
+        ):
+            continue
         agent.tool_registry.registry.pop(tool.tool_name, None)
 
 
@@ -530,6 +576,12 @@ def create_harness(
         ],
     )
 
+    preserved_ids, preserved_names = _collect_preserved_tools(
+        [*agent_tools, *_plugin_tools(all_plugins), *memory_tools]
+    )
+    if agent_kwargs["context_manager"] == "agentic":
+        preserved_names.update(_AGENTIC_CONTEXT_TOOL_NAMES)
+
     agent = Agent(
         model=resolved_model,
         tools=agent_tools,
@@ -540,5 +592,5 @@ def create_harness(
         interventions=resolve_interventions(interventions),
         **agent_kwargs,
     )
-    _drop_sandbox_tools(agent)
+    _drop_sandbox_tools(agent, preserved_ids, preserved_names)
     return agent

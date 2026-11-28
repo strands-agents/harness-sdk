@@ -280,6 +280,43 @@ def test_sandbox_vended_tools_are_dropped():
     assert {"sandbox_bash", "sandbox_file_editor"}.isdisjoint(agent.tool_names)
 
 
+async def test_sandbox_colliding_tools_preserve_harness_and_consumer_tools():
+    @tool(name="lookup")
+    def consumer_lookup() -> str:
+        """Consumer lookup."""
+        return "ok"
+
+    @tool(name="lookup")
+    def sandbox_lookup() -> str:
+        """Sandbox lookup."""
+        return "sandbox"
+
+    class _CollidingSandbox(DockerSandbox):
+        def get_tools(self):
+            return [
+                make_shell(sandbox=self, name="shell"),
+                sandbox_lookup,
+                make_shell(sandbox=self, name="sandbox_shell"),
+            ]
+
+    agent = create_harness(sandbox=_CollidingSandbox(container="c1"), tools=[consumer_lookup])
+    assert "shell" in agent.tool_names
+    assert "lookup" in agent.tool_names
+    assert "sandbox_shell" not in agent.tool_names
+    assert agent.tool_registry.registry["lookup"] is consumer_lookup
+
+    tool_use = {"toolUseId": "t1", "name": "lookup", "input": {}}
+    events = [e async for e in agent.tool_registry.registry["lookup"].stream(tool_use, {"agent": agent})]
+    assert events[-1].tool_result["content"][0]["text"] == "ok"
+
+    # Nested consumer tool lists are preserved too; disabled built-ins stay absent even if the sandbox vends them.
+    nested = create_harness(sandbox=_CollidingSandbox(container="c1"), builtin_tools=[], tools=[[consumer_lookup]])
+    assert "lookup" in nested.tool_names
+    assert "shell" not in nested.tool_names
+    assert "sandbox_shell" not in nested.tool_names
+    assert nested.tool_registry.registry["lookup"] is consumer_lookup
+
+
 def test_unknown_builtin_tool_raises():
     with pytest.raises(ValueError, match="Unknown built-in tool"):
         create_harness(builtin_tools=["grep"])

@@ -298,10 +298,16 @@ function pluginTools(plugins: readonly Plugin[]): ToolList {
   return plugins.flatMap((plugin) => plugin.getTools?.() ?? [])
 }
 
-/** Drop the tools the sandbox vends (e.g. `sandbox_bash`); the harness's built-ins already route through it. */
-function dropSandboxTools(agent: Agent): void {
+/**
+ * Drop the tools the sandbox vends (e.g. `sandbox_bash`), leaving any tool that was already
+ * registered ahead of the sandbox's tools (built-ins, consumer tools, MCP tools) intact.
+ */
+function dropSandboxTools(agent: Agent, preserved: ReadonlySet<Tool>): void {
   for (const tool of agent.sandbox.getTools()) {
-    agent.toolRegistry.remove(tool.name)
+    const registered = agent.toolRegistry.get(tool.name)
+    if (registered !== undefined && !preserved.has(registered) && !('mcpClient' in registered)) {
+      agent.toolRegistry.remove(tool.name)
+    }
   }
 }
 
@@ -523,8 +529,11 @@ export async function createHarness(options: HarnessAgentOptions = {}): Promise<
     interventions: resolvedInterventions,
   })
   if (agentConfig.sandbox) {
-    // The SDK registers sandbox tools lazily in initialize(), so dedupe once that has run.
-    agent.addHook(InitializedEvent, () => dropSandboxTools(agent))
+    // The SDK registers sandbox tools lazily in initialize() after constructor and MCP tools,
+    // skipping any name already registered. Snapshot the pre-init tools so dropSandboxTools only
+    // removes what the sandbox added and preserves colliding built-ins or consumer tools.
+    const preserved = new Set(agent.toolRegistry.list())
+    agent.addHook(InitializedEvent, () => dropSandboxTools(agent, preserved))
   }
   return agent
 }
