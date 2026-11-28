@@ -8,6 +8,7 @@ import warnings
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from ....agent._turn_opener import is_turn_opener
 from ....agent.conversation_manager.compression.pin_message import is_pinned
 from ....models._model_proxy import ModelProxy
 from ....types.content import ContentBlock, Message, Messages
@@ -229,15 +230,20 @@ class BaseOffloadStrategy(ABC):
     async def _removable_messages(self, context: ContextState) -> list[Message]:
         """Messages outside ``preserve_recent`` and larger than ``block_threshold``.
 
-        Message 0, pinned messages, and messages whose tool partner is protected are left out, since removing a
-        message removes its partner too.
+        Message 0, the user message that opened the current turn, pinned messages, and messages whose tool partner is
+        protected are left out, since removing a message removes its partner too. Removing the current turn's opener
+        would leave the request the agent is working on only in an assistant-voiced summary, and the agent can then
+        answer an earlier request instead.
         """
         messages = context.messages
         unprotected = {id(message) for message in self._unprotected_matches(messages, build_tool_name_map(messages))}
+        opener = current_turn_opener(messages)
         removable = [
             message
             for index, message in enumerate(messages)
             if index > 0
+            # The last message is never removed, so it is left to the existing checks as before.
+            and (index != opener or index == len(messages) - 1)
             and id(message) in unprotected
             and all(id(partner) in unprotected for partner in collect_removable_with_pair(messages, index))
         ]
@@ -359,7 +365,8 @@ class EmergencyTruncateStrategy:
 
     It recomputes utilization once every user-configured strategy has run, and is appended internally by the
     ContextManager rather than being part of the public API. Pins are ignored so an all-pinned overflow is still
-    recoverable.
+    recoverable, but the user message that opened the current turn is kept, so the agent does not go on to answer an
+    earlier request.
     """
 
     name = "offload:emergency-truncate"
@@ -385,8 +392,18 @@ class EmergencyTruncateStrategy:
             if context.agent.model.estimate_utilization(tokens) < 1.0:
                 return False
 
-        removable = messages[1:]
-        remove_count = max(1, int(len(removable) * _EMERGENCY_REMOVAL_RATIO))
+        opener = current_turn_opener(messages)
+        remove_count = max(1, int(len(messages[1:]) * _EMERGENCY_REMOVAL_RATIO))
+        # With an opener kept, a message of only placeholders would come back as a fresh marker, so it is skipped.
+        removable = [
+            message
+            for index, message in enumerate(messages)
+            if index > 0
+            and index != opener
+            and (opener is None or not all(is_offloaded(block) for block in message["content"]))
+        ]
+        if len(removable) <= remove_count:
+            return False
         # Cut just before an assistant message, which holds no tool result to orphan and never merges into message 0.
         if removable[remove_count]["role"] != "assistant":
             remove_count += 1
@@ -402,3 +419,20 @@ class EmergencyTruncateStrategy:
 def _pinned_ids(messages: Messages) -> set[int]:
     """The identities of the pinned messages, since equal messages are not the same message."""
     return {id(message) for index, message in enumerate(messages) if is_pinned(messages, index)}
+
+
+def current_turn_opener(messages: Messages) -> int | None:
+    """The index of the user message that opened the current turn.
+
+    That is the last message the agent marked as a turn's opener. A history holding no mark, such as one restored
+    from a session saved before marks existed, falls back to the last user message holding no tool result. Returns
+    None when the opener is message 0, which is protected already, or when there is none.
+    """
+    for index in range(len(messages) - 1, -1, -1):
+        if is_turn_opener(messages[index]):
+            return index or None
+    for index in range(len(messages) - 1, 0, -1):
+        message = messages[index]
+        if message["role"] == "user" and not any("toolResult" in block for block in message["content"]):
+            return index
+    return None

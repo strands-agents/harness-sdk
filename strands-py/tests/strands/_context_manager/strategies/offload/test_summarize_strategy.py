@@ -1338,7 +1338,9 @@ class TestSummarizingMessageRuns:
 
         texts = _texts(messages)
         assert texts[:5] == [["task"], ["a1"], ["u2"], ["a3"], ["u4"]]
-        assert format_summarized(REMOVED_MESSAGES, 2, "late run") in texts[5]
+        # u6 opens the current turn, so the late run is a5 alone.
+        assert format_summarized(REMOVED_MESSAGES, 1, "late run") in texts[5]
+        assert texts[6:] == [["u6"], ["a7"]]
 
 
 class TestABlockThresholdOnTheMessageTarget:

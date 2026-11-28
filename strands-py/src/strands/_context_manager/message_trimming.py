@@ -197,20 +197,31 @@ async def remove_messages(
 
 
 async def _replace_run(
-    messages: Messages, run: Messages, text: str, tokens: int, method: OffloadMethod, archive: Archive | None
+    messages: Messages,
+    run: Messages,
+    text: str,
+    tokens: int,
+    method: OffloadMethod,
+    archive: Archive | None,
+    keep: Message | None = None,
 ) -> bool:
     """Replace a contiguous run of messages with one placeholder reading ``text``, archived under its own reference.
 
-    A failed archive write leaves the placeholder without a reference, rather than keeping content already accounted
-    for.
+    A ``keep`` message inside the run stays in the history, at the run's start, with the placeholder after it: the run
+    was summarized as one stretch, but that message is not part of what the placeholder stands for. A failed archive
+    write leaves the placeholder without a reference, rather than keeping content already accounted for.
     """
-    archive_ref = await archive_removed(archive, run, method)
+    removed = [message for message in run if message is not keep]
+    archive_ref = await archive_removed(archive, removed, method)
     start = _run_start(messages, run)
     if start is None:
         return False
     # Archived before the splice and the marker inserted without an await between: a cancellation here would
     # otherwise leave the run neither in the history nor retrievable.
     del messages[start : start + len(run)]
+    if keep is not None and len(removed) < len(run):
+        messages.insert(start, keep)
+        start += 1
     insert_marker(messages, start, offload_placeholder(method, text, archive_ref, tokens))
     return True
 

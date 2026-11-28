@@ -30,10 +30,11 @@ from ...placeholder import (
     REMOVED_MESSAGES,
     format_offloaded,
     format_summarized,
+    is_offloaded,
     offload_placeholder,
 )
 from ...types import ContextState, is_text_block, is_tool_result_block
-from .base import BaseOffloadStrategy
+from .base import BaseOffloadStrategy, current_turn_opener
 from .conditions import OffloadConditions
 from .target import OffloadTarget, media_kind
 
@@ -126,14 +127,21 @@ class SummarizeStrategy(BaseOffloadStrategy):
             return await self._summarize_server_side(context, model, end)
 
         acted = False
+        opener_index = current_turn_opener(messages)
+        opener = None if opener_index is None else messages[opener_index]
+        runs = _bridge_opener(messages, _split_into_runs(messages, with_pairs(messages, removable)), opener)
         # Last run first, so removing a run leaves the earlier runs' positions unchanged.
-        for run in reversed(_split_into_runs(messages, with_pairs(messages, removable))):
+        for run in reversed(runs):
+            # A run of earlier placeholders holds nothing new to summarize, and summarizing it again would count as
+            # progress, which holds back the emergency truncation an overflow needs.
+            if all(is_offloaded(block) for message in run for block in message["content"]):
+                continue
             summary = await self._summarize_run(context, model, run)
             if not summary:
                 continue
-            tokens = await removed_tokens(run, model)
+            tokens = await removed_tokens([message for message in run if message is not opener], model)
             marker = format_summarized(REMOVED_MESSAGES, tokens, summary)
-            if await _replace_run(messages, run, marker, tokens, "summarize", context.archive):
+            if await _replace_run(messages, run, marker, tokens, "summarize", context.archive, keep=opener):
                 logger.debug("summarized=<%s>, tokens=<%s> | summarized message run", len(run), tokens)
                 acted = True
         return acted
@@ -362,16 +370,43 @@ def _model_id(model: Model) -> object:
     return config.get("model_id") if isinstance(config, dict) else getattr(config, "model_id", None)
 
 
+def _bridge_opener(messages: Messages, runs: list[Messages], opener: Message | None) -> list[Messages]:
+    """``runs`` with the two runs either side of the current turn's opener joined into one, through the opener.
+
+    The opener is kept, so it splits the eligible messages into a run before it and a run after it. Summarized apart,
+    the earlier run's request would end with an assistant message, so its summarize instruction would be a user
+    message of its own, which a summary can then report as the user's; and it would be a second, uncached call.
+    Joined, the run is one stretch of the history again, summarized in one call over the agent's own request, and
+    the opener stays in place when the run is replaced.
+    """
+    if opener is None:
+        return runs
+    index = next((position for position, message in enumerate(messages) if message is opener), None)
+    if index is None or index + 1 >= len(messages):
+        return runs
+    before, after = messages[index - 1], messages[index + 1]
+    for position in range(len(runs) - 1):
+        if runs[position][-1] is before and runs[position + 1][0] is after:
+            joined = [*runs[position], opener, *runs[position + 1]]
+            return [*runs[:position], joined, *runs[position + 2 :]]
+    return runs
+
+
 def _run_request(messages: Messages, run: Messages) -> Messages:
     """The conversation a run's summary sends, which holds only message 0 and the messages the run replaces.
 
-    When the run is every message after message 0 up to its last one, that is the history prefix as the agent sent
-    it, so the summary can share the agent's prompt cache. The run keeps the history's order, so comparing it with
-    the messages after message 0 finds that case.
+    When the run is every message after message 0, or after the user message that opened the current turn, up to its
+    last one, the request is instead the history prefix as the agent sent it, so the summary can share the agent's
+    prompt cache; after the opener, that prefix also shows the summary the request the run works toward. The run
+    keeps the history's order, so comparing it with the messages after its start finds those cases.
     """
-    prefix = messages[1 : len(run) + 1]
-    if len(prefix) == len(run) and all(kept is replaced for kept, replaced in zip(prefix, run, strict=True)):
-        return list(messages[: len(run) + 1])
+    opener = current_turn_opener(messages)
+    for start in (1, None if opener is None else opener + 1):
+        if start is None:
+            continue
+        stretch = messages[start : start + len(run)]
+        if len(stretch) == len(run) and all(kept is replaced for kept, replaced in zip(stretch, run, strict=True)):
+            return list(messages[: start + len(run)])
     # Merging turns that were apart would put signed reasoning in a shape its model never wrote.
     request = _without_reasoning([messages[0], *run])
     repair_alternation(request)

@@ -288,7 +288,9 @@ class TestMessageLevelWithRoleAlternation:
     @pytest.mark.asyncio
     async def test_keeps_a_tool_use_whose_result_preserve_recent_protects(self):
         tool_use, tool_result = _tool_call("bash", "tu-1", "result")
-        q1, a1, q2, a3 = _text("user", "q1"), _text("assistant", "a1"), _text("user", "q2"), _text("assistant", "a3")
+        # The earlier step is a tool call too, so message 0 is the request that opened the turn.
+        q1, a3 = _text("user", "q1"), _text("assistant", "a3")
+        a1, q2 = _tool_call("bash", "tu-0", "q2")
         messages = [q1, a1, q2, tool_use, tool_result, a3]
         context = _context(messages)
         removed_tokens = await context.agent.model.count_tokens([a1, q2])
@@ -301,11 +303,11 @@ class TestMessageLevelWithRoleAlternation:
 
     @pytest.mark.asyncio
     async def test_acts_when_only_message_0_precedes_the_candidates(self):
-        messages = _conversation(2)
+        messages = [_text("user", "q1"), *_tool_call("bash", "tu-1", "r1"), _text("assistant", "a2")]
 
         assert await Offload.drop("*").when(context_utilization="50%").apply(_context(messages, 0.9)) is True
 
-        assert _texts_of(messages) == [["q1"], ["a2", "[Dropped: earlier messages, ~2 tokens]"]]
+        assert _texts_of(messages) == [["q1"], ["a2", "[Dropped: earlier messages, ~33 tokens]"]]
 
     @pytest.mark.asyncio
     async def test_leaves_a_history_that_still_starts_with_a_user_message(self):
@@ -623,7 +625,7 @@ class TestOverflowBypass:
     @pytest.mark.parametrize(("overflow", "acted"), [(True, True), (False, False)])
     @pytest.mark.asyncio
     async def test_fires_below_the_utilization_only_when_the_request_overflowed(self, overflow, acted):
-        messages = _conversation(2)
+        messages = [_text("user", "q1"), *_tool_call("bash", "tu-1", "r1"), _text("assistant", "a2")]
         strategy = Offload.drop("*").when(context_utilization="85%")
 
         assert await strategy.apply(_context(messages, 0.5, overflow)) is acted

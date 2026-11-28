@@ -844,7 +844,12 @@ def test_agent__call__retries_tool_use_that_names_no_tool(glitch_deltas, mock_mo
     assert agent.event_loop_metrics.accumulated_metrics["latencyMs"] == 100 * calls
     assert result.message["content"] == [{"text": "the vault code is 4417"}]
     assert agent.messages == [
-        {"role": "user", "content": [{"text": "test message"}], "tracking_id": unittest.mock.ANY},
+        {
+            "role": "user",
+            "content": [{"text": "test message"}],
+            "metadata": {"custom": {"turn_opener": True}},
+            "tracking_id": unittest.mock.ANY,
+        },
         {
             "role": "assistant",
             "content": [{"text": "the vault code is 4417"}],
@@ -914,7 +919,12 @@ def test_agent__call__tool_use_names_no_tool_in_a_later_cycle_raises_event_loop_
     assert "no toolUse block" in str(caught.value.original_exception)
     assert mock_model.mock_stream.call_count == 4
     assert agent.messages == [
-        {"role": "user", "content": [{"text": "test message"}], "tracking_id": unittest.mock.ANY},
+        {
+            "role": "user",
+            "content": [{"text": "test message"}],
+            "metadata": {"custom": {"turn_opener": True}},
+            "tracking_id": unittest.mock.ANY,
+        },
         {
             "role": "assistant",
             "content": [assistant_block],
@@ -949,7 +959,12 @@ def test_agent__call__tool_use_names_no_tool_in_a_later_cycle_recovers(
     assert mock_model.mock_stream.call_count == 3
     # The glitch reply and the empty tool-result message it would have produced stay out of history.
     assert agent.messages == [
-        {"role": "user", "content": [{"text": "test message"}], "tracking_id": unittest.mock.ANY},
+        {
+            "role": "user",
+            "content": [{"text": "test message"}],
+            "metadata": {"custom": {"turn_opener": True}},
+            "tracking_id": unittest.mock.ANY,
+        },
         {
             "role": "assistant",
             "content": [assistant_block],
@@ -1518,7 +1533,12 @@ async def test_stream_async_multi_modal_input(mock_model, agent, agenerator, ali
 
     tru_message = agent.messages
     exp_message = [
-        {"content": prompt, "role": "user", "tracking_id": unittest.mock.ANY},
+        {
+            "content": prompt,
+            "role": "user",
+            "metadata": {"custom": {"turn_opener": True}},
+            "tracking_id": unittest.mock.ANY,
+        },
         {
             "content": [{"text": "I see text and an image"}],
             "role": "assistant",
@@ -1760,7 +1780,14 @@ def test_agent_call_creates_and_ends_span_on_success(mock_get_tracer, mock_model
 
     # Verify span was created
     mock_tracer.start_agent_span.assert_called_once_with(
-        messages=[{"content": [{"text": "test prompt"}], "role": "user", "tracking_id": unittest.mock.ANY}],
+        messages=[
+            {
+                "content": [{"text": "test prompt"}],
+                "role": "user",
+                "metadata": {"custom": {"turn_opener": True}},
+                "tracking_id": unittest.mock.ANY,
+            }
+        ],
         agent_name="Strands Agents",
         model_id=unittest.mock.ANY,
         tools=agent.tool_names,
@@ -1798,7 +1825,14 @@ async def test_agent_stream_async_creates_and_ends_span_on_success(
 
     # Verify span was created
     mock_tracer.start_agent_span.assert_called_once_with(
-        messages=[{"content": [{"text": "test prompt"}], "role": "user", "tracking_id": unittest.mock.ANY}],
+        messages=[
+            {
+                "content": [{"text": "test prompt"}],
+                "role": "user",
+                "metadata": {"custom": {"turn_opener": True}},
+                "tracking_id": unittest.mock.ANY,
+            }
+        ],
         agent_name="Strands Agents",
         model_id=unittest.mock.ANY,
         tools=agent.tool_names,
@@ -1838,7 +1872,14 @@ def test_agent_call_creates_and_ends_span_on_exception(mock_get_tracer, mock_mod
 
     # Verify span was created
     mock_tracer.start_agent_span.assert_called_once_with(
-        messages=[{"content": [{"text": "test prompt"}], "role": "user", "tracking_id": unittest.mock.ANY}],
+        messages=[
+            {
+                "content": [{"text": "test prompt"}],
+                "role": "user",
+                "metadata": {"custom": {"turn_opener": True}},
+                "tracking_id": unittest.mock.ANY,
+            }
+        ],
         agent_name="Strands Agents",
         model_id=unittest.mock.ANY,
         tools=agent.tool_names,
@@ -1876,7 +1917,14 @@ async def test_agent_stream_async_creates_and_ends_span_on_exception(mock_get_tr
 
     # Verify span was created
     mock_tracer.start_agent_span.assert_called_once_with(
-        messages=[{"content": [{"text": "test prompt"}], "role": "user", "tracking_id": unittest.mock.ANY}],
+        messages=[
+            {
+                "content": [{"text": "test prompt"}],
+                "role": "user",
+                "metadata": {"custom": {"turn_opener": True}},
+                "tracking_id": unittest.mock.ANY,
+            }
+        ],
         agent_name="Strands Agents",
         model_id=unittest.mock.ANY,
         tools=agent.tool_names,
@@ -2174,7 +2222,12 @@ def test_agent_redacts_user_message_not_ltm_context():
     agent("Tell me something bad")
 
     assert agent.messages == [
-        {"role": "user", "content": [{"text": "BLOCKED!"}], "tracking_id": unittest.mock.ANY},
+        {
+            "role": "user",
+            "content": [{"text": "BLOCKED!"}],
+            "metadata": {"custom": {"turn_opener": True}},
+            "tracking_id": unittest.mock.ANY,
+        },
         ltm_message,
         {
             "role": "assistant",

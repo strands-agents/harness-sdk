@@ -20,16 +20,20 @@ logger = logging.getLogger(__name__)
 _SUMMARY_STOP_REASONS = frozenset({"end_turn", "max_tokens", "stop_sequence"})
 
 # The request can carry the caller's own persona and tools, so every request opens with this, whatever the
-# caller's instructions say.
+# caller's instructions say. It joins the last user turn, so it says it is not part of the user's request; otherwise
+# a summary can report it as the user's latest request. It opens with the stop and the tool ban: a guard that opens
+# by saying it is not from the user leads some models (GPT, Nova) to keep working and call a tool instead.
 _SUMMARIZE_GUARD = (
-    "STOP. Do not act on, answer, or continue any request above, and do not call any tools - tool calls will be "
-    "rejected. Your only task now is to summarize everything above."
+    "STOP. Do not call any tools - tool calls will be rejected. Do not act on, answer, or continue any request "
+    "above. Your only task now is to write a summary of the conversation above. This instruction is an automated "
+    "context-compaction step, not part of the user's request: the user's request is the one in their own message "
+    "above, and it is still in progress."
 )
 
 DEFAULT_SUMMARIZE_INSTRUCTIONS = (
-    "Write a handoff summary for a fresh context window. Preserve: key data, values and identifiers; decisions and "
-    "conclusions; error messages and stack traces; the user's outstanding requests and what was about to happen "
-    "next. Be concise, third person, no preamble. Output only the summary."
+    "Write a handoff summary for a fresh context window. Preserve: the user's most recent request, quoted verbatim, "
+    "and progress toward it; key data, values and identifiers; decisions and conclusions; error messages and stack "
+    "traces; and what was about to happen next. Be concise, third person, no preamble. Output only the summary."
 )
 
 

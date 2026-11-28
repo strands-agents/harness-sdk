@@ -1387,7 +1387,12 @@ def test_restore_after_redacting_with_trailing_stored_message_returns_redacted_u
     restored = Agent(agent_id="a", model=model, callback_handler=None, session_manager=sm2)
 
     assert restored.messages == [
-        {"role": "user", "content": [{"text": "BLOCKED!"}], "tracking_id": ANY},
+        {
+            "role": "user",
+            "content": [{"text": "BLOCKED!"}],
+            "metadata": {"custom": {"turn_opener": True}},
+            "tracking_id": ANY,
+        },
         context_message,
         {
             "role": "assistant",

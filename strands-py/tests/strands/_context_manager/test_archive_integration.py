@@ -182,7 +182,7 @@ class TestDropWithArchive:
     @pytest.mark.asyncio
     async def test_marks_removed_messages_with_a_placeholder_that_retrieves_them(self, archive):
         first = _text_message("assistant", "first answer", "m1")
-        second = _text_message("user", "second question", "m2")
+        second = make_tool_result_message("second question", "t1")
         messages = [_text_message("user", "start", "m0"), first, second, _text_message("assistant", "final", "m3")]
         await _archive_all(archive, messages)
         strategy = Offload.drop("*").when(context_utilization="50%")
@@ -200,6 +200,7 @@ class TestDropWithArchive:
             {"text": "\n---\n[assistant]"},
             {"text": "first answer"},
             {"text": "\n---\n[user]"},
+            {"text": "[tool result]"},
             {"text": "second question"},
         ]
         searched = await _retrieve(archive, reference, pattern="second")
@@ -210,7 +211,7 @@ class TestDropWithArchive:
         messages = [
             make_tool_result_message("a", "t0"),
             Message(role="assistant", content=[ContentBlock(text="mid")]),
-            Message(role="user", content=[ContentBlock(text="next")]),
+            make_tool_result_message("next", "t1"),
             Message(role="assistant", content=[ContentBlock(text="final")]),
         ]
 
@@ -349,7 +350,8 @@ class TestOneReferencePerPlaceholder:
             .apply(make_context(messages, archive=archive, utilization=0.9))
         )
 
-        assert _marker_of(messages) == offload_placeholder("drop", "[Dropped: earlier messages, ~6 tokens]", None, 6)
+        # q4 opens the current turn, so it stays.
+        assert _marker_of(messages) == offload_placeholder("drop", "[Dropped: earlier messages, ~5 tokens]", None, 5)
 
 
 class TestBinaryContentArchiving:

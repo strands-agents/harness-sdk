@@ -152,7 +152,7 @@ Offload.summarize("*").when(
 | Model | `model` | `agent.model` |
 | Summarization instructions | `system_prompt` | Built-in |
 
-A batched summary resends the conversation with the agent's system prompt and tools, followed by the summarization instructions. When it runs on the agent's model, it can reuse the agent's prompt cache. If the summary leaves out messages it keeps, such as a pinned message or one under the `threshold`, it sends only the first message and the messages it replaces. Custom instructions replace the default guidance, but the client-side request always tells the model not to act on the conversation or call tools.
+A batched summary resends the conversation as the agent sent it, up to the last message it replaces, with the agent's system prompt and tools, followed by the summarization instructions. It does so when the messages it replaces run without a gap from right after the first message, or from right after the user message that opened the current turn. That user message is kept rather than summarized, and it stays in the request whether the replaced messages surround it or start right after it. When the summary runs on the agent's model, it can reuse the agent's prompt cache. Otherwise, such as when the summary leaves out a pinned message or one under the `threshold`, it sends only the first message and the messages it replaces. Custom instructions replace the default guidance, but the client-side request always tells the model not to act on the conversation or call tools.
 
 </Tab>
 <Tab label="TypeScript">
