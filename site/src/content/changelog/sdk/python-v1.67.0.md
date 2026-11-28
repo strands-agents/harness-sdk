@@ -1,0 +1,24 @@
+---
+sdk: sdk
+language: python
+version: "1.67.0"
+tag: python/v1.67.0
+date: 2026-11-25
+releaseUrl: https://github.com/strands-agents/harness-sdk/releases/tag/python/v1.67.0
+packageUrl: https://pypi.org/project/strands-agents/1.67.0/
+entries:
+  - { type: feat, breaking: false, scope: context, areas: [context], title: "summarize with the agent's model instead of aux_model", pr: 6412, prUrl: "https://github.com/strands-agents/harness-sdk/pull/6412", commit: "8bc56c4", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/8bc56c4", author: jimbrub }
+  - { type: other, breaking: false, scope: null, areas: [community], title: "bump astral-sh/setup-uv from 10.0.1 to 10.4.0", pr: 6473, prUrl: "https://github.com/strands-agents/harness-sdk/pull/6473", commit: "0ddcc98", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/0ddcc98", author: "dependabot[bot]" }
+  - { type: fix, breaking: false, scope: litellm, areas: [model], title: "place cache points through the litellm provider and stop sending rejected prompt_cache_key", pr: 6397, prUrl: "https://github.com/strands-agents/harness-sdk/pull/6397", commit: "d8e361e", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/d8e361e", author: jimbrub }
+  - { type: feat, breaking: false, scope: cost, areas: [hooks, model, catalog], title: "per-model usage and a plugin that streams cost estimates (python)", pr: 6399, prUrl: "https://github.com/strands-agents/harness-sdk/pull/6399", commit: "fd1109a", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/fd1109a", author: strandly-the-agent }
+  - { type: fix, breaking: false, scope: model-info, areas: [model], title: "resolve OpenAI dated snapshot ids to their model", pr: 6497, prUrl: "https://github.com/strands-agents/harness-sdk/pull/6497", commit: "fe877e2", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/fe877e2", author: JackYPCOnline }
+  - { type: feat, breaking: false, scope: context, areas: [context, devx], title: "accept float shares like 0.7 for context_utilization (python)", pr: 6498, prUrl: "https://github.com/strands-agents/harness-sdk/pull/6498", commit: "1e7a450", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/1e7a450", author: liramon2 }
+  - { type: fix, breaking: false, scope: context, areas: [context, middleware], title: "replay the summary with the tools the agent's last call sent (python)", pr: 6502, prUrl: "https://github.com/strands-agents/harness-sdk/pull/6502", commit: "4a7f065", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/4a7f065", author: lizradway }
+  - { type: feat, breaking: false, scope: site, areas: [], title: "click to zoom docs images", pr: 6529, prUrl: "https://github.com/strands-agents/harness-sdk/pull/6529", commit: "199ff4c", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/199ff4c", author: zastrowm }
+  - { type: fix, breaking: false, scope: skills, areas: [skills], title: "load a SKILL.md that starts with a UTF-8 BOM", pr: 6452, prUrl: "https://github.com/strands-agents/harness-sdk/pull/6452", commit: "6f61c2c", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/6f61c2c", author: nurlanmnn }
+  - { type: feat, breaking: false, scope: telemetry, areas: [otel], title: "opt in to token usage on model spans only (Python and TypeScript)", pr: 6539, prUrl: "https://github.com/strands-agents/harness-sdk/pull/6539", commit: "247d52e", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/247d52e", author: JackYPCOnline }
+  - { type: feat, breaking: true, scope: context-manager, areas: [context], title: "graduate out of experimental and rename stash to archive (python)", pr: 6509, prUrl: "https://github.com/strands-agents/harness-sdk/pull/6509", commit: "f055982", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/f055982", author: lizradway }
+  - { type: fix, breaking: false, scope: plugins, areas: [devx, hooks], title: "type-check @hook methods and allow mypy 2.4 (python)", pr: 6543, prUrl: "https://github.com/strands-agents/harness-sdk/pull/6543", commit: "0f43d1d", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/0f43d1d", author: pgrayy }
+  - { type: feat, breaking: false, scope: site, areas: [], title: "centred docs layout with automatically wider tables and images", pr: 6439, prUrl: "https://github.com/strands-agents/harness-sdk/pull/6439", commit: "887a14c", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/887a14c", author: zastrowm }
+  - { type: fix, breaking: false, scope: docs, areas: [], title: "fetch upstream content from main", pr: 6485, prUrl: "https://github.com/strands-agents/harness-sdk/pull/6485", commit: "acad9d7", commitUrl: "https://github.com/strands-agents/harness-sdk/commit/acad9d7", author: tmoreton }
+---
