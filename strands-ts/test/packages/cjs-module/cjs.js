@@ -29,6 +29,7 @@ async function main() {
   const { OpenAIModel } = await import('@strands-agents/sdk/models/openai')
   const { AnthropicModel } = await import('@strands-agents/sdk/models/anthropic')
   const { GoogleModel } = await import('@strands-agents/sdk/models/google')
+  const { SageMakerModel } = await import('@strands-agents/sdk/models/sagemaker')
   const { SageMakerDecisionModel } = await import('@strands-agents/sdk/decisions/sagemaker')
   const { HttpDecisionModel } = await import('@strands-agents/sdk/decisions/http')
 
@@ -123,6 +124,7 @@ async function main() {
   void OpenAIModel
   void AnthropicModel
   void GoogleModel
+  void SageMakerModel
   void SageMakerDecisionModel
   void HttpDecisionModel
 }

@@ -40,6 +40,10 @@
       "types": "./dist/src/models/google/index.d.ts",
       "default": "./dist/src/models/google/index.js"
     },
+    "./models/sagemaker": {
+      "types": "./dist/src/models/sagemaker/index.d.ts",
+      "default": "./dist/src/models/sagemaker/index.js"
+    },
     "./decisions/sagemaker": {
       "types": "./dist/src/decisions/sagemaker.d.ts",
       "default": "./dist/src/decisions/sagemaker.js"
