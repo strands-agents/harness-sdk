@@ -2152,6 +2152,37 @@ describe('BedrockModel', () => {
         warnSpy.mockRestore()
       })
 
+      it('scopes drop_block latch to modelState so other conversations are unaffected', async () => {
+        const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+        const emptyStream = () => ({ stream: (async function* (): AsyncGenerator<unknown> {})() })
+        const mockSend = vi
+          .fn()
+          .mockRejectedValueOnce(bindingError)
+          .mockImplementation(() => Promise.resolve(emptyStream()))
+        mockBedrockClientImplementation({ send: mockSend })
+        const provider = new BedrockModel({ modelId: 'm1', stream: true })
+        const { StateStore } = await import('../../state-store.js')
+        const stateA = new StateStore()
+        const stateB = new StateStore()
+
+        await collectIterator(provider.stream(messages, { modelState: stateA }))
+        await collectIterator(provider.stream(messages, { modelState: stateA }))
+        await collectIterator(provider.stream(messages, { modelState: stateB }))
+
+        const expectedLatched = {
+          thinking: { type: 'adaptive', block_binding: { prefix_mismatch_behavior: 'drop_block' } },
+          anthropic_beta: ['thinking-binding-controls-2026-08-01'],
+        }
+        const fields = sentFields(ConverseStreamCommand)
+        expect(fields[0]).toBeUndefined()
+        expect(fields[1]).toStrictEqual(expectedLatched)
+        expect(fields[2]).toStrictEqual(expectedLatched)
+        expect(fields[3]).toBeUndefined()
+        expect(stateA.get('dropStaleThinkingModelId')).toBe('m1')
+        expect(stateB.get('dropStaleThinkingModelId')).toBeUndefined()
+        warnSpy.mockRestore()
+      })
+
       it.each([
         {
           name: 'a caller-set block_binding',

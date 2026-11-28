@@ -1483,6 +1483,32 @@ async def test_stream_retries_with_drop_block_on_thinking_binding_error(
     assert converse_method.call_args.kwargs["additionalModelRequestFields"] == exp_fields[1]
 
 
+@pytest.mark.asyncio
+async def test_stream_drop_block_latch_is_scoped_to_model_state(bedrock_client, alist, messages):
+    converse_method = bedrock_client.converse_stream
+    converse_method.side_effect = [
+        _thinking_binding_error("ConverseStream"),
+        _converse_response(True),
+        _converse_response(True),
+        _converse_response(True),
+    ]
+    model = BedrockModel(model_id="m1", streaming=True)
+    state_a = {}
+    state_b = {}
+
+    await alist(model.stream(messages, model_state=state_a))
+    await alist(model.stream(messages, model_state=state_a))
+    await alist(model.stream(messages, model_state=state_b))
+
+    exp_latched = {"thinking": DROP_BLOCK_THINKING, "anthropic_beta": ["thinking-binding-controls-2026-08-01"]}
+    assert converse_method.call_args_list[0].kwargs.get("additionalModelRequestFields") is None
+    assert converse_method.call_args_list[1].kwargs.get("additionalModelRequestFields") == exp_latched
+    assert converse_method.call_args_list[2].kwargs.get("additionalModelRequestFields") == exp_latched
+    assert converse_method.call_args_list[3].kwargs.get("additionalModelRequestFields") is None
+    assert state_a["drop_stale_thinking_model_id"] == "m1"
+    assert "drop_stale_thinking_model_id" not in state_b
+
+
 @pytest.mark.parametrize("streaming", [True, False])
 @pytest.mark.asyncio
 async def test_stream_retries_with_drop_block_without_thinking_config(

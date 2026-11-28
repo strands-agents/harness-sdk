@@ -1329,6 +1329,32 @@ async def test_stream_retries_with_drop_block_on_thinking_binding_error(anthropi
 
 
 @pytest.mark.asyncio
+async def test_stream_drop_block_latch_is_scoped_to_model_state(anthropic_client, alist, messages):
+    anthropic_client.messages.stream.side_effect = [
+        _thinking_binding_error(),
+        _message_start_stream(),
+        _message_start_stream(),
+        _message_start_stream(),
+    ]
+    model = AnthropicModel(model_id="m1", max_tokens=1, params={"thinking": {"type": "adaptive"}})
+    state_a = {}
+    state_b = {}
+
+    await alist(model.stream(messages, model_state=state_a))
+    await alist(model.stream(messages, model_state=state_a))
+    await alist(model.stream(messages, model_state=state_b))
+
+    exp_thinking = {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}}
+    assert anthropic_client.messages.stream.call_args_list[0].kwargs["thinking"] == {"type": "adaptive"}
+    assert anthropic_client.messages.stream.call_args_list[1].kwargs["thinking"] == exp_thinking
+    assert anthropic_client.messages.stream.call_args_list[2].kwargs["thinking"] == exp_thinking
+    assert anthropic_client.messages.stream.call_args_list[3].kwargs["thinking"] == {"type": "adaptive"}
+    assert "extra_headers" not in anthropic_client.messages.stream.call_args_list[3].kwargs
+    assert state_a["drop_stale_thinking_model_id"] == "m1"
+    assert "drop_stale_thinking_model_id" not in state_b
+
+
+@pytest.mark.asyncio
 async def test_stream_retries_with_drop_block_without_thinking_config(anthropic_client, alist, messages, tool_spec):
     anthropic_client.messages.stream.side_effect = [
         _thinking_binding_error(),

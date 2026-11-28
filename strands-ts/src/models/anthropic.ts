@@ -501,7 +501,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         ...(request.tool_choice && { tool_choice: request.tool_choice }),
       }
 
-      const requestOptions = this._buildRequestOptions(request, this._compactionBetas(messages))
+      const requestOptions = this._buildRequestOptions(request, this._compactionBetas(messages), options?.modelState)
       const response = requestOptions ? await countTokens(params, requestOptions) : await countTokens(params)
 
       logger.debug(`total_tokens=<${response.input_tokens}> | native token count`)
@@ -542,7 +542,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       )
       thinking = request.thinking
       toolForced = isToolForced(request)
-      const requestOptions = this._buildRequestOptions(request, this._compactionBetas(messages))
+      const requestOptions = this._buildRequestOptions(request, this._compactionBetas(messages), options?.modelState)
       const usage = createEmptyUsage()
 
       while (true) {
@@ -723,12 +723,19 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
         isThinkingBindingError(unknownError) &&
         thinkingWithDropBlock(thinking, toolForced)
       ) {
-        // Stale blocks stay in history, so drop_block stays on for every later request to this model.
+        // Stale blocks stay in history, so drop_block stays on for every later request in this conversation.
         logger.warn(
           `model_id=<${this._config.modelId}> | history edit invalidated replayed thinking blocks, retrying with drop_block`
         )
-        const previous = this._dropStaleThinkingModelId
-        this._dropStaleThinkingModelId = this._config.modelId
+        const modelState = options?.modelState
+        const previous = modelState
+          ? (modelState.get('dropStaleThinkingModelId') as string | undefined)
+          : this._dropStaleThinkingModelId
+        if (modelState) {
+          modelState.set('dropStaleThinkingModelId', this._config.modelId)
+        } else {
+          this._dropStaleThinkingModelId = this._config.modelId
+        }
         let yielded = false
         try {
           for await (const event of this.stream(messages, options)) {
@@ -737,7 +744,14 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
           }
         } catch (error) {
           // A rejected retry must not leave drop_block on for later requests.
-          if (!yielded) this._dropStaleThinkingModelId = previous
+          if (!yielded) {
+            if (modelState) {
+              if (previous === undefined) modelState.delete('dropStaleThinkingModelId')
+              else modelState.set('dropStaleThinkingModelId', previous)
+            } else {
+              this._dropStaleThinkingModelId = previous
+            }
+          }
           throw error
         }
         return
@@ -880,11 +894,12 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
 
   private _buildRequestOptions(
     request: Anthropic.MessageStreamParams,
-    extra: string[] = []
+    extra: string[] = [],
+    modelState?: StreamOptions['modelState']
   ): Anthropic.RequestOptions | undefined {
     const required = [
       ...extra,
-      ...(this._dropsStaleThinking() ? [THINKING_BINDING_BETA] : []),
+      ...(this._dropsStaleThinking(modelState) ? [THINKING_BINDING_BETA] : []),
       ...(request.messages.some((message) => 'clear_at' in message) ? [TURN_SCOPED_SYSTEM_BETA] : []),
     ]
     let betas = this._config.betas ?? []
@@ -916,8 +931,11 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
   }
 
   /** Whether a binding error already turned drop_block on for the configured model. */
-  private _dropsStaleThinking(): boolean {
-    return this._dropStaleThinkingModelId === this._config.modelId
+  private _dropsStaleThinking(modelState?: StreamOptions['modelState']): boolean {
+    const latchedModelId = modelState
+      ? (modelState.get('dropStaleThinkingModelId') as string | undefined)
+      : this._dropStaleThinkingModelId
+    return latchedModelId === this._config.modelId
   }
 
   /** Resolves the `anthropic-version` the built client sends, and where it comes from for error messages. */
@@ -1131,7 +1149,7 @@ export class AnthropicModel extends Model<AnthropicModelConfig> {
       body.anthropic_version ??= BEDROCK_INVOKE_MODEL_API_VERSION
     }
     this._rejectRemovedSamplingParams(request)
-    const dropBlockThinking = this._dropsStaleThinking()
+    const dropBlockThinking = this._dropsStaleThinking(options?.modelState)
       ? thinkingWithDropBlock(request.thinking, isToolForced(request))
       : undefined
     if (dropBlockThinking) request.thinking = dropBlockThinking
