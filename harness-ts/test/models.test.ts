@@ -226,23 +226,28 @@ describe('resolveModel', () => {
     )
   })
 
-  it.each(['openai.gpt-6-astra', 'global.openai.gpt-6-astra', 'us.openai.gpt-6-astra', 'us.openai.gpt-6.1-sol'])(
-    'resolves Astra and 6.1 Sol effort without none for %s',
-    async (modelId) => {
-      for (const [thinking, effort] of [
-        ['auto', 'low'],
-        ['low', 'low'],
-        ['max', 'max'],
-      ] as const) {
-        const model = await resolve(`bedrock/${modelId}`, thinking)
-        expect(model.getConfig().additionalRequestFields).toEqual({ reasoning: { effort } })
-      }
-      expect((await resolve(`bedrock/${modelId}`, 'off')).getConfig().additionalRequestFields).toBeUndefined()
-      await expect(resolve(`bedrock/${modelId}`, 'minimal')).rejects.toThrow(
-        "Supported levels: low, medium, high, xhigh, max (or 'auto', 'off')."
-      )
+  it.each([
+    'openai.gpt-6-astra',
+    'global.openai.gpt-6-astra',
+    'us.openai.gpt-6-astra',
+    'us.openai.gpt-6.1-sol',
+    // Bedrock Converse rejects effort 'none' for GPT-6.2 Astra and Sol (#6259).
+    'us.openai.gpt-6.2-astra',
+    'global.openai.gpt-6.2-sol',
+  ])('resolves Bedrock GPT effort without none for %s', async (modelId) => {
+    for (const [thinking, effort] of [
+      ['auto', 'low'],
+      ['low', 'low'],
+      ['max', 'max'],
+    ] as const) {
+      const model = await resolve(`bedrock/${modelId}`, thinking)
+      expect(model.getConfig().additionalRequestFields).toEqual({ reasoning: { effort } })
     }
-  )
+    expect((await resolve(`bedrock/${modelId}`, 'off')).getConfig().additionalRequestFields).toBeUndefined()
+    await expect(resolve(`bedrock/${modelId}`, 'minimal')).rejects.toThrow(
+      "Supported levels: low, medium, high, xhigh, max (or 'auto', 'off')."
+    )
+  })
 
   // https://github.com/strands-agents/harness-sdk/issues/5191
   it.each(['openai.gpt-5.4', 'us.openai.gpt-5.4', 'openai.gpt-5.5', 'us.openai.gpt-5.5', 'global.openai.gpt-5.5'])(

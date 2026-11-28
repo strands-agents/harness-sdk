@@ -373,9 +373,18 @@ def test_openai_on_bedrock_maps_effort_to_reasoning_effort():
 
 
 @pytest.mark.parametrize(
-    "model_id", ["openai.gpt-6-astra", "global.openai.gpt-6-astra", "us.openai.gpt-6-astra", "us.openai.gpt-6.1-sol"]
+    "model_id",
+    [
+        "openai.gpt-6-astra",
+        "global.openai.gpt-6-astra",
+        "us.openai.gpt-6-astra",
+        "us.openai.gpt-6.1-sol",
+        # Bedrock Converse rejects effort "none" for GPT-6.2 Astra and Sol (#6259).
+        "us.openai.gpt-6.2-astra",
+        "global.openai.gpt-6.2-sol",
+    ],
 )
-def test_astra_and_6_1_sol_on_bedrock_resolve_effort_without_none(model_id):
+def test_bedrock_gpt_models_without_none_resolve_effort(model_id):
     for effort, level in [("auto", "low"), ("low", "low"), ("max", "max")]:
         model = resolve(f"bedrock/{model_id}", effort=effort)
         assert model.config["additional_request_fields"] == {"reasoning": {"effort": level}}

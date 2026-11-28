@@ -307,8 +307,11 @@ describe('AgentModelRuntime thinking controls', () => {
   it.each([
     ['openai.gpt-5.4', ['none', 'low', 'medium', 'high', 'xhigh']],
     ['us.openai.gpt-6.1-sol', ['low', 'medium', 'high', 'xhigh', 'max']],
+    // Bedrock Converse rejects effort 'none' for GPT-6.2 Astra and Sol (#6259).
+    ['us.openai.gpt-6.2-astra', ['low', 'medium', 'high', 'xhigh', 'max']],
+    ['global.openai.gpt-6.2-sol', ['low', 'medium', 'high', 'xhigh', 'max']],
     ['openai.gpt-daybreak-blue-5.6-sol', ['none', 'low', 'medium', 'high', 'xhigh', 'max']],
-  ])('offers GPT-5 line effort levels for %s', (modelId, levels) => {
+  ])('offers Bedrock GPT effort levels for %s', (modelId, levels) => {
     const runtime = runtimeFor(modelId, 'auto')
 
     expect(runtime.listEfforts().map((option) => option.id)).toEqual(levels)

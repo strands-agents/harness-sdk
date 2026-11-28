@@ -175,7 +175,7 @@ def _bedrock_levels(model_id: str) -> tuple[str, ...]:
         return _BEDROCK_NOVA_LEVELS
     if family.startswith(("openai.gpt-5.4", "openai.gpt-5.5")):
         return _BEDROCK_GPT_NO_MAX_LEVELS
-    if family.startswith(("openai.gpt-6-astra", "openai.gpt-6.1-sol")):
+    if family.startswith(("openai.gpt-6-astra", "openai.gpt-6.1-sol", "openai.gpt-6.2-astra", "openai.gpt-6.2-sol")):
         return _BEDROCK_GPT_NO_NONE_LEVELS
     if family.startswith(_BEDROCK_GPT_PREFIXES):
         return _BEDROCK_GPT_LEVELS
