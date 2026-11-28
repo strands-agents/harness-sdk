@@ -11,6 +11,7 @@ import { pathWithBase } from './util/links'
 import { navLinks, type NavLink } from './config/navbar'
 import { isNew, NEW_BADGE } from './util/new-badge'
 import { buildIntegrationsSidebar } from './util/integrations-sidebar'
+import { catalogTypePath, integrationPageType, isCatalogPath } from './util/catalog-routes'
 import { buildLastModMap, getGitPrefix } from './util/git-dates'
 import { isSampleGuidePath } from './util/sample-guides'
 
@@ -173,15 +174,30 @@ export const onRequest = defineRouteMiddleware(async (context) => {
   // "Add Your Integration" renders inside the /integrations catalog rail (its own
   // browse sidebar) rather than sidebar-less, so it reads as part of that section.
   if (currentSlug === 'docs/integrations/get-featured') {
-    starlightRoute.sidebar = applyCollapse(await buildIntegrationsSidebar(currentSlug))
+    starlightRoute.sidebar = applyCollapse(await buildIntegrationsSidebar('/docs/integrations/get-featured/'))
     starlightRoute.pagination = { prev: undefined, next: undefined }
     return
   }
 
-  // Integration pages hide the sidebar so they render at Starlight's sidebar-less width.
-  if (currentSlug === 'docs/integrations' || currentSlug.startsWith('docs/integrations/')) {
-    starlightRoute.hasSidebar = false
-    starlightRoute.sidebar = []
+  // The catalog pages (/integrations/ and each type's /docs/integrations/<slug>/)
+  // supply their own sidebar: a single group of type links. Keep that group
+  // intact (skipping the base-path filter that would otherwise unwrap a lone
+  // top-level group into headerless links) so it renders with a section header
+  // and indented items like the product rails. Checked before the integration
+  // docs below, which share the /docs/integrations/ prefix.
+  if (isCatalogPath(currentPath)) {
+    starlightRoute.sidebar = applyCollapse(sidebar)
+    starlightRoute.pagination = { prev: undefined, next: undefined }
+    return
+  }
+
+  // Integration docs pages open as a dialog over their type's catalog
+  // (overrides/PageFrame.astro): the rail is the catalog's, with the type
+  // current, and the dialog has no room for an "On this page" column.
+  const integrationType = integrationPageType(currentSlug)
+  if (integrationType) {
+    starlightRoute.sidebar = applyCollapse(await buildIntegrationsSidebar(catalogTypePath(integrationType)))
+    starlightRoute.toc = undefined
     starlightRoute.pagination = { prev: undefined, next: undefined }
     return
   }
@@ -197,16 +213,6 @@ export const onRequest = defineRouteMiddleware(async (context) => {
 
   // Generated sample guides supply their own language/category sidebar.
   if (isSampleGuidePath(currentPath)) return
-
-  // The /integrations/ catalog page supplies its own sidebar: a single group of
-  // type filters. Keep that group intact (skipping the base-path filter that
-  // would otherwise unwrap a lone top-level group into headerless links) so it
-  // renders with a section header and indented items like the product rails.
-  if (currentPath === pathWithBase('/integrations/')) {
-    starlightRoute.sidebar = applyCollapse(sidebar)
-    starlightRoute.pagination = { prev: undefined, next: undefined }
-    return
-  }
 
   if (currentSlug.startsWith('docs/api/python') || currentSlug.startsWith('docs/api/typescript')) {
     const docInfos = await loadDocInfos()

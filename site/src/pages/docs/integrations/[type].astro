@@ -1,0 +1,24 @@
+---
+/**
+ * One catalog page per integration type, at /docs/integrations/<slug>/ (e.g.
+ * /docs/integrations/storage/). The same catalog as /integrations/, filtered to
+ * the type by its path, so the sidebar marks the type current from the build.
+ * Only types with entries get a page, matching the sidebar's type links.
+ */
+import { getCollection } from 'astro:content'
+import CatalogPage from '../../../components/catalog/CatalogPage.astro'
+import { CATALOG_TYPES } from '../../../components/catalog/types'
+
+export async function getStaticPaths() {
+  const entries = await getCollection('catalog')
+  const used = new Set<string>(entries.map((e) => e.data.integrationType))
+  return CATALOG_TYPES.filter((t) => used.has(t.value)).map((t) => ({
+    params: { type: t.slug },
+    props: { type: t.value },
+  }))
+}
+
+const { type } = Astro.props
+---
+
+<CatalogPage type={type} />

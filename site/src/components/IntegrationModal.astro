@@ -1,0 +1,56 @@
+---
+/**
+ * The dialog an integration's docs open in, over a catalog page. PageFrame
+ * renders it on every catalog page (empty) and on every integration docs page
+ * (holding the page's main column, with the type's catalog behind it, see
+ * catalog/CatalogBackdrop.astro).
+ *
+ * - Docs page loaded directly: the dialog is in the HTML already open, so the
+ *   first paint is the docs over the catalog. Closing hides it and puts the
+ *   catalog's URL in the address bar: the page behind already is that catalog,
+ *   so nothing loads.
+ * - Card clicked on a catalog page: the docs page is fetched and its dialog
+ *   content moved into this one, with a history entry. The catalog behind keeps
+ *   its search and scroll. Closing goes back.
+ *
+ * Without JS the dialog shows open (not modal) and the close button is a link
+ * to the catalog; card links navigate to the docs page.
+ */
+import '../styles/integration-modal.css'
+
+interface Props {
+  /** Server-render the dialog open (an integration docs page). */
+  open?: boolean
+  /** Where the close button goes without JS: the catalog behind the dialog. */
+  closeHref: string
+}
+const { open = false, closeHref } = Astro.props
+---
+
+<dialog
+  class="integ-modal"
+  data-integ-modal
+  open={open}
+  aria-labelledby={open ? '_top' : undefined}
+  aria-label={open ? undefined : 'Integration documentation'}
+>
+  <div class="integ-modal-scroll" data-integ-scroll tabindex="-1">
+    <div class="integ-modal-bar">
+      <a class="integ-modal-close" data-integ-close href={closeHref} aria-label="Close" title="Close (Esc)">
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            fill="currentColor"
+            d="M18.3 5.7a1 1 0 0 0-1.4 0L12 10.6 7.1 5.7a1 1 0 0 0-1.4 1.4l4.9 4.9-4.9 4.9a1 1 0 1 0 1.4 1.4l4.9-4.9 4.9 4.9a1 1 0 0 0 1.4-1.4L13.4 12l4.9-4.9a1 1 0 0 0 0-1.4z"
+          ></path>
+        </svg>
+      </a>
+    </div>
+    <div data-integ-content><slot /></div>
+  </div>
+</dialog>
+
+<script>
+  import { initIntegrationModal } from '../util/integration-modal-dialog'
+
+  initIntegrationModal(window)
+</script>

@@ -226,8 +226,7 @@ html[data-embed] .page > header.header,
 html[data-embed] .page > nav.sidebar,
 html[data-embed] .right-sidebar-container,
 html[data-embed] .main-pane main > .content-panel footer,
-html[data-embed] .site-footer,
-html[data-embed] .integrations-back {
+html[data-embed] .site-footer {
 	display: none;
 }
 

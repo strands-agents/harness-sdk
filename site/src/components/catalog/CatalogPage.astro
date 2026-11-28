@@ -1,0 +1,59 @@
+---
+/**
+ * A catalog page: /integrations/ (every type) or, with `type`, that type's own
+ * page (/docs/integrations/<slug>/, see util/catalog-routes.ts). The type lives
+ * in the path rather than ?type= so the build marks the right sidebar link
+ * current and nothing changes after the first paint. An integration's docs
+ * open in a dialog over the page (IntegrationModal.astro, rendered by
+ * overrides/PageFrame.astro).
+ */
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro'
+import CatalogBody from './CatalogBody.astro'
+import { CATALOG_TYPES } from './types'
+import { loadCatalogCards } from '../../util/catalog-cards'
+import { pathWithBase } from '../../util/links'
+import { integrationsSchema } from '../../util/structured-data'
+import { CATALOG_FEED_PATH } from '../../util/catalog-feed'
+import { catalogTypePaths, legacyCatalogRedirect } from '../../util/catalog-routes'
+import { buildCatalogSidebarItems } from '../../util/integrations-sidebar'
+
+interface Props {
+  /** Catalog type value (e.g. `storage`) for a type page; omit for every type. */
+  type?: string
+}
+const { type } = Astro.props
+
+const cards = await loadCatalogCards()
+const shown = type ? cards.filter((c) => c.integrationType === type) : cards
+
+const siteUrl = Astro.site?.origin || 'https://strandsagents.com'
+Astro.locals.structuredData = [integrationsSchema(shown, siteUrl + Astro.url.pathname, siteUrl)]
+
+const typeLabel = type ? CATALOG_TYPES.find((t) => t.value === type)?.labelPlural : undefined
+if (type && !typeLabel) throw new Error(`Unknown catalog type: ${type}`)
+const title = typeLabel ?? 'Integrations'
+const description = typeLabel
+  ? `${typeLabel} integrations for Strands Agents, built by the Strands team and community.`
+  : 'Community-built tools, model providers, plugins, and integrations for Strands Agents.'
+
+// Old links (/integrations/?type=storage, ?entry=<id> from the old docs drawer)
+// move to their new page before anything paints. This page keeps parsing until
+// the new one arrives, so its body is hidden meanwhile.
+const typePaths = Object.fromEntries(Object.entries(catalogTypePaths()).map(([t, p]) => [t, pathWithBase(p)]))
+const entryPaths = Object.fromEntries(cards.filter((c) => !c.external).map((c) => [c.id, pathWithBase(c.href)]))
+const head = [
+  { tag: 'link' as const, attrs: { rel: 'alternate', type: 'application/json', href: pathWithBase(CATALOG_FEED_PATH) } },
+  { tag: 'style' as const, content: 'html.cat-redirecting body{visibility:hidden}' },
+  {
+    tag: 'script' as const,
+    content: `;(function(){var to=(${legacyCatalogRedirect.toString()})(location.search,${JSON.stringify(typePaths)},${JSON.stringify(entryPaths)});if(to){document.documentElement.classList.add('cat-redirecting');location.replace(to+location.hash)}})()`,
+  },
+]
+
+// Each type page repeats a slice of /integrations/, so only that page is in the site search.
+const frontmatter = { title, description, tableOfContents: false, pagefind: !type, head }
+---
+
+<StarlightPage frontmatter={frontmatter} sidebar={buildCatalogSidebarItems(cards)}>
+  <CatalogBody type={type} />
+</StarlightPage>

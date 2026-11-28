@@ -2,7 +2,6 @@
 import '@astrojs/starlight/style/markdown.css';
 import ImageZoom from 'starlight-image-zoom/components/ImageZoom.astro';
 import CommunityContributionAside from '../CommunityContributionAside.astro';
-import IntegrationsBackLink from '../IntegrationsBackLink.astro';
 import LanguageSupportAside from '../LanguageSupportAside.astro';
 import ExperimentalAside from '../ExperimentalAside.astro';
 import ExternalDocsPreviewAside from '../ExternalDocsPreviewAside.astro';
@@ -10,12 +9,6 @@ import PageTags from '../PageTags.astro';
 
 const { starlightRoute } = Astro.locals;
 const { languages, community, experimental, externalDocs } = starlightRoute.entry.data;
-// Integration doc pages render without the docs sidebar (see route-middleware.ts);
-// the back strip is their route to the /integrations catalog. get-featured is
-// excepted — it renders inside the catalog rail, so the sidebar is its way back.
-const isIntegrationsPage =
-  starlightRoute.id !== 'docs/integrations/get-featured' &&
-  (starlightRoute.id === 'docs/integrations' || starlightRoute.id.startsWith('docs/integrations/'));
 
 const ALL_SDK_LANGUAGES = ['python', 'typescript']
 const langArray = languages
@@ -27,7 +20,6 @@ const coversAllLanguages = ALL_SDK_LANGUAGES.every((l) => langArray.includes(l))
 {/* starlight-image-zoom only installs its own MarkdownContent when none is set, so render its dialog here. */}
 <ImageZoom />
 <div class="sl-markdown-content">
-  {isIntegrationsPage && <IntegrationsBackLink />}
   {experimental && <ExperimentalAside />}
   {
     externalDocs?.status === 'preview' && (

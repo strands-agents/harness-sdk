@@ -1,0 +1,276 @@
+---
+/**
+ * The integrations catalog itself: the searchable, filterable card grid.
+ * Entries come from the `catalog` content collection; popularity stats from
+ * the bot-maintained src/data/catalog-stats.json. Everything is rendered
+ * statically; the script only toggles card visibility.
+ *
+ * Rendered by CatalogPage (/integrations/ and each type's page) and, behind
+ * the dialog, by every integration docs page (CatalogBackdrop). With `type`
+ * only that type's cards are rendered.
+ */
+import CatalogCard from './CatalogCard.astro'
+import CatalogFacets from './CatalogFacets.astro'
+import { CATALOG_TYPES, MAINTAINED_BY_TIERS } from './types'
+import { loadCatalogCards } from '../../util/catalog-cards'
+import { pathWithBase } from '../../util/links'
+import { CATALOG_PATH, catalogTypePath, catalogTypePaths } from '../../util/catalog-routes'
+import '../../styles/catalog.css'
+
+interface Props {
+  /** Catalog type value (e.g. `storage`) for a type's catalog; omit for every type. */
+  type?: string
+}
+const { type } = Astro.props
+
+const cards = await loadCatalogCards()
+const shown = type ? cards.filter((c) => c.integrationType === type) : cards
+const heading = type ? CATALOG_TYPES.find((t) => t.value === type)?.labelPlural : 'Integrations'
+if (!heading) throw new Error(`Unknown catalog type: ${type}`)
+const ownPath = pathWithBase(type ? catalogTypePath(type) : CATALOG_PATH)
+const typePaths = Object.fromEntries(Object.entries(catalogTypePaths()).map(([t, p]) => [t, pathWithBase(p)]))
+
+// The SDK facet renders only when the catalog actually has evals entries;
+// the Verified filter only when at least one entry is actually verified.
+// Facets come from every card, not just this type's, so a type page offers the
+// same filters as /integrations/ and keeps every filter in an old link.
+const showSdkFacet = cards.some((c) => c.sdk === 'evals')
+const hasVerified = cards.some((c) => c.badges.includes('verified'))
+const hasFeatured = cards.some((c) => c.featured)
+const hasNew = cards.some((c) => c.badges.includes('new'))
+
+// Counts span both SDKs while filtering is per-SDK; with no evals entries the
+// two coincide, so if/when evals entries land these need client-side recompute.
+const typeFacets = CATALOG_TYPES.map(({ value, labelPlural }) => ({
+  value,
+  label: labelPlural,
+  count: cards.filter((c) => c.integrationType === value).length,
+})).filter((t) => t.count > 0)
+
+const maintainedByFacets = MAINTAINED_BY_TIERS.map(({ value, label }) => ({
+  value,
+  label,
+  count: cards.filter((c) => c.maintainedBy === value).length,
+})).filter((t) => t.count > 0)
+---
+
+<div
+  class="cat-page"
+  data-cat-page-type={type}
+  data-cat-path={ownPath}
+  data-cat-heading={heading}
+  data-cat-type-paths={JSON.stringify(typePaths)}
+  data-cat-all-path={pathWithBase(CATALOG_PATH)}
+>
+  <div class="cat-head">
+    <p class="cat-subtitle">Tools, model providers, and integrations built by the Strands team and community.</p>
+    <div class="cat-head-actions">
+      <a class="cat-cta-btn" href={pathWithBase('/docs/integrations/get-featured/')}>Add your integration</a>
+      <p class="cat-note"><span data-cat-count>{shown.length}</span> integrations</p>
+    </div>
+  </div>
+
+  {/* The sidebar (type links + search) is hidden below 50rem; this bar stands in for it. */}
+  <div class="cat-mobile-filters" data-pagefind-ignore>
+    <input
+      type="search"
+      class="cat-mobile-search"
+      data-cat-search
+      placeholder="Search…"
+      aria-label="Search integrations"
+    />
+    <select class="cat-mobile-type" data-cat-type-select aria-label="Integration type" autocomplete="off">
+      <option value="">All types</option>
+      {typeFacets.map((t) => <option value={t.value}>{`${t.label} (${t.count})`}</option>)}
+    </select>
+  </div>
+
+  {/* Facets inline (no modal): the search input lives in the left sidebar (or
+      the mobile filter bar) and drives the same filter state document-wide. */}
+  <div class="cat-facets" data-pagefind-ignore>
+    <CatalogFacets
+      maintainedBy={maintainedByFacets}
+      showSdkFacet={showSdkFacet}
+      hasVerified={hasVerified}
+      hasFeatured={hasFeatured}
+      hasNew={hasNew}
+    />
+  </div>
+  <div class="cat-grid" data-cat-grid>
+    {shown.map((card) => <CatalogCard card={card} />)}
+    {/* Not a .cat-card: the filter script must never hide this tile. */}
+    <div class="cat-cta">
+      <h2 class="cat-cta-title">Add your integration</h2>
+      <p class="cat-cta-body">Built a tool, model provider, or plugin for Strands? List it here.</p>
+      <a class="cat-cta-btn" href={pathWithBase('/docs/integrations/get-featured/')}>Add your integration</a>
+    </div>
+  </div>
+
+  <p class="cat-empty" data-cat-empty hidden>No integrations match the current filters.</p>
+
+  <p class="cat-disclaimer">Community packages are maintained by their authors. Review them before production use. Questions? Ask in <a href="https://discord.gg/strands">Discord</a>.</p>
+</div>
+
+<script>
+  // Client-side faceted filtering over the statically-rendered cards. The
+  // matching + URL-state logic lives in util/catalog-filter (unit-tested);
+  // this script only reads the DOM and toggles [hidden].
+  import { matchesFilters, stateToQuery, queryToState, type CardFilterData } from '../../util/catalog-filter'
+  import { CATALOG_TYPES } from './types'
+
+  const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-cat-grid] .cat-card'))
+  // The left sidebar's search input, plus the mobile filter bar's stand-in.
+  const searchInputs = Array.from(document.querySelectorAll<HTMLInputElement>('[data-sidebar-search], [data-cat-search]'))
+  const typeSelect = document.querySelector<HTMLSelectElement>('[data-cat-type-select]')
+  const typeBtns = Array.from(document.querySelectorAll<HTMLElement>('[data-cat-type]'))
+  const badgeBtns = Array.from(document.querySelectorAll<HTMLElement>('[data-cat-badge]'))
+  const maintainedBtns = Array.from(document.querySelectorAll<HTMLElement>('[data-cat-maintained]'))
+  const sdkBtns = Array.from(document.querySelectorAll<HTMLElement>('[data-cat-sdk]'))
+  const langBtns = Array.from(document.querySelectorAll<HTMLElement>('[data-cat-lang]'))
+  const emptyEl = document.querySelector<HTMLElement>('[data-cat-empty]')
+  const countEl = document.querySelector<HTMLElement>('[data-cat-count]')
+
+  // A type's catalog (/docs/integrations/<slug>/) owns its type through the
+  // path; /integrations/ can still take several through ?type=a,b.
+  const pageEl = document.querySelector<HTMLElement>('.cat-page')
+  const pageType = pageEl?.dataset.catPageType || ''
+  // The catalog's own URL path. Behind an integration docs page the address bar
+  // shows the docs page instead, and the filters must not rewrite it.
+  const ownPath = pageEl?.dataset.catPath || location.pathname
+  const typePaths: Record<string, string> = JSON.parse(pageEl?.dataset.catTypePaths || '{}')
+
+  const state = queryToState(location.search)
+  if (pageType) state.types = new Set([pageType])
+  // A URL facet with no rendered control would show an empty grid with no
+  // visible way to reset it: ?sdk=evals with no SDK toggle, or a badge value
+  // whose button is hidden because no entry carries it.
+  if (sdkBtns.length === 0) state.sdk = 'agents'
+  const renderedBadges = new Set(badgeBtns.map((btn) => btn.dataset.catBadge))
+  for (const badge of state.badges) if (!renderedBadges.has(badge)) state.badges.delete(badge)
+  const renderedMaintained = new Set(maintainedBtns.map((btn) => btn.dataset.catMaintained))
+  for (const by of state.maintainedBy) if (!renderedMaintained.has(by)) state.maintainedBy.delete(by)
+  // Type filtering is driven by the left sidebar or mobile select (?type=), not chips,
+  // so validate against the known catalog types rather than rendered buttons.
+  const validTypes = new Set(CATALOG_TYPES.map((t) => t.value))
+  for (const t of state.types) if (!validTypes.has(t)) state.types.delete(t)
+
+  // Language is a catalog control (the All / Python / TypeScript segment), no
+  // longer tied to the header's site-wide language toggle. Drop any ?lang value
+  // without a rendered button so the URL can't select an option the user can't
+  // clear.
+  const renderedLangs = new Set(langBtns.map((btn) => btn.dataset.catLang).filter(Boolean))
+  for (const l of state.languages) if (!renderedLangs.has(l)) state.languages.delete(l)
+
+  function cardData(el: HTMLElement): CardFilterData {
+    return {
+      search: el.dataset.search || '',
+      type: el.dataset.type || '',
+      languages: (el.dataset.langs || '').split(' ').filter(Boolean),
+      badges: (el.dataset.badges || '').split(' ').filter(Boolean),
+      maintainedBy: el.dataset.maintained || '',
+      sdk: el.dataset.sdk || 'agents',
+    }
+  }
+
+  function apply() {
+    let visible = 0
+    for (const el of cards) {
+      const data = cardData(el)
+      const show = matchesFilters(data, state)
+      el.hidden = !show
+      if (show) visible++
+    }
+    if (emptyEl) emptyEl.hidden = visible > 0
+    if (countEl) countEl.textContent = String(visible)
+
+    // The sidebar's current link comes from the build (each type has its own
+    // page), so only the mobile select needs syncing.
+    if (typeSelect) typeSelect.value = state.types.size === 1 ? [...state.types][0] : ''
+
+    for (const btn of typeBtns) btn.setAttribute('aria-pressed', String(state.types.has(btn.dataset.catType || '')))
+    for (const btn of badgeBtns) btn.setAttribute('aria-pressed', String(state.badges.has(btn.dataset.catBadge || '')))
+    for (const btn of maintainedBtns)
+      btn.setAttribute('aria-pressed', String(state.maintainedBy.has(btn.dataset.catMaintained || '')))
+    for (const btn of sdkBtns) btn.setAttribute('aria-checked', String(state.sdk === btn.dataset.catSdk))
+    // The "All" button (empty value) is checked when no language is selected.
+    for (const btn of langBtns) {
+      const lang = btn.dataset.catLang || ''
+      const checked = lang ? state.languages.has(lang) : state.languages.size === 0
+      btn.setAttribute('aria-checked', String(checked))
+    }
+
+    if (location.pathname !== ownPath) return
+    const query = filterParams().toString()
+    history.replaceState(history.state, '', (query ? `?${query}` : location.pathname) + location.hash)
+  }
+
+  // The filters as query parameters, leaving out the type a type page's path
+  // already carries.
+  function filterParams(): URLSearchParams {
+    const params = new URLSearchParams(stateToQuery(state))
+    if (pageType) params.delete('type')
+    return params
+  }
+
+  function toggle(set: Set<string>, value: string) {
+    if (set.has(value)) set.delete(value)
+    else set.add(value)
+  }
+
+  for (const input of searchInputs) {
+    input.value = state.search
+    input.addEventListener('input', () => {
+      state.search = input.value
+      for (const other of searchInputs) if (other !== input) other.value = input.value
+      apply()
+    })
+  }
+
+  // Like the sidebar links: go to the type's page (or the catalog for "All
+  // types"), keeping the other filters.
+  typeSelect?.addEventListener('change', () => {
+    const params = filterParams()
+    params.delete('type')
+    const path = typePaths[typeSelect.value] || pageEl?.dataset.catAllPath || location.pathname
+    const query = params.toString()
+    location.assign(path + (query ? `?${query}` : ''))
+  })
+
+  for (const btn of typeBtns)
+    btn.addEventListener('click', () => {
+      toggle(state.types, btn.dataset.catType || '')
+      apply()
+    })
+  for (const btn of badgeBtns)
+    btn.addEventListener('click', () => {
+      toggle(state.badges, btn.dataset.catBadge || '')
+      apply()
+    })
+  for (const btn of maintainedBtns)
+    btn.addEventListener('click', () => {
+      toggle(state.maintainedBy, btn.dataset.catMaintained || '')
+      apply()
+    })
+  for (const btn of sdkBtns)
+    btn.addEventListener('click', () => {
+      state.sdk = btn.dataset.catSdk || 'agents'
+      apply()
+    })
+  // Single-select, radio semantics: picking a language replaces the set; "All"
+  // (empty value) clears it. Re-picking the active one keeps it selected.
+  for (const btn of langBtns)
+    btn.addEventListener('click', () => {
+      const lang = btn.dataset.catLang || ''
+      state.languages.clear()
+      if (lang) state.languages.add(lang)
+      apply()
+    })
+
+  apply()
+  // Back to a page the mobile select left: the back/forward cache restores the
+  // select as it was changed, so draw the controls from the state again.
+  window.addEventListener('pageshow', (e) => {
+    if (e.persisted) apply()
+  })
+
+</script>
