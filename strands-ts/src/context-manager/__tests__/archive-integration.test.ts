@@ -721,8 +721,18 @@ describe('Offload strategies with archive', () => {
         await hook({ agent: agentA, message: secretMsg })
       }
 
-      expect(await archiveA.takeSnapshot()).toHaveProperty('orch-crm-1_0')
+      const snapshotAAfterA = await archiveA.takeSnapshot()
+      expect(snapshotAAfterA).toHaveProperty('orch-crm-1_0')
       expect(await archiveB.takeSnapshot()).toStrictEqual({})
+
+      const secretMsgB = makeToolResultMessage('PII-OF-BOB ' + 'confidential '.repeat(200), 'orch-crm-2')
+      messagesB.push(secretMsgB)
+      for (const hook of hooksB) {
+        await hook({ agent: agentB, message: secretMsgB })
+      }
+
+      expect(await archiveB.takeSnapshot()).toHaveProperty('orch-crm-2_0')
+      expect(await archiveA.takeSnapshot()).toStrictEqual(snapshotAAfterA)
     })
 
     it('does not leak a previous agent’s archive into a subsequent apply() call with no archive', async () => {
