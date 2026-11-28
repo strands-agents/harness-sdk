@@ -201,6 +201,7 @@ await agent.invoke('Fetch https://strandsagents.com and save a one-paragraph sum
 | Web fetch | `webFetch`, `makeWebFetch` | Fetch a web page for the model to read. Requires the `turndown` package |
 | Notebook | `notebook`, `makeNotebook` | Keep persistent text notes |
 | Python REPL | `pythonRepl`, `makePythonRepl` | Run Python code |
+| Programmatic tool caller | `programmaticToolCaller`, `makeProgrammaticToolCaller` | Let the agent orchestrate its other tools with sandboxed Python code (Node.js only). Requires the `@pydantic/monty` package |
 | Sleep | `sleep`, `makeSleep` | Pause for a bounded, cancellable duration |
 | Handoff to user | `handoffToUser`, `makeHandoffToUser` | Pause the agent loop and ask the user for input |
 | Stop | `stop`, `makeStop` | End the agent loop when the task is done. Experimental: import from `@strands-agents/sdk/experimental/vended-tools/stop` |
