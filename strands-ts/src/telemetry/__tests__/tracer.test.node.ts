@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { Span, SpanAttributeValue } from '@opentelemetry/api'
-import { SpanStatusCode, trace, context } from '@opentelemetry/api'
+import { SpanStatusCode, SpanKind, trace, context } from '@opentelemetry/api'
 import { Tracer } from '../tracer.js'
 import {
   Message,
@@ -48,8 +48,14 @@ describe('Tracer', () => {
   })
 
   /** Get the [spanName, options] from the startSpan call for the span under test. */
-  function getStartSpanCall(): [string, { attributes: Record<string, SpanAttributeValue | undefined> }] {
-    return mockStartSpan.mock.calls[0] as [string, { attributes: Record<string, SpanAttributeValue | undefined> }]
+  function getStartSpanCall(): [
+    string,
+    { attributes: Record<string, SpanAttributeValue | undefined>; kind?: SpanKind },
+  ] {
+    return mockStartSpan.mock.calls[0] as [
+      string,
+      { attributes: Record<string, SpanAttributeValue | undefined>; kind?: SpanKind },
+    ]
   }
 
   describe('constructor', () => {
@@ -362,6 +368,17 @@ describe('Tracer', () => {
         'gen_ai.operation.name': 'chat',
         'gen_ai.request.model': 'claude-3',
       })
+    })
+
+    // Regression test for #6449: a chat span is a client call to a remote
+    // provider, so the GenAI conventions require SpanKind.CLIENT.
+    it('uses SpanKind.CLIENT for the model invocation span', () => {
+      const tracer = new Tracer()
+
+      tracer.startModelInvokeSpan({ messages: [textMessage('user', 'Hello')], modelId: 'claude-3' })
+
+      const [, options] = getStartSpanCall()
+      expect(options.kind).toBe(SpanKind.CLIENT)
     })
 
     it('adds message events to span', () => {

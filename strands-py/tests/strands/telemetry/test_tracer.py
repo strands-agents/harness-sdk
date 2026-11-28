@@ -220,7 +220,7 @@ def test_start_model_invoke_span(mock_tracer):
 
         mock_tracer.start_span.assert_called_once()
         assert mock_tracer.start_span.call_args[1]["name"] == "chat"
-        assert mock_tracer.start_span.call_args[1]["kind"] == SpanKind.INTERNAL
+        assert mock_tracer.start_span.call_args[1]["kind"] == SpanKind.CLIENT
         mock_span.set_attributes.assert_called_once_with(
             {
                 "gen_ai.operation.name": "chat",
@@ -341,7 +341,7 @@ def test_start_model_invoke_span_latest_conventions(mock_tracer, monkeypatch):
 
         mock_tracer.start_span.assert_called_once()
         assert mock_tracer.start_span.call_args[1]["name"] == "chat"
-        assert mock_tracer.start_span.call_args[1]["kind"] == SpanKind.INTERNAL
+        assert mock_tracer.start_span.call_args[1]["kind"] == SpanKind.CLIENT
 
         mock_span.set_attributes.assert_called_once_with(
             {
