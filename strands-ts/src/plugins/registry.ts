@@ -47,7 +47,7 @@ export class PluginRegistry {
 
     await plugin.initAgent(agent)
 
-    const tools = plugin.getTools?.() ?? []
+    const tools = plugin.getTools?.(agent) ?? []
     if (tools.length > 0) {
       agent.toolRegistry.add(tools)
     }

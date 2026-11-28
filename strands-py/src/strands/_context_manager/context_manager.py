@@ -9,6 +9,8 @@ import inspect
 import logging
 import sys
 import warnings
+import weakref
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from typing_extensions import deprecated
@@ -35,6 +37,7 @@ if TYPE_CHECKING:
     from ..agent.conversation_manager import ConversationManager
     from ..agent.invocation_context import InvocationContext
     from ..storage.storage import Storage
+    from ..types.agent import LocalAgent
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +61,16 @@ ContextManagerStrategy = Literal["auto", "agentic"]
 - ``"agentic"``: Experimental. Model-driven context management via injected tools, with a higher
   truncation threshold and summarization only on overflow.
 """
+
+
+@dataclass
+class _AgentState:
+    """Per-agent state held by a shared ContextManager."""
+
+    archive: Archive | None
+    archive_is_durable: bool
+    tools: list[Any] = field(default_factory=list)
+    backfill_done: bool = False
 
 
 class ContextManager(Plugin):
@@ -122,11 +135,33 @@ class ContextManager(Plugin):
             archive_obj.get("retrieval_tool", True) if archive_obj else True
         )
 
+        self._agent_state: weakref.WeakKeyDictionary[Any, _AgentState] = weakref.WeakKeyDictionary()
         self._archive: Archive | None = None
         self._archive_is_durable: bool = False
         self._backfill_done: bool = False
 
         super().__init__()
+
+    def archive_for(self, agent: LocalAgent) -> Archive | None:
+        """Return the L1 archive bound to ``agent``, or None if archive is disabled or ``agent`` is uninitialized."""
+        state = self._agent_state.get(agent)
+        if state is not None:
+            return state.archive
+        return None if self._agent_state else self._archive
+
+    def archive_is_durable_for(self, agent: LocalAgent) -> bool:
+        """Return whether ``agent``'s archive is backed by durable storage."""
+        state = self._agent_state.get(agent)
+        if state is not None:
+            return state.archive_is_durable
+        return False if self._agent_state else self._archive_is_durable
+
+    def tools_for(self, agent: LocalAgent) -> list[Any]:
+        """Return the tools registered by this context manager for ``agent``."""
+        state = self._agent_state.get(agent)
+        if state is not None:
+            return list(state.tools)
+        return [] if self._agent_state else list(self._tools)
 
     @property
     def archive(self) -> Archive | None:
@@ -274,19 +309,33 @@ class ContextManager(Plugin):
 
     def init_agent(self, agent: Agent) -> None:
         """Register strategy hooks for proactive compression and overflow recovery."""
+        archive: Archive | None = None
+        archive_is_durable = False
         if not self._archive_disabled:
             storage = self._archive_explicit_storage or getattr(agent, "storage", None) or InMemoryStorage()
-            self._archive_is_durable = getattr(storage, "_ephemeral", None) is not _EPHEMERAL
+            archive_is_durable = getattr(storage, "_ephemeral", None) is not _EPHEMERAL
             # Only explicit archive storage may be a shared root; agent.storage is shared with other subsystems.
-            self._archive = Archive(
+            archive = Archive(
                 storage,
                 agent.session_id,
                 agent.agent_id,
                 custom_archive_namespace=self._archive_explicit_storage is not None,
             )
 
-        if self._archive is not None:
-            archive = self._archive
+        tools: list[Any] = (
+            [_create_retrieval_tool(archive)] if archive is not None and self._enable_retrieval_tool else []
+        )
+        self._agent_state[agent] = _AgentState(
+            archive=archive,
+            archive_is_durable=archive_is_durable,
+            tools=tools,
+        )
+        self._archive = archive
+        self._archive_is_durable = archive_is_durable
+        self._backfill_done = False
+        self._tools = list(tools)
+
+        if archive is not None:
 
             async def _on_message_added(event: MessageAddedEvent) -> None:
                 messages = event.agent.messages
@@ -295,14 +344,10 @@ class ContextManager(Plugin):
 
             agent.hooks.add_callback(MessageAddedEvent, _on_message_added)
 
-        if self._archive is not None and self._enable_retrieval_tool:
-            retrieval_tool = _create_retrieval_tool(self._archive)
-            self._tools.append(retrieval_tool)  # type: ignore[arg-type]
-
         for strategy in self._strategies:
             init = getattr(strategy, "init", None)
             if init is not None:
-                _init_strategy(init, agent, self._archive)
+                _init_strategy(init, agent, archive)
 
         async def _on_before_model_call(event: BeforeModelCallEvent) -> None:
             await self._run_strategies(
@@ -342,12 +387,15 @@ class ContextManager(Plugin):
         Existing entries are kept: after a restore the archive holds the originals, while the
         matching messages on the agent may already be offloaded previews.
         """
-        if self._backfill_done or self._archive is None:
+        state = self._agent_state.get(agent)
+        if state is None or state.backfill_done or state.archive is None:
             return
-        self._backfill_done = True
+        state.backfill_done = True
+        if state.archive is self._archive:
+            self._backfill_done = True
         for index, message in enumerate(agent.messages):
             try:
-                await self._archive.store_message(
+                await state.archive.store_message(
                     message, _retrieval_calls_before(agent.messages, index), keep_existing=True
                 )
             except Exception:
@@ -378,7 +426,7 @@ class ContextManager(Plugin):
             agent=agent,
             utilization=agent.model.estimate_utilization(input_tokens),
             overflow=overflow,
-            archive=self._archive,
+            archive=self.archive_for(agent),
             invocation_context=_create_auxiliary_invocation_context(invocation_context),
         )
 

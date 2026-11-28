@@ -428,7 +428,7 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
             self._raw_storage = raw
             self._storage = _resolve_storage(raw)
         if agent.context_manager is not None:
-            self._agent_archive = agent.context_manager.archive
+            self._agent_archive = agent.context_manager.archive_for(agent)
         run_async(lambda: self._initialize_async(agent))
 
     def sync_agent(self, agent: LocalAgent, **kwargs: Any) -> None:
@@ -703,17 +703,20 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
         while the agent messages still carry ``[ref: ...]`` placeholders.
         """
         context_manager = agent.context_manager
-        if context_manager is None or context_manager.archive is None:
+        if context_manager is None:
+            return
+        archive = context_manager.archive_for(agent)
+        if archive is None:
             return
 
-        if context_manager.archive_is_durable:
+        if context_manager.archive_is_durable_for(agent):
             snapshot.data["archive"] = {
                 "location": "external",
-                "storage_type": context_manager.archive.storage_type_name,
+                "storage_type": archive.storage_type_name,
             }
             return
 
-        entries = await context_manager.archive.take_snapshot()
+        entries = await archive.take_snapshot()
         if entries:
             snapshot.data["archive"] = {
                 "location": "inline",
@@ -734,26 +737,29 @@ class SnapshotSessionManager(SessionManager[LocalAgent]):
             return
 
         context_manager = agent.context_manager
-        if context_manager is None or context_manager.archive is None:
+        if context_manager is None:
+            return
+        archive = context_manager.archive_for(agent)
+        if archive is None:
             return
 
         try:
             location = archive_data.get("location")
             if location == "external":
                 snapshot_type = archive_data.get("storage_type", "")
-                if snapshot_type and snapshot_type != context_manager.archive.storage_type_name:
+                if snapshot_type and snapshot_type != archive.storage_type_name:
                     logger.warning(
                         "session_id=<%s>, snapshot_storage=<%s>, current_storage=<%s> | "
                         "archive storage type changed since snapshot was created, archive data may be inaccessible",
                         self.session_id,
                         snapshot_type,
-                        context_manager.archive.storage_type_name,
+                        archive.storage_type_name,
                     )
                 return
 
             if location == "inline":
                 entries = archive_data.get("entries", {})
-                await context_manager.archive.load_snapshot(entries)
+                await archive.load_snapshot(entries)
         except Exception:
             logger.warning(
                 "session_id=<%s> | failed to restore archive data from snapshot, continuing without archive",

@@ -76,7 +76,7 @@ export class TruncateStrategy extends BaseOffloadStrategy {
     const middle = withPairs(messages, await this._selectMiddle(await this._removableMessages(context), agent))
     // A middle of only placeholders has nothing new to elide.
     if (middle.every((message) => message.content.every(isOffloaded))) return false
-    return removeMessages(messages, middle, placeholderFor(agent.model, formatElided), 'truncate', this._archive)
+    return removeMessages(messages, middle, placeholderFor(agent.model, formatElided), 'truncate', context.archive)
   }
 
   protected async _replaceBlock(

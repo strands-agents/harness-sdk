@@ -181,7 +181,7 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
       }
       this._storage = { snapshot: this._resolveSnapshotStorage(agent.storage) }
     }
-    this._agentArchive = agent.contextManager?.archive
+    this._agentArchive = this._archiveFor(agent)
     agent.addHook(InitializedEvent, async (event) => {
       await this._onAgentInitialized(event)
     })
@@ -347,17 +347,31 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
   // Archive integration
   // ---------------------------------------------------------------------------
 
-  private async _includeArchiveData(agent: LocalAgent, snapshot: Snapshot): Promise<void> {
+  private _archiveFor(agent: LocalAgent): Archive | undefined {
     const contextManager = agent.contextManager
-    if (!contextManager?.archive) return
+    if (!contextManager) return undefined
+    return typeof contextManager.archiveFor === 'function' ? contextManager.archiveFor(agent) : contextManager.archive
+  }
 
-    if (contextManager.archiveIsDurable) {
-      const storageType = contextManager.archive.storageTypeName
+  private _archiveIsDurableFor(agent: LocalAgent): boolean {
+    const contextManager = agent.contextManager
+    if (!contextManager) return false
+    return typeof contextManager.archiveIsDurableFor === 'function'
+      ? contextManager.archiveIsDurableFor(agent)
+      : contextManager.archiveIsDurable
+  }
+
+  private async _includeArchiveData(agent: LocalAgent, snapshot: Snapshot): Promise<void> {
+    const archive = this._archiveFor(agent)
+    if (!archive) return
+
+    if (this._archiveIsDurableFor(agent)) {
+      const storageType = archive.storageTypeName
       snapshot.data.archive = { location: 'external', storageType } satisfies ArchiveSnapshotData
       return
     }
 
-    const entries = await contextManager.archive.takeSnapshot()
+    const entries = await archive.takeSnapshot()
     if (Object.keys(entries).length > 0) {
       snapshot.data.archive = { location: 'inline', entries } satisfies ArchiveSnapshotData
     }
@@ -368,7 +382,7 @@ export class SessionManager implements Plugin, MultiAgentPlugin {
     // agent had already offloaded, so a read falls back to it; writes only ever go to `archive`.
     const raw = snapshot.data.archive ?? snapshot.data.stash
     if (!raw) return
-    const archive = agent.contextManager?.archive
+    const archive = this._archiveFor(agent)
     if (!archive) return
 
     const archiveData = raw as ArchiveSnapshotData

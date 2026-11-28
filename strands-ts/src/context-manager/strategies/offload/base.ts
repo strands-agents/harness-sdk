@@ -45,7 +45,6 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
   protected readonly _conditions: ResolvedConditions
   /** Whether the eager hook processes each message as it arrives. */
   private readonly _runsEagerly: boolean
-  protected _archive: Archive | undefined
 
   /**
    * @param method - Offload method; the strategy is named `offload:<method>`
@@ -98,7 +97,6 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
    *   `contextUtilization` is a token count larger than the model's context window
    */
   init(agent: LocalAgent, archive?: Archive): void {
-    this._archive = archive
     this._checkRunnable()
     this._conditions.checkFits(agent)
     if (!this._runsEagerly) return
@@ -108,17 +106,18 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
         `strategy=<${this.name}>, target=<${JSON.stringify(this._target)}> | strategy has no conditions, so it acts on every matching block as it arrives, before the model reads it | use .when() to set blockThreshold, contextUtilization, or preserveRecent`
       )
     }
+    // Close over this agent's archive rather than keeping it on the strategy, since one strategy
+    // instance can be shared across agents.
     agent.addHook(MessageAddedEvent, async (event) => {
       const messages = event.agent.messages
       const index = messages.indexOf(event.message)
       if (index >= 0 && isPinned(messages, index)) return
       const threshold = this._conditions.thresholdTokens(event.agent)
-      await this._transformBlocks(event.message, messages, buildToolNameMap(messages), threshold, event.agent)
+      await this._transformBlocks(event.message, messages, buildToolNameMap(messages), threshold, event.agent, archive)
     })
   }
 
   async apply(context: ContextState): Promise<boolean> {
-    if (context.archive) this._archive = context.archive
     if (!this._conditions.reached(context)) return false
     if (this._target !== '*') return this._applyPerBlock(context)
     const acted = await this._applyPerMessage(context)
@@ -134,14 +133,16 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
 
   /** Per-block execution: walk each message, transform individual blocks above threshold. */
   private async _applyPerBlock(context: ContextState): Promise<boolean> {
-    const { messages, agent, invocationContext } = context
+    const { messages, agent, archive, invocationContext } = context
     const toolNameMap = buildToolNameMap(messages)
     const threshold = this._conditions.thresholdTokens(agent)
     let acted = false
     for (const message of this._unprotectedMatches(messages, toolNameMap)) {
       // Without the eager hook, message 0 is the task and the last message is one the model has not yet responded to.
       if (!this._runsEagerly && (message === messages[0] || message === messages.at(-1))) continue
-      if (await this._transformBlocks(message, messages, toolNameMap, threshold, agent, invocationContext)) acted = true
+      if (await this._transformBlocks(message, messages, toolNameMap, threshold, agent, archive, invocationContext)) {
+        acted = true
+      }
     }
     return acted
   }
@@ -180,12 +181,17 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
   }
 
   /** Whether a block in `message` is content this strategy may replace. */
-  private _isOffloadable(block: ContentBlock, message: Message, toolNameMap: Map<string, string>): boolean {
+  private _isOffloadable(
+    block: ContentBlock,
+    message: Message,
+    toolNameMap: Map<string, string>,
+    archive: Archive | undefined
+  ): boolean {
     if (isProtocolBlock(block) || isOffloaded(block) || (block instanceof TextBlock && block.text.trim() === ''))
       return false
     // Injected text is written after its message was archived, so a ref to it would point at nothing.
     if (block instanceof InjectedBlock) return false
-    if (block instanceof ToolResultBlock && this._isProtectedResult(block, toolNameMap)) return false
+    if (block instanceof ToolResultBlock && this._isProtectedResult(block, toolNameMap, archive)) return false
     return this._matcher.matchesBlock(block, message, toolNameMap)
   }
 
@@ -194,8 +200,12 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
    * strategy shouldn't replace. Only drop goes further, since truncate and summarize would read the placeholder as the
    * content.
    */
-  private _isProtectedResult(block: ToolResultBlock, toolNameMap: Map<string, string>): boolean {
-    if (this._archive && toolNameMap.get(block.toolUseId) === RETRIEVAL_TOOL_NAME) return true
+  private _isProtectedResult(
+    block: ToolResultBlock,
+    toolNameMap: Map<string, string>,
+    archive: Archive | undefined
+  ): boolean {
+    if (archive && toolNameMap.get(block.toolUseId) === RETRIEVAL_TOOL_NAME) return true
     // A tool reference is what keeps a loaded tool's schema in the model's context.
     if (holdsToolReference(block)) return true
     const placeholder = block.content.find(isOffloaded)
@@ -209,18 +219,19 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
     toolNameMap: Map<string, string>,
     threshold: number | undefined,
     agent: LocalAgent,
+    archive: Archive | undefined,
     invocationContext?: InvocationContext
   ): Promise<boolean> {
     let acted = false
     for (let blockIndex = 0; blockIndex < message.content.length; blockIndex++) {
       const block = message.content[blockIndex]!
-      if (!this._isOffloadable(block, message, toolNameMap)) continue
+      if (!this._isOffloadable(block, message, toolNameMap, archive)) continue
 
       const measured = await agent.model.countTokens([new Message({ role: message.role, content: [block] })])
       // The token heuristic counts media as 0, so unmeasured media is never treated as within the threshold.
       if (threshold !== undefined && measured <= threshold && !(measured === 0 && holdsMedia(block))) continue
 
-      const archiveRef = this._archive ? await this._archive.ensureArchived(block, message, blockIndex) : undefined
+      const archiveRef = archive ? await archive.ensureArchived(block, message, blockIndex) : undefined
       const toolName = block instanceof ToolResultBlock ? toolNameMap.get(block.toolUseId) : undefined
       // The threshold measures what the block occupies now; the replacement stands for what is behind it as well.
       const tokens = measured + carriedTokens([block])

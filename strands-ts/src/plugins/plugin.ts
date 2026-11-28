@@ -71,7 +71,8 @@ export interface Plugin {
    * Returns tools provided by this plugin for auto-registration.
    * Called after {@link initAgent} resolves; may depend on state set there.
    *
+   * @param agent - The agent instance whose tools are being registered
    * @returns Array of tools to register with the agent
    */
-  getTools?(): Tool[]
+  getTools?(agent?: LocalAgent): Tool[]
 }

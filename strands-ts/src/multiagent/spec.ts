@@ -464,7 +464,7 @@ export function _defaultBuilder(parent: Agent): (spec: AgentSpec) => Agent {
   return (spec: AgentSpec): Agent => {
     const parentTools: Map<string, Tool> = new Map()
     // The child's own context manager registers its tools (e.g. retrieve_context); skip the parent's.
-    const managedTools = new Set(parent.contextManager?.getTools() ?? [])
+    const managedTools = new Set(parent.contextManager?.getTools(parent) ?? [])
     for (const tool of parent.toolRegistry.list()) {
       if (!managedTools.has(tool)) {
         parentTools.set(tool.name, tool)

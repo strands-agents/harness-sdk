@@ -901,3 +901,196 @@ class TestDeprecatedStashNames:
             context.stash = archive
 
         assert context.archive is archive
+
+
+class TestSharedContextManagerMultiAgent:
+    """Tests that a ContextManager shared across multiple agents isolates per-agent state."""
+
+    @pytest.mark.asyncio
+    async def test_shared_cm_isolates_backfill_archive_and_retrieval_tools(self):
+        from strands import Agent
+        from strands._context_manager.retrieval_tool import RETRIEVAL_TOOL_NAME
+        from strands.session.snapshot_session_manager import SnapshotSessionManager
+
+        storage = InMemoryStorage()
+        cm = ContextManager(strategies=[])
+
+        def _make_model():
+            model = unittest.mock.MagicMock()
+            model.stateful = False
+            model.context_window_limit = 10_000
+            model.count_tokens = unittest.mock.AsyncMock(return_value=100)
+            model.estimate_utilization = unittest.mock.MagicMock(return_value=0.1)
+            return model
+
+        agent_a = Agent(
+            model=_make_model(),
+            agent_id="agent-a",
+            session_manager=SnapshotSessionManager("s1", storage=storage),
+            storage=storage,
+            context_manager=cm,
+            messages=[Message(role="user", content=[ContentBlock(text="secret from A")], tracking_id="msg-a")],
+        )
+        agent_b = Agent(
+            model=_make_model(),
+            agent_id="agent-b",
+            session_manager=SnapshotSessionManager("s2", storage=storage),
+            storage=storage,
+            context_manager=cm,
+            messages=[Message(role="user", content=[ContentBlock(text="secret from B")], tracking_id="msg-b")],
+        )
+
+        # Distinct retrieve_context tools and archives per agent.
+        tool_a = agent_a.tool_registry.registry[RETRIEVAL_TOOL_NAME]
+        tool_b = agent_b.tool_registry.registry[RETRIEVAL_TOOL_NAME]
+        assert tool_a is not tool_b
+        assert cm.tools_for(agent_a) == [tool_a]
+        assert cm.tools_for(agent_b) == [tool_b]
+        assert cm.archive_for(agent_a) is not cm.archive_for(agent_b)
+
+        # Trigger first-call backfill on agent A after agent B was initialized, then on agent B.
+        await agent_a.hooks.invoke_callbacks_async(BeforeModelCallEvent(agent=agent_a, projected_input_tokens=100))
+        await agent_b.hooks.invoke_callbacks_async(BeforeModelCallEvent(agent=agent_b, projected_input_tokens=100))
+
+        # Storage prefixes are strictly isolated: nothing from A is under s2, nothing from B is under s1.
+        assert await storage.list("context/s1/") == ["context/s1/scopes/agent/agent-a/msg-a_0"]
+        assert await storage.list("context/s2/") == ["context/s2/scopes/agent/agent-b/msg-b_0"]
+
+        # Each agent retrieves its own entries and cannot retrieve the other's entries.
+        res_a_own = await tool_a._tool_func({"toolUseId": "t1", "input": {"reference": "msg-a_0"}})
+        assert res_a_own["status"] == "success"
+        assert res_a_own["content"] == [{"text": "secret from A"}]
+
+        res_b_own = await tool_b._tool_func({"toolUseId": "t2", "input": {"reference": "msg-b_0"}})
+        assert res_b_own["status"] == "success"
+        assert res_b_own["content"] == [{"text": "secret from B"}]
+
+        res_b_cross = await tool_b._tool_func({"toolUseId": "t3", "input": {"reference": "msg-a_0"}})
+        assert res_b_cross["status"] == "error"
+        assert "reference not found" in res_b_cross["content"][0]["text"]
+
+        res_a_cross = await tool_a._tool_func({"toolUseId": "t4", "input": {"reference": "msg-b_0"}})
+        assert res_a_cross["status"] == "error"
+        assert "reference not found" in res_a_cross["content"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_shared_cm_isolates_offload_strategies_after_second_agent_init(self):
+        from strands import Agent
+        from strands._context_manager.placeholder import is_offloaded
+        from strands._context_manager.retrieval_tool import RETRIEVAL_TOOL_NAME
+        from strands.session.snapshot_session_manager import SnapshotSessionManager
+        from tests.fixtures.context_manager_helpers import heuristic_model
+
+        storage = InMemoryStorage()
+        cm = ContextManager(
+            strategies=[
+                Offload.truncate("tool_results", {"preview_tokens": 10}).when(block_threshold=50),
+                Offload.drop("*").when(context_utilization="50%", preserve_recent=1),
+            ]
+        )
+
+        model_a = heuristic_model(context_window_limit=10_000)
+        model_a.stateful = False
+        model_a.estimate_utilization = unittest.mock.MagicMock(return_value=0.8)
+        model_b = heuristic_model(context_window_limit=10_000)
+        model_b.stateful = False
+
+        agent_a = Agent(
+            model=model_a,
+            agent_id="agent-a",
+            session_manager=SnapshotSessionManager("s1", storage=storage),
+            storage=storage,
+            context_manager=cm,
+            messages=[
+                Message(role="user", content=[ContentBlock(text="task A")], tracking_id="a-0"),
+                Message(role="assistant", content=[ContentBlock(text="old reply A")], tracking_id="a-1"),
+                Message(role="user", content=[ContentBlock(text="follow-up A")], tracking_id="a-2"),
+            ],
+        )
+        agent_b = Agent(
+            model=model_b,
+            agent_id="agent-b",
+            session_manager=SnapshotSessionManager("s2", storage=storage),
+            storage=storage,
+            context_manager=cm,
+            messages=[Message(role="user", content=[ContentBlock(text="task B")], tracking_id="b-0")],
+        )
+
+        # Trigger eager MessageAddedEvent offload on agent A after agent B was initialized.
+        large_output = "A_SECRET_PAYLOAD " * 200
+        tool_result_msg = Message(
+            role="user",
+            content=[
+                ContentBlock(
+                    toolResult=ToolResult(
+                        toolUseId="tu-a-big",
+                        status="success",
+                        content=[{"text": large_output}],
+                    )
+                )
+            ],
+            tracking_id="a-3",
+        )
+        agent_a.messages.append(tool_result_msg)
+        await agent_a.hooks.invoke_callbacks_async(MessageAddedEvent(agent=agent_a, message=tool_result_msg))
+
+        # Trigger pipeline offload (Offload.drop("*")) on agent A after agent B was initialized.
+        await agent_a.hooks.invoke_callbacks_async(BeforeModelCallEvent(agent=agent_a, projected_input_tokens=8_000))
+        await agent_b.hooks.invoke_callbacks_async(BeforeModelCallEvent(agent=agent_b, projected_input_tokens=100))
+
+        tool_a = agent_a.tool_registry.registry[RETRIEVAL_TOOL_NAME]
+        tool_b = agent_b.tool_registry.registry[RETRIEVAL_TOOL_NAME]
+
+        # Agent A resolves its eagerly truncated tool result; agent B cannot.
+        res_a = await tool_a._tool_func({"toolUseId": "t1", "input": {"reference": "tu-a-big"}})
+        assert res_a["status"] == "success"
+        assert res_a["content"] == [{"text": large_output}]
+        res_b = await tool_b._tool_func({"toolUseId": "t2", "input": {"reference": "tu-a-big"}})
+        assert res_b["status"] == "error"
+
+        # Agent A resolves its dropped-messages reference; agent B cannot.
+        dropped_block = next(
+            block
+            for msg in agent_a.messages
+            for block in msg["content"]
+            if is_offloaded(block) and block["offloaded"]["method"] == "drop"
+        )
+        dropped_ref = dropped_block["offloaded"]["ref"]
+        drop_a = await tool_a._tool_func({"toolUseId": "t3", "input": {"reference": dropped_ref}})
+        drop_b = await tool_b._tool_func({"toolUseId": "t4", "input": {"reference": dropped_ref}})
+        assert drop_a["status"] == "success"
+        assert drop_b["status"] == "error"
+
+        # Nothing from agent A was written under session B's prefix.
+        assert await storage.list("context/s2/") == ["context/s2/scopes/agent/agent-b/b-0_0"]
+        keys_a = await storage.list("context/s1/")
+        assert any(k.endswith("/tu-a-big_0") for k in keys_a)
+        assert any("/removed-" in k for k in keys_a)
+
+    def test_shared_cm_tracks_durability_per_agent(self, tmp_path):
+        from strands import Agent
+        from strands.storage.local_file_storage import LocalFileStorage
+
+        cm = ContextManager(strategies=[])
+
+        def _make_model():
+            model = unittest.mock.MagicMock()
+            model.stateful = False
+            model.context_window_limit = 10_000
+            return model
+
+        agent_a = Agent(
+            model=_make_model(),
+            agent_id="agent-a",
+            storage=InMemoryStorage(),
+            context_manager=cm,
+        )
+        agent_b = Agent(
+            model=_make_model(),
+            agent_id="agent-b",
+            storage=LocalFileStorage(base_dir=str(tmp_path)),
+            context_manager=cm,
+        )
+
+        assert cm.archive_is_durable_for(agent_a) is False
+        assert cm.archive_is_durable_for(agent_b) is True
