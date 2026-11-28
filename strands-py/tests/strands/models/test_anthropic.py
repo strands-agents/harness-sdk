@@ -16,6 +16,7 @@ import pytest
 import strands
 from strands.agent.agent_metadata import AgentMetadata
 from strands.models import Model, ModelCapabilities, ModelInfo, ModelLimits, SummarizeResult
+from strands.models._model_info import _accepts_mime_type, lookup_model_info
 from strands.models._model_proxy import ModelProxy
 from strands.models.anthropic import AnthropicModel
 from strands.models.model import CacheConfig, CacheToolsConfig
@@ -1017,7 +1018,15 @@ def test_format_chunk_content_block_start_other(model):
 @pytest.mark.parametrize(
     ("delta", "exp_delta"),
     [
-        ({"type": "signature_delta", "signature": "s1"}, {"reasoningContent": {"signature": "s1"}}),
+        (
+            {"type": "signature_delta", "signature": "s1"},
+            {
+                "reasoningContent": {
+                    "signature": "s1",
+                    "providerData": {"provider": "anthropic", "modelId": "m1", "data": {}},
+                }
+            },
+        ),
         ({"type": "thinking_delta", "thinking": "t1"}, {"reasoningContent": {"text": "t1"}}),
         ({"type": "input_json_delta", "partial_json": "{"}, {"toolUse": {"input": "{"}}),
         ({"type": "text_delta", "text": "hello"}, {"text": "hello"}),
@@ -2008,6 +2017,73 @@ def test_model_info_reads_cache_points_from_the_shared_model_info(anthropic_clie
     model = AnthropicModel(model_id="claude-sonnet-4-6", max_tokens=1)
 
     assert model.model_info.capabilities.prompt_caching == "cache_points"
+
+
+_OFFICE_TYPES = (
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+)
+
+
+_SENDABLE = (
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "application/pdf",
+    "text/csv",
+    "text/html",
+    "text/markdown",
+    "text/plain",
+)
+
+
+def test_model_info_keeps_only_the_listed_types_the_provider_sends(anthropic_client):
+    _ = anthropic_client
+
+    assert _accepts_mime_type(lookup_model_info("claude-sonnet-4-6"), _OFFICE_TYPES[1])
+    model = AnthropicModel(model_id="claude-sonnet-4-6", max_tokens=1)
+
+    assert model.model_info.capabilities.accepted_mime_types == _SENDABLE
+    assert not _accepts_mime_type(model.model_info, _OFFICE_TYPES[1])
+
+
+@pytest.mark.parametrize("model_id", ["claude-sonnet-4-20250514", "claude-mythos-preview"])
+def test_model_info_narrows_wildcards_to_the_types_the_provider_sends(anthropic_client, model_id):
+    _ = anthropic_client
+    assert _accepts_mime_type(lookup_model_info(model_id), "application/msword") or _accepts_mime_type(
+        lookup_model_info(model_id), "video/mp4"
+    )
+
+    info = AnthropicModel(model_id=model_id, max_tokens=1).model_info
+
+    assert set(info.capabilities.accepted_mime_types) <= set(_SENDABLE)
+    assert not _accepts_mime_type(info, "application/msword")
+    assert not _accepts_mime_type(info, "video/mp4")
+
+
+def test_model_info_reports_the_types_it_sends_when_the_shared_data_has_no_list(anthropic_client):
+    _ = anthropic_client
+    assert lookup_model_info("claude-3-opus-20240229").capabilities.accepted_mime_types is None
+
+    model = AnthropicModel(model_id="claude-3-opus-20240229", max_tokens=1)
+
+    assert model.model_info.capabilities.accepted_mime_types == _SENDABLE
+    assert not _accepts_mime_type(model.model_info, "video/mp4")
+
+
+def test_model_info_override_sets_the_accepted_mime_types(anthropic_client):
+    _ = anthropic_client
+
+    model = AnthropicModel(
+        model_id="claude-sonnet-4-6",
+        max_tokens=1,
+        model_info=ModelInfo(capabilities=ModelCapabilities(accepted_mime_types=(_OFFICE_TYPES[1],))),
+    )
+
+    assert model.model_info.capabilities.accepted_mime_types == (_OFFICE_TYPES[1],)
 
 
 def test_model_info_exposes_the_output_ceiling_from_the_shared_model_info(anthropic_client):

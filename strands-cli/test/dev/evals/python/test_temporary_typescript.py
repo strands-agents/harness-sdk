@@ -86,8 +86,8 @@ def test_should_count_the_runner_usage_when_trials_finish(tmp_path, monkeypatch,
         == (RUNNER_TOKENS, 1, ["bedrock/test"])
         for trial in trials
     )
-    agent_cost = json.loads(capsys.readouterr().out)["agent_cost"]
-    assert sum(usage["tokens"] for usage in agent_cost.values()) == RUNNER_TOKENS * len(trials)
+    agent_spend = json.loads(capsys.readouterr().out)["cost"]["agent"]
+    assert sum(spend["usage"]["tokens"] for spend in agent_spend.values()) == RUNNER_TOKENS * len(trials)
 
 
 @pytest.mark.parametrize(

@@ -83,7 +83,8 @@ describe('runInkChat', () => {
       await manager.activatePanelRow(manager.getSnapshot().panel!.rows.find((row) => !row.current)!)
       await manager.submit('/clear')
       expect(writes).toEqual([
-        '\u001b[22;2t',
+        '\u001b[22;0t',
+        '\u001b]1;strands\u0007',
         '\u001b]2;Original name\u0007',
         '\u001b]2;Renamed session\u0007',
         '\u001b]2;Other saved name\u0007',
@@ -97,7 +98,7 @@ describe('runInkChat', () => {
     expect(writes.at(-1)).toContain('?2004l')
     expect(writes.at(-1)).toContain('?2031l')
     expect(writes.at(-1)).toContain('?25h')
-    expect(writes.filter((value) => value === '\u001b[23;2t')).toHaveLength(1)
+    expect(writes.filter((value) => value === '\u001b[23;0t')).toHaveLength(1)
   })
 
   it.each(['environment', 'profile'] as const)('restores chat and %s auth on failure', async (auth) => {
@@ -774,7 +775,7 @@ describe('runInkChat', () => {
     expect(result).toBe(23)
     expect(cleanup).toHaveBeenCalledOnce()
     expect(writes.join('')).toContain('?1049l')
-    expect(writes.join('')).toContain('\u001b[23;2t')
+    expect(writes.join('')).toContain('\u001b[23;0t')
     expect(writes.at(-1)).toContain('?2004l')
     expect(writes.at(-1)).toContain('?2031l')
     expect(writes.at(-1)).toContain('?25h')

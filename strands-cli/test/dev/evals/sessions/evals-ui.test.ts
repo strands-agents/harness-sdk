@@ -164,11 +164,7 @@ describe('evals UI server', () => {
   })
 
   it.each([
-    [
-      'ARunFolder',
-      true,
-      '/optimization/refunds/optimizations/20261117-101500/optimizer/20261117-101500-abc123/overview',
-    ],
+    ['ARunFolder', true, '/optimization/refunds/optimizations/20261117-101500/optimizer/20261117-101500-abc123/result'],
     ['NoRunFolderYet', false, '/optimization'],
   ])('shouldLinkTheOptimizerRunByItsFolderWhenTheRecordHas%s', async (_case, made, path) => {
     const openBrowser = vi.fn(async () => true)

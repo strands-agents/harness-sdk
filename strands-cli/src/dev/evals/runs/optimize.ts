@@ -213,6 +213,9 @@ const settingArguments = (settings: EvalsOptimizeSettings): string[] => [
   String(settings.maxRollouts),
   '--seed',
   String(settings.seed),
+  ...(settings.rerunPasses === EVALS_OPTIMIZE_DEFAULTS.rerunPasses
+    ? []
+    : ['--rerun-passes', String(settings.rerunPasses)]),
   ...decisionArguments(settings.decision),
 ]
 

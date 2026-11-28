@@ -5,14 +5,16 @@ import jefferies from '../assets/logos/jefferies.svg?raw';
 import mrhTrowe from '../assets/logos/mrh-trowe.svg?raw';
 import neo4j from '../assets/logos/neo4j.svg?raw';
 import nttDocomo from '../assets/logos/ntt-docomo.svg?raw';
+import slack from '../assets/logos/slack.svg?raw';
 import thrad from '../assets/logos/thrad.svg?raw';
 
-const logos = [
+const logos: { name: string; svg: string; href?: string }[] = [
   {
     name: 'Jefferies',
     svg: jefferies,
     href: 'https://aws.amazon.com/blogs/machine-learning/building-trade-assistant-how-jefferies-optimized-front-office-trading-operations-with-ai/',
   },
+  { name: 'Slack', svg: slack },
   {
     name: 'Databricks',
     svg: databricks,
@@ -41,18 +43,24 @@ const logos = [
 <section class="logo-farm" aria-label="Companies using Strands">
   <div class="logo-farm__inner">
     <div class="logo-farm__row">
-      {logos.map((logo) => (
-        <a
-          class="logo-farm__cell"
-          href={logo.href}
-          target="_blank"
-          rel="noopener noreferrer"
-          data-logo={logo.name}
-          aria-label={`${logo.name} (opens in a new tab)`}
-        >
-          <span class="logo-farm__logo" aria-hidden="true" set:html={logo.svg} />
-        </a>
-      ))}
+      {logos.map((logo) =>
+        logo.href ? (
+          <a
+            class="logo-farm__cell"
+            href={logo.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            data-logo={logo.name}
+            aria-label={`${logo.name} (opens in a new tab)`}
+          >
+            <span class="logo-farm__logo" aria-hidden="true" set:html={logo.svg} />
+          </a>
+        ) : (
+          <div class="logo-farm__cell" data-logo={logo.name} role="img" aria-label={logo.name}>
+            <span class="logo-farm__logo" aria-hidden="true" set:html={logo.svg} />
+          </div>
+        )
+      )}
     </div>
   </div>
 </section>
@@ -69,31 +77,31 @@ const logos = [
     display: flex;
     flex-direction: column;
     gap: 47px;
-    max-width: 1332px;
+    max-width: 1200px;
     margin: 0 auto;
   }
 
-  /* Logos keep their natural widths; the row wraps and stays centered when it runs out of room. */
+  /* Four columns sized to their widest logo, spread edge to edge so the grid lines up with the cards above. */
   .logo-farm__row {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(4, auto);
+    justify-content: space-between;
     align-items: center;
-    justify-content: center;
     gap: 32px 36px;
   }
 
   .logo-farm__cell {
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     height: 56px;
     color: inherit;
     text-decoration: none;
     border-radius: 8px;
   }
 
-  .logo-farm__cell:hover .logo-farm__logo,
-  .logo-farm__cell:focus-visible .logo-farm__logo {
+  a.logo-farm__cell:hover .logo-farm__logo,
+  a.logo-farm__cell:focus-visible .logo-farm__logo {
     filter: drop-shadow(0 0 4px var(--strands-green)) drop-shadow(0 0 14px var(--strands-green));
     transform: scale(1.05);
   }
@@ -108,8 +116,8 @@ const logos = [
       transition: none;
     }
 
-    .logo-farm__cell:hover .logo-farm__logo,
-    .logo-farm__cell:focus-visible .logo-farm__logo {
+    a.logo-farm__cell:hover .logo-farm__logo,
+    a.logo-farm__cell:focus-visible .logo-farm__logo {
       transform: none;
     }
   }
@@ -141,6 +149,11 @@ const logos = [
     height: 44px;
   }
 
+  /* The "from Salesforce" line under the wordmark takes up part of the height. */
+  .logo-farm__cell[data-logo='Slack'] :global(svg) {
+    height: 44px;
+  }
+
   /* The small "NTT" above the wordmark takes up part of the height. */
   .logo-farm__cell[data-logo='NTT Docomo'] :global(svg) {
     height: 36px;
@@ -160,13 +173,13 @@ const logos = [
       gap: 32px;
     }
 
-    /* Three per row on phones, with any short final row centered. */
+    /* Two per row on phones. */
     .logo-farm__row {
+      grid-template-columns: repeat(2, auto);
       gap: 24px 16px;
     }
 
     .logo-farm__cell {
-      width: calc((100% - 32px) / 3);
       height: 40px;
     }
 
@@ -179,6 +192,10 @@ const logos = [
     }
 
     .logo-farm__cell[data-logo='Datadog'] :global(svg) {
+      height: 28px;
+    }
+
+    .logo-farm__cell[data-logo='Slack'] :global(svg) {
       height: 28px;
     }
 

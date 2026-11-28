@@ -172,10 +172,7 @@ await agent.shutdown()
       ['--import', import.meta.resolve('tsx/esm'), '--input-type=module', '--eval', script],
       { cwd: root }
     )
-    expect(JSON.parse(stdout)).toEqual([
-      assignment.includes('.read.') ? 'read' : 'web_fetch',
-      'strands_manage_background_task',
-    ])
+    expect(JSON.parse(stdout)).toEqual([assignment.includes('.read.') ? 'read' : 'web_fetch', 'manage_background_task'])
   })
 
   // Authored project options preserve HTTPS skill sources (#4574).

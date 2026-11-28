@@ -98,6 +98,9 @@ function panelHelpKeys(panel: ChatPanel, width: number, scrollable: boolean): st
   }
   switch (panel.kind) {
     case 'settings':
+      if (panel.rows.some((row) => row.control?.kind === 'number' && row.control.editing)) {
+        return width < 42 ? 'Enter save · Esc cancel' : '0-9 type a whole number · Enter save · Esc cancel'
+      }
       return width < 42 ? '↑↓ move · ←→ change · Esc back' : '↑↓ · ←→ change · Tab section · Esc back'
     case 'help':
       return width < 53

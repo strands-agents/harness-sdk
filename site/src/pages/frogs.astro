@@ -1,10 +1,17 @@
 ---
+import SocialMeta from '../components/SocialMeta.astro'
+import { pathWithBase } from '../util/links'
 import { baseSchemas, serializeJsonLd } from '../util/structured-data'
 
+const title = 'Stranded in New York'
+const description = 'Strands frogs hop, skip and drive around Midtown Manhattan. What will you discover?'
 const gameUrl = 'https://d3i1gpu82pqyr4.cloudfront.net/'
 const base = import.meta.env.BASE_URL || '/'
 const faviconHref = base.endsWith('/') ? `${base}favicon.svg` : `${base}/favicon.svg`
 const siteUrl = Astro.site?.origin || 'https://strandsagents.com'
+const canonicalHref = new URL(pathWithBase('/frogs/'), siteUrl).href
+const ogImageHref = new URL(pathWithBase('/frogs-preview.jpg'), siteUrl).href
+const ogImageAlt = 'A Strands frog beside the ice rink, skating frogs and Christmas market stalls in Bryant Park.'
 const structuredData = {
   '@context': 'https://schema.org',
   '@graph': baseSchemas(siteUrl),
@@ -16,10 +23,19 @@ const structuredData = {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Frogs</title>
-    <meta name="description" content="Frogs." />
+    <title>{title}</title>
+    <meta name="description" content={description} />
     <meta name="robots" content="noindex" />
+    <link rel="canonical" href={canonicalHref} />
     <link rel="icon" type="image/svg+xml" href={faviconHref} />
+    <SocialMeta
+      {title}
+      {description}
+      {canonicalHref}
+      imageHref={ogImageHref}
+      imageType="image/jpeg"
+      imageAlt={ogImageAlt}
+    />
     <script type="application/ld+json" set:html={serializeJsonLd(structuredData)} />
     <style>
       html,
@@ -40,8 +56,8 @@ const structuredData = {
   <body>
     <iframe
       src={gameUrl}
-      title="Frogs"
-      sandbox="allow-scripts allow-same-origin allow-pointer-lock"
+      title={title}
+      sandbox="allow-scripts allow-same-origin allow-pointer-lock allow-downloads"
       allow="fullscreen; autoplay; gamepad; pointer-lock"
       referrerpolicy="no-referrer"
     ></iframe>

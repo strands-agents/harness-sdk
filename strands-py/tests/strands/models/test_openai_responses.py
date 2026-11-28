@@ -8,7 +8,7 @@ import httpx
 import openai
 import pydantic
 import pytest
-from openai.types.responses import Response, ResponseErrorEvent, ResponseFailedEvent
+from openai.types.responses import Response, ResponseErrorEvent, ResponseFailedEvent, ResponseReasoningItem
 from openai.types.responses.response_error import ResponseError
 
 import strands
@@ -365,6 +365,31 @@ def test_format_request_messages(system_prompt):
     assert tru_result == exp_result
 
 
+def test_format_request_messages_puts_tool_outputs_before_user_text():
+    messages = [
+        {"role": "assistant", "content": [{"toolUse": {"toolUseId": "c1", "name": "lookup", "input": {}}}]},
+        {
+            "role": "user",
+            "content": [
+                {"text": "before"},
+                {"toolResult": {"toolUseId": "c1", "status": "success", "content": [{"text": "result"}]}},
+                {"text": "after"},
+            ],
+        },
+    ]
+
+    formatted = OpenAIResponsesModel._format_request_messages(messages)
+
+    assert formatted == [
+        {"type": "function_call", "call_id": "c1", "name": "lookup", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "c1", "output": "result"},
+        {
+            "role": "user",
+            "content": [{"type": "input_text", "text": "before"}, {"type": "input_text", "text": "after"}],
+        },
+    ]
+
+
 def test_format_request_messages_assistant_text_uses_string_content():
     """Assistant history must use the string EasyInputMessage form.
 
@@ -508,6 +533,7 @@ def test_format_request(model, messages, tool_specs, system_prompt):
         ],
         "stream": True,
         "store": False,
+        "include": ["reasoning.encrypted_content"],
         "instructions": system_prompt,
         "tools": [
             {
@@ -890,6 +916,7 @@ async def test_stream(openai_client, model_id, model, agenerator, alist):
         "input": [{"role": "user", "content": [{"type": "input_text", "text": "test"}]}],
         "stream": True,
         "store": False,
+        "include": ["reasoning.encrypted_content"],
         "max_output_tokens": 100,
     }
     openai_client.responses.create.assert_called_once_with(**expected_request)
@@ -1135,6 +1162,7 @@ async def test_stream_response_incomplete_content_filter_with_tool_call(openai_c
     [
         "response.reasoning_text.delta",
         "response.reasoning_summary_text.delta",
+        "response.reasoning.delta",
     ],
 )
 async def test_stream_reasoning_content(openai_client, model, agenerator, alist, event_type):
@@ -1934,7 +1962,7 @@ def test_format_request_messages_excludes_reasoning_content(caplog):
         {"role": "assistant", "content": "The answer is 42"},
         {"role": "user", "content": [{"type": "input_text", "text": "Thanks"}]},
     ]
-    assert "reasoningContent is not yet supported" in caplog.text
+    assert "reasoningContent from another provider or model" in caplog.text
 
 
 class TestCountTokens:
@@ -2628,9 +2656,10 @@ def test_message_cache_tool_result_prefix_survives_replay_with_multiple_tools():
         ]
     )
 
-    assert first["input"][:3] == second["input"][:3]
+    checkpoint = {"mode": "explicit"}
+    assert first["input"][:2] == second["input"][:2]
+    assert first["input"][2]["content"][0] == second["input"][2]["content"][0]
     assert first["input"] == [
-        *_text_input("durable explanation"),
         {
             "type": "function_call_output",
             "call_id": "c1",
@@ -2639,13 +2668,12 @@ def test_message_cache_tool_result_prefix_survives_replay_with_multiple_tools():
         {
             "type": "function_call_output",
             "call_id": "c2",
-            "output": [
-                {"type": "input_text", "text": "second result", "prompt_cache_breakpoint": {"mode": "explicit"}}
-            ],
+            "output": [{"type": "input_text", "text": "second result"}],
         },
         {
             "role": "user",
             "content": [
+                {"type": "input_text", "text": "durable explanation", "prompt_cache_breakpoint": checkpoint},
                 {"type": "input_text", "text": "temporary one"},
                 {"type": "input_text", "text": "temporary two"},
             ],
@@ -2835,7 +2863,7 @@ def test_message_cache_dynamic_tail_skips_unsupported_blocks(caplog):
         }
     ]
     assert "cachePoint content block is not supported" in caplog.text
-    assert "reasoningContent is not yet supported" in caplog.text
+    assert "reasoningContent from another provider or model" in caplog.text
 
 
 _DEVELOPER_PROMPT = {"role": "developer", "content": [{"type": "input_text", "text": "Be precise."}]}
@@ -2895,7 +2923,7 @@ async def test_message_cache_works_with_older_client_create_signature(
     calls = []
 
     # Models the pre-prompt_cache_options signature: no catch-all kwargs accepting new fields.
-    async def create(*, model, input, stream, store, extra_body):
+    async def create(*, model, input, stream, store, include, extra_body):
         calls.append({"input": input, "extra_body": extra_body})
 
         async def events():
@@ -2932,7 +2960,7 @@ async def test_message_cache_structured_output_works_with_older_client_parse_sig
         name: str
 
     # Models the pre-prompt_cache_options signature: no catch-all kwargs accepting new fields.
-    async def parse(*, model, input, store, text_format, extra_body=None):
+    async def parse(*, model, input, store, include, text_format, extra_body=None):
         calls.append({"input": input, "extra_body": extra_body})
         return SimpleNamespace(output_parsed=text_format(name="ok"))
 
@@ -3019,3 +3047,289 @@ async def test_injected_client_is_reused_and_not_closed(model_id, test_output_mo
     assert events[-1] == {"output": test_output_model_cls(name="John", age=30)}
     client.close.assert_not_called()
     client.__aexit__.assert_not_called()
+
+
+def _reasoning_item(item_id, encrypted="enc", summary=(), content=()):
+    return ResponseReasoningItem(
+        id=item_id,
+        type="reasoning",
+        summary=[{"type": "summary_text", "text": text} for text in summary],
+        content=[{"type": "reasoning_text", "text": text} for text in content],
+        encrypted_content=encrypted,
+    )
+
+
+def _reasoning_block(item_id, model_id="gpt-4o", text=None, **data):
+    block = {"providerData": {"provider": "openai_responses", "modelId": model_id, "data": {"id": item_id, **data}}}
+    if text is not None:
+        block["reasoningText"] = {"text": text}
+    return {"reasoningContent": block}
+
+
+def _completed(output=None):
+    usage = SimpleNamespace(input_tokens=1, output_tokens=1, total_tokens=2, input_tokens_details=None)
+    return SimpleNamespace(type="response.completed", response=SimpleNamespace(usage=usage, output=output or []))
+
+
+async def _stream_message(model, events, agenerator, alist):
+    model_stream = None
+    with unittest.mock.patch.object(model, "_get_client") as get_client:
+        client = unittest.mock.AsyncMock()
+        client.responses.create = unittest.mock.AsyncMock(return_value=agenerator(events))
+        get_client.return_value.__aenter__.return_value = client
+        model_stream = model.stream([{"role": "user", "content": [{"text": "go"}]}])
+        stream_events = await alist(strands.event_loop.streaming.process_stream(model_stream))
+    return stream_events[-1]["stop"][1], client.responses.create.call_args.kwargs
+
+
+@pytest.mark.parametrize(
+    ("params", "include"),
+    [
+        ({}, ["reasoning.encrypted_content"]),
+        ({"include": ["web_search_call.results"]}, ["web_search_call.results", "reasoning.encrypted_content"]),
+        ({"include": ["reasoning.encrypted_content"]}, ["reasoning.encrypted_content"]),
+    ],
+)
+def test_format_request_merges_encrypted_reasoning_into_include(params, include):
+    model = OpenAIResponsesModel(model_id="gpt-4o", params=params)
+    original = copy.deepcopy(params)
+
+    assert model._format_request([{"role": "user", "content": [{"text": "hi"}]}])["include"] == include
+    assert model.config["params"] == original
+
+
+def test_format_request_explicit_null_include_opts_out_of_encrypted_reasoning():
+    model = OpenAIResponsesModel(model_id="gpt-4o", params={"include": None})
+
+    assert "include" not in model._format_request([{"role": "user", "content": [{"text": "hi"}]}])
+
+
+def test_model_info_names_the_reasoning_provider_it_takes_back():
+    assert OpenAIResponsesModel(model_id="gpt-4o").model_info.capabilities.reasoning_provider == "openai_responses"
+
+
+def test_format_request_stateful_neither_includes_nor_replays_reasoning():
+    model = OpenAIResponsesModel(model_id="gpt-4o", stateful=True)
+    messages = [
+        {"role": "user", "content": [{"text": "hi"}]},
+        {"role": "assistant", "content": [_reasoning_block("rs_1", summary=[], encrypted_content="enc")]},
+    ]
+
+    request = model._format_request(messages, model_state={"response_id": "resp_1"})
+
+    assert request["previous_response_id"] == "resp_1"
+    assert "include" not in request
+    assert all(item.get("type") != "reasoning" for item in request["input"])
+
+
+@pytest.mark.asyncio
+async def test_stream_captures_each_reasoning_item_as_its_own_block(agenerator, alist):
+    model = OpenAIResponsesModel(model_id="gpt-4o")
+    events = [
+        SimpleNamespace(type="response.reasoning_summary_text.delta", delta="streamed"),
+        SimpleNamespace(type="response.output_item.done", item=_reasoning_item("rs_1", summary=["streamed"])),
+        SimpleNamespace(type="response.output_item.done", item=_reasoning_item("rs_2", encrypted="enc2")),
+        SimpleNamespace(type="response.output_text.delta", delta="answer"),
+        _completed([_reasoning_item("rs_1"), _reasoning_item("rs_2")]),
+    ]
+
+    message, _ = await _stream_message(model, events, agenerator, alist)
+
+    assert message["content"] == [
+        _reasoning_block(
+            "rs_1", text="streamed", summary=[{"type": "summary_text", "text": "streamed"}], encrypted_content="enc"
+        ),
+        _reasoning_block("rs_2", encrypted_content="enc2"),
+        {"text": "answer"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_captures_reasoning_only_in_the_terminal_output(agenerator, alist):
+    model = OpenAIResponsesModel(model_id="gpt-4o")
+    terminal = _reasoning_item("rs_1", encrypted=None, content=["full reasoning"])
+    events = [SimpleNamespace(type="response.output_text.delta", delta="answer"), _completed([terminal])]
+
+    message, _ = await _stream_message(model, events, agenerator, alist)
+
+    assert message["content"] == [
+        {"text": "answer"},
+        _reasoning_block("rs_1", text="full reasoning", content=[{"type": "reasoning_text", "text": "full reasoning"}]),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stream_stateful_keeps_reasoning_items_out_of_the_message(agenerator, alist):
+    model = OpenAIResponsesModel(model_id="gpt-4o", stateful=True)
+    events = [
+        SimpleNamespace(type="response.output_item.done", item=_reasoning_item("rs_1", summary=["plan"])),
+        SimpleNamespace(type="response.output_text.delta", delta="answer"),
+        _completed([_reasoning_item("rs_1", summary=["plan"])]),
+    ]
+
+    message, request = await _stream_message(model, events, agenerator, alist)
+
+    assert message["content"] == [{"text": "answer"}]
+    assert "include" not in request
+
+
+def test_format_request_messages_replays_reasoning_ahead_of_its_turn():
+    reasoning = _reasoning_block(
+        "rs_1", text="plan", summary=[{"type": "summary_text", "text": "plan"}], encrypted_content="enc"
+    )
+    messages = [
+        {"role": "user", "content": [{"text": "add"}]},
+        {
+            "role": "assistant",
+            "content": [
+                {"text": "calling"},
+                reasoning,
+                {"toolUse": {"toolUseId": "c1", "name": "add", "input": {"a": 1}}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [{"toolResult": {"toolUseId": "c1", "status": "success", "content": [{"text": "2"}]}}],
+        },
+    ]
+
+    items = OpenAIResponsesModel._format_request_messages(messages, reasoning_model_id="gpt-4o")
+
+    assert items[1:] == [
+        {
+            "type": "reasoning",
+            "summary": [{"type": "summary_text", "text": "plan"}],
+            "id": "rs_1",
+            "encrypted_content": "enc",
+        },
+        {"role": "assistant", "content": "calling"},
+        {"type": "function_call", "call_id": "c1", "name": "add", "arguments": '{"a": 1}'},
+        {"type": "function_call_output", "call_id": "c1", "output": "2"},
+    ]
+    assert list(items[1]) == ["type", "summary", "id", "encrypted_content"]
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        _reasoning_block("rs_1", model_id="gpt-5", summary=[], encrypted_content="enc"),
+        {"reasoningContent": {"providerData": {"provider": "other", "modelId": "gpt-4o", "data": {"id": "rs_1"}}}},
+        {"reasoningContent": {"reasoningText": {"text": "plain", "signature": "sig"}}},
+        {"reasoningContent": {"redactedContent": b"opaque"}},
+    ],
+)
+def test_format_request_messages_drops_reasoning_it_did_not_capture_from_this_model(block, caplog):
+    messages = [{"role": "assistant", "content": [block, {"text": "answer"}]}]
+
+    with caplog.at_level("WARNING"):
+        items = OpenAIResponsesModel._format_request_messages(messages, reasoning_model_id="gpt-4o")
+
+    assert items == [{"role": "assistant", "content": "answer"}]
+    assert "reasoningContent from another provider or model" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_agent_replays_captured_reasoning_on_the_next_tool_turn(openai_client, agenerator):
+    def add(a: int) -> int:
+        """Add one.
+
+        Args:
+            a: The number.
+        """
+        return a + 1
+
+    first = [
+        SimpleNamespace(type="response.output_item.done", item=_reasoning_item("rs_1", summary=["plan"])),
+        SimpleNamespace(
+            type="response.output_item.added",
+            item=SimpleNamespace(type="function_call", call_id="c1", name="add", id="fc_1"),
+        ),
+        SimpleNamespace(type="response.function_call_arguments.done", item_id="fc_1", arguments='{"a": 1}'),
+        _completed(),
+    ]
+    second = [SimpleNamespace(type="response.output_text.delta", delta="2"), _completed()]
+    openai_client.responses.create = unittest.mock.AsyncMock(side_effect=[agenerator(first), agenerator(second)])
+
+    agent = strands.Agent(
+        model=OpenAIResponsesModel(model_id="gpt-4o"), tools=[strands.tool(add)], callback_handler=None
+    )
+    agent("add one to 1")
+
+    replayed = openai_client.responses.create.call_args_list[1].kwargs["input"]
+    assert [item.get("type") for item in replayed[1:]] == ["reasoning", "function_call", "function_call_output"]
+    assert replayed[1] == {
+        "type": "reasoning",
+        "summary": [{"type": "summary_text", "text": "plan"}],
+        "id": "rs_1",
+        "encrypted_content": "enc",
+    }
+
+
+def _bad_request(message):
+    response = httpx.Response(400, request=httpx.Request("POST", "https://api.openai.com/v1/responses"))
+    return openai.BadRequestError(message, response=response, body=None)
+
+
+_REPLAY_HISTORY = [
+    {"role": "user", "content": [{"text": "go"}]},
+    {"role": "assistant", "content": [_reasoning_block("rs_1", summary=[], encrypted_content="enc"), {"text": "ok"}]},
+    {"role": "user", "content": [{"text": "next"}]},
+]
+
+
+@pytest.mark.asyncio
+async def test_stream_retries_once_without_reasoning_the_endpoint_rejects(openai_client, agenerator, alist):
+    rejection = _bad_request("The encrypted content for item rs_1 could not be verified.")
+    openai_client.responses.create = unittest.mock.AsyncMock(
+        side_effect=[rejection, agenerator([_completed()]), agenerator([_completed()])]
+    )
+    model = OpenAIResponsesModel(model_id="gpt-4o")
+
+    await alist(model.stream(_REPLAY_HISTORY))
+    await alist(model.stream(_REPLAY_HISTORY))
+
+    first, second, third = (call.kwargs["input"] for call in openai_client.responses.create.call_args_list)
+    assert [item.get("type") for item in first].count("reasoning") == 1
+    assert all(item.get("type") != "reasoning" for item in second + third)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("history", [_REPLAY_HISTORY[2:], _REPLAY_HISTORY])
+async def test_stream_raises_a_bad_request_that_is_not_about_replayed_reasoning(openai_client, alist, history):
+    message = "Invalid value for temperature." if history is _REPLAY_HISTORY else "Invalid reasoning effort."
+    openai_client.responses.create = unittest.mock.AsyncMock(side_effect=_bad_request(message))
+    model = OpenAIResponsesModel(model_id="gpt-4o")
+
+    with pytest.raises(openai.BadRequestError):
+        await alist(model.stream(history))
+    assert openai_client.responses.create.call_count == 1
+
+
+def test_format_request_messages_drops_reasoning_from_a_turn_with_nothing_after_it(caplog):
+    messages = [
+        {"role": "user", "content": [{"text": "go"}]},
+        {"role": "assistant", "content": [_reasoning_block("rs_1", summary=[], encrypted_content="enc")]},
+        {"role": "user", "content": [{"text": "next"}]},
+    ]
+
+    with caplog.at_level("WARNING"):
+        items = OpenAIResponsesModel._format_request_messages(messages, reasoning_model_id="gpt-4o")
+
+    assert all(item.get("type") != "reasoning" for item in items)
+    assert "reasoningContent without a message or tool call" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_stream_captures_reasoning_from_an_incomplete_response_and_skips_empty_items(agenerator, alist):
+    model = OpenAIResponsesModel(model_id="gpt-4o")
+    output = [ResponseReasoningItem(id="rs_0", type="reasoning", summary=[]), _reasoning_item("rs_1")]
+    incomplete = SimpleNamespace(
+        type="response.incomplete",
+        response=SimpleNamespace(
+            usage=None, incomplete_details=SimpleNamespace(reason="max_output_tokens"), output=output
+        ),
+    )
+
+    message, _ = await _stream_message(model, [incomplete], agenerator, alist)
+
+    assert message["content"] == [_reasoning_block("rs_1", encrypted_content="enc")]

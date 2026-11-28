@@ -37,7 +37,7 @@ from ..types.streaming import CitationsDelta, StreamEvent
 from ..types.tools import ToolChoice, ToolChoiceAuto, ToolChoiceToolDict, ToolSpec
 from ._cache_points import cache_control, section_ttl
 from ._defaults import resolve_config_metadata, resolve_max_tokens
-from ._model_info import ModelCapabilities, ModelInfo, lookup_model_info
+from ._model_info import ModelCapabilities, ModelInfo, _accepts_mime_type, lookup_model_info
 from ._native_output import (
     StructuredOutputMechanism,
     handle_rejected_mechanism,
@@ -163,6 +163,19 @@ _IMAGE_MEDIA_TYPES = {
     "png": "image/png",
     "webp": "image/webp",
 }
+
+# The media types this provider's formatter sends; it raises on any other media block.
+_SENDABLE_MIME_TYPES = (
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "application/pdf",
+    "text/csv",
+    "text/html",
+    "text/markdown",
+    "text/plain",
+)
 
 # Anthropic document sources accept only pdf (base64) and plain text; these formats are delivered as text.
 _TEXT_FILE_FORMATS = frozenset({"csv", "html", "md", "txt"})
@@ -338,15 +351,24 @@ class AnthropicModel(Model):
     def model_info(self) -> ModelInfo:
         """Everything the SDK knows about the configured model, with ``temporary_messages`` on for supported Claude.
 
-        ``temporary_messages`` follows the model id, not the client, so it is also on through the Bedrock and Vertex
-        clients. If those reject the turn-scoped system messages, set
+        ``accepted_mime_types`` keeps only the media types this provider sends. ``temporary_messages``
+        follows the model id, not the client, so it is also on through the Bedrock and Vertex clients. If those reject
+        the turn-scoped system messages, set
         ``model_info=ModelInfo(capabilities=ModelCapabilities(temporary_messages=False))``.
         See :attr:`strands.models.Model.model_info`.
         """
-        temporary_messages = lookup_model_info(self.config.get("model_id")).capabilities.temporary_messages
+        shared = lookup_model_info(self.config.get("model_id"))
+        capabilities = shared.capabilities
         return ModelInfo.merge(
             super().model_info,
-            ModelInfo(capabilities=ModelCapabilities(temporary_messages=temporary_messages)),
+            ModelInfo(
+                capabilities=ModelCapabilities(
+                    temporary_messages=capabilities.temporary_messages,
+                    accepted_mime_types=tuple(t for t in _SENDABLE_MIME_TYPES if _accepts_mime_type(shared, t)),
+                    # Claude signatures are bound to the vendor, so any Claude model or endpoint takes them back.
+                    reasoning_provider="anthropic",
+                )
+            ),
             self.get_config().get("model_info"),
         )
 
@@ -1101,6 +1123,12 @@ class AnthropicModel(Model):
                                 "delta": {
                                     "reasoningContent": {
                                         "signature": delta["signature"],
+                                        # Bound to the vendor, so any Claude model takes it back.
+                                        "providerData": {
+                                            "provider": "anthropic",
+                                            "modelId": self.config["model_id"],
+                                            "data": {},
+                                        },
                                     },
                                 },
                             },

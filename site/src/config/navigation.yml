@@ -295,6 +295,8 @@ sidebar:
                 slug: docs/user-guide/sdk/tools/mcp-tools
               - label: "Create custom tools"
                 slug: docs/user-guide/sdk/tools/custom-tools
+              - label: "Run tools in the background"
+                slug: docs/user-guide/sdk/tools/background-tasks
           - label: Sessions
             items:
               - label: "Persist state across sessions"
@@ -444,6 +446,8 @@ sidebar:
               - docs/user-guide/sdk/tools/tool-results
               - docs/user-guide/sdk/tools/mcp-transports
               - docs/user-guide/sdk/tools/executors
+              - label: "Background tasks"
+                slug: docs/user-guide/sdk/tools/background-tasks
               - label: Vended Tools
                 items:
                   - label: "Overview"

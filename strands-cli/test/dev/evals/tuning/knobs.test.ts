@@ -315,7 +315,7 @@ describe('optimization knobs', () => {
     ])
 
     expect(unset.options).toBe(DEFAULT_HARNESS_AGENT_CONFIG)
-    expect([unset.webSearch, set.webSearch, code.webSearch]).toEqual([false, true, false])
+    expect([unset.webSearch, set.webSearch, code.webSearch]).toEqual([true, true, false])
   })
 
   it.skipIf(process.platform === 'win32')('shouldReadThePythonHarnessDefaultsFromTheProjectPython', async () => {

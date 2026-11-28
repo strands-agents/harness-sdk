@@ -200,10 +200,10 @@ result = optimizer.run()
 print(result.summary())
 ```
 
-`run()` writes everything to a run folder under `.strands-evals/optimization/runs/` and
-returns the result when the run ends. To watch the run fill in as it goes, open that folder
-in the browser with `strands-evals ui .strands-evals/optimization/runs/`. Use `await optimizer.run_async()` inside an event
-loop.
+`run()` writes everything to a run folder under `optimization/runs/` in the working
+directory and returns the result when the run ends. To watch the run fill in as it goes,
+run `strands-evals ui .` from that directory. Use `await optimizer.run_async()` inside an
+event loop.
 
 ```text
 # Example output (abridged):

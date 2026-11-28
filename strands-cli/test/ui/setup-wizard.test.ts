@@ -649,8 +649,11 @@ describe('setup presentation', () => {
       expect(frame).toContain('Reasoning')
       await scroll('Reasoning', 65)
       expect(frame).toContain('Web search')
-      await click('Exa')
-      expect(frame).toContain('Third-party search via Exa')
+      expect(frame).toContain('Bedrock AgentCore web search')
+      await click('Off')
+      expect(frame).toContain('Built-in search available')
+      await click('AgentCore')
+      expect(frame).toContain('Bedrock AgentCore web search')
       await scroll('Web search', 64)
       expect(frame).toContain('Reasoning')
       if (columns === 80) {
@@ -660,7 +663,7 @@ describe('setup presentation', () => {
       }
       await click('Save and Launch')
       await vi.waitFor(() => expect(onComplete).toHaveBeenCalledOnce())
-      expect(config.snapshot().profile.builtinTools).toMatchObject({ web_search: 'exa' })
+      expect(config.snapshot().profile.builtinTools).toContain('web_search')
     } finally {
       instance.unmount()
       await instance.waitUntilExit()
@@ -1197,7 +1200,7 @@ describe('setup presentation', () => {
       expect(setupSwitch(frame, 'read').state).toBe('Off')
       await press('\t', '\r')
       expect(frame).toContain('Choose plugins and features')
-      await press('\t', '\r')
+      await press('\t')
       expect(setupSwitch(frame, 'Todos').state).toBe('Off')
       await clickSwitch('Todos')
       expect(setupSwitch(frame, 'Todos').state).toBe('On')

@@ -39,8 +39,8 @@ npm install -g @strands-agents/cli   # gives you the `strands` command
 strands "summarize what this repo does"
 ```
 
-By default you get Claude Opus 5 on Amazon Bedrock, with reasoning, shell and file tools, web
-access, caching, todos, environment context, a `subagent` delegate, Agent Skills, resumable
+By default you get Claude Opus 5.5 on Amazon Bedrock, with reasoning, shell and file tools, web
+access, caching, environment context, a `subagent` delegate, Agent Skills, resumable
 sessions, long-term memory, and automatic context management. The full-screen terminal keeps
 background delegates non-blocking and automatically continues the agent when their results arrive.
 
@@ -319,7 +319,7 @@ In each command, the agent asks one question at a time on screen. Add words afte
   - The run continues in the background. When it finishes, its proposed edits show on screen as a diff, one edit at a time. Select **Apply this change** or **Leave it as it is**. You can also write "approve this" or "leave it" in the chat.
   - The agent source changes only with the edits that you apply. When **Auto-accept optimization results** (`autoAcceptOptimizationResults`) is on, a run that finishes writes its edits without a review. This setting is in the **Strands dev workspace** section of `/settings`, and it is off by default. A run that you stop early still shows its edits for review.
   - From a shell, `strands dev optimize <experiment>` runs the optimizer and prints the result. It does not change the agent source.
-- **Auto-optimize every N turns** (`autoOptimize`, in the same section) starts an optimization by itself: every 5, 10, 20, 50, or 100 chat turns, dev makes an experiment from your chats with the agent and tunes the agent on that experiment. This happens in the background and not in your chat: the agent of the workspace makes the experiment in a process of its own, which keeps no session, and dev then starts the optimizer with the defaults of the plan. You are asked nothing. One notice in the chat says that it began and then what it started, or why it started nothing, and the line below the chat input shows the work. The process writes its log to `strands-dev/tmp/.state/auto-optimize/`, and it stops when dev closes or when you turn the setting off. Work that dev closed on starts again at your next turn. Each of these runs is paid. It is off by default. The count of turns is kept when dev closes, and it starts again when you change the number. A run that is due waits while another optimization runs or its edits wait for your answer. You can also ask for it in the chat, for example “optimize every 20 turns from my history”. When the optimization finishes, its edits wait for your review as those of any run do; with **Auto-accept optimization results** on as well, they are written without a review.
+- **Auto-optimize every N turns** (`autoOptimize`, in the same section) is a field for a whole number from 1 to 9999 (digits only; Enter saves, Esc cancels, and 0 or an empty field turns it off). It starts an optimization by itself: every that many chat turns, dev makes an experiment from your chats with the agent and tunes the agent on that experiment. This happens in the background and not in your chat: the agent of the workspace makes the experiment in a process of its own, which keeps no session, and dev then starts the optimizer with the defaults of the plan. You are asked nothing. One notice in the chat says that it began and then what it started, or why it started nothing, and the line below the chat input shows the work. Both number the two stages: `auto-optimize 1/2` while the experiment is made, when the agent is still unchanged, and `auto-optimize 2/2` while the optimizer runs, with what it is doing and its count of rollouts. Only the notice of the finished run has a tick, with the score before and after. The process writes its log to `strands-dev/tmp/.state/auto-optimize/`, and it stops when dev closes or when you turn the setting off. Work that dev closed on starts again at your next turn. Each of these runs is paid. It is off by default. The count of turns is kept when dev closes, and it starts again when you change the number. A run that is due waits while another optimization runs or its edits wait for your answer. You can also ask for it in the chat, for example “optimize every 20 turns from my history”. When the optimization finishes, its edits wait for your review as those of any run do; with **Auto-accept optimization results** on as well, they are written without a review.
 - Effort tuning works for a model id string, and for a `BedrockModel`, `AnthropicModel`, or `OpenAIModel` object. For a model object, each trial sets the reasoning fields of that level on a copy of the object. An accepted change writes those fields into the object.
 
 You can also ask in plain words, for example "show my experiments", "rerun the failures", or "optimize the refund harness".
@@ -354,7 +354,7 @@ At startup, dev moves experiments from the old `tmp/experiments/`, `tmp/reports/
 
 ### Optimization runs
 
-`/optimize` runs the `strands-evals optimize run` command of strands-agents-evals 1.12.1.
+`/optimize` runs the `strands-evals optimize run` command of strands-agents-evals 1.13.0.
 For each run, dev writes `.state/task.py` in the folder of the run. The `--agent` and `--rollout` flags of the command refer to this file.
 The file imports `strands_dev_evals`, a Python package that the CLI includes. Then the file calls `optimize_task` with the agent file, the experiment, and the space file.
 
@@ -390,12 +390,12 @@ When the search stops on a proposer error, the command writes the error and exit
 **Limits:**
 
 - Dev tunes only what its space file declares: `createHarness` options as text, choices, and switches, plus the instructions and the effort. Dev does not tune model parameters at this time, for example the temperature.
-- At this time, evaluation runs and `/optimize` run a TypeScript agent in a Node runner, outside strands-evals. Thus its runs record only the answer and the token usage, not the trace. Dev rejects an evaluator that reads the trace. In strands-agents-evals 1.12.1, `optimize run` can run a TypeScript agent file, but `run` cannot. Thus dev keeps its runner for the two commands at this time.
+- At this time, evaluation runs and `/optimize` run a TypeScript agent in a Node runner, outside strands-evals. Thus its runs record only the answer and the token usage, not the trace. Dev rejects an evaluator that reads the trace. In strands-agents-evals 1.13.0, `optimize run` can run a TypeScript agent file, but `run` cannot. Thus dev keeps its runner for the two commands at this time.
 - Dev applies the champion itself, in the Apply step of `/optimize`. The upstream CLI only writes the champion to `best.diff` and `best.values.json`.
 
 ### Evals UI
 
-strands-agents-evals 1.12.1 includes the evals UI. When a dev chat starts, dev starts `strands-evals ui` for `strands-dev/experiments/`.
+strands-agents-evals 1.13.0 includes the evals UI. When a dev chat starts, dev starts `strands-evals ui` for `strands-dev/experiments/`.
 The evals UI is a local web page. It shows experiments, reports, and optimization runs.
 When the page server is ready, a notice in the chat gives the link.
 Ask the agent to open an experiment, its last report, or an optimization run. The agent uses the `strands_dev_open_evals_ui` tool.
@@ -410,12 +410,12 @@ If the evals UI cannot start, the chat continues to work. A message gives the ca
 
 The experiment skill, workspace instructions, and `strands_dev_*` tools are injected only into the dev chat at runtime. They are not added to the base harness, saved profile, or exported agent source. Exports preserve authored files; they do not remove dev instructions that someone explicitly writes into those files.
 
-**Evals dependency:** the evaluation workflow installs `strands-agents-evals[optimization]==1.12.1` from PyPI in a separate Python environment on first use.
+**Evals dependency:** the evaluation workflow installs `strands-agents-evals[optimization]==1.13.0` from PyPI in a separate Python environment on first use.
 Case generation currently uses a separate AWS Bedrock connection; it does not inherit the chat model, provider endpoint, or credentials. Leave the generator model empty for the evals Python SDK default, or explicitly choose a Bedrock model your AWS account can invoke. It does not change the agent being tested. Python 3.10 or later, access to your package index, and model credentials for the run are necessary.
 
 Dev installs strands-agents-evals one time for each release and Python version, in `~/.strands/evals/`. All workspaces share that environment.
 Dev deletes an environment that no workspace used for 7 days. The install uses the package index settings of your pip configuration.
-The `session-converter` skill comes from the installed package. Dev loads the `strands-evals` and `optimize` skills from the `v1.12.1` tag of strands-agents/evals.
+The `session-converter` skill comes from the installed package. Dev loads the `strands-evals` and `optimize` skills from the `v1.13.0` tag of strands-agents/evals.
 
 The checkout command `strands-dev` is separate: use `strands-dev dev` to run this workflow from a source checkout.
 
@@ -518,7 +518,7 @@ Run `strands --help` for the parser's current list.
 | `--effort <level>`            | Harness backend | Reasoning effort: `auto` (default), `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`                                        |
 | `--instructions <text>`       | Harness backend | Append domain instructions to the system prompt                                                                                         |
 | `--builtin-tools <tools>`     | Harness backend | Comma-separated built-ins, or `""` for none; defaults to `shell,read,write,edit,web_fetch,web_search,programmatic_tool_caller,subagent` |
-| `--builtin-plugins <plugins>` | Harness backend | Comma-separated built-ins, or `""` for none; defaults to `todos,environment`                                                            |
+| `--builtin-plugins <plugins>` | Harness backend | Comma-separated built-ins, or `""` for none; defaults to `environment` (`todos` is opt-in)                                              |
 | `--caching <mode>`            | Harness backend | Prompt caching: `auto` (default) or `off`                                                                                               |
 | `--context-manager <mode>`    | Harness backend | `auto` (default), `agentic`, or `off`; object forms go through `--set`                                                                  |
 | `--session <mode>`            | Harness backend | Conversation persistence: `on` (default) or `off`                                                                                       |
@@ -553,7 +553,10 @@ profile. Applying `/setup` changes reloads the agent while preserving the conver
 ### Web search and Exa
 
 `web_search` uses the model provider's own search where it has one (OpenAI, Google, GPT-5, GPT-6, and Daybreak
-models on `bedrock-mantle`, Anthropic). On a model without native search the Tools step offers
+models on `bedrock-mantle`, Anthropic). Other Amazon Bedrock models search through Amazon Bedrock AgentCore
+web search, which needs AWS credentials with `bedrock-agentcore:InvokeWebSearch` (a Bedrock API key does not cover
+it; a search without access fails as a tool error). Quickstart turns `web_search` on wherever the model has search.
+On any other model without native search the Tools step offers
 `web_search` through [Exa](https://exa.ai) instead, unchecked; ticking it writes
 `"web_search": "exa"` to the profile.
 
@@ -988,8 +991,8 @@ projects).
 Turn it off with `STRANDS_CLI_TELEMETRY=off` (or `DO_NOT_TRACK=1`), the **Usage ping** toggle in `/settings`
 (takes effect at the next launch), or `telemetry = false` under `[settings]` in `~/.strands/cli.toml`.
 
-`strands dev` does not send the launch ping. It sends one ping for each step of the dev workflow to
-`https://telemetry.strandsagents.com/strands-dev/ping`, with the same off switches. The whole payload is:
+`strands dev` does not send the launch ping. It sends one ping for each step of the dev workflow to the same
+endpoint, `https://telemetry.strandsagents.com/ping`, with the same off switches. The whole payload is:
 
 ```json
 {

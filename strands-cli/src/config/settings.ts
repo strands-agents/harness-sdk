@@ -27,16 +27,16 @@ export const CONTEXT_OFFLOAD_THRESHOLD_OPTIONS = [
 export type ContextOffloadThreshold = (typeof CONTEXT_OFFLOAD_THRESHOLD_OPTIONS)[number]['value']
 
 /** How many chat turns pass between the optimizations that strands dev starts by itself; 0 starts none. */
-export const AUTO_OPTIMIZE_OPTIONS = [
-  { label: 'Off', value: 0 },
-  { label: '5', value: 5 },
-  { label: '10', value: 10 },
-  { label: '20', value: 20 },
-  { label: '50', value: 50 },
-  { label: '100', value: 100 },
-] as const
+export type AutoOptimizeCadence = number
 
-export type AutoOptimizeCadence = (typeof AUTO_OPTIMIZE_OPTIONS)[number]['value']
+/** The most chat turns a cadence can be: what the four digits of its settings field hold. */
+export const AUTO_OPTIMIZE_MAX_TURNS = 9999
+
+/** The value as a cadence when it is a whole number of turns from 0 to the maximum, or `undefined`. */
+export const autoOptimizeCadence = (value: unknown): AutoOptimizeCadence | undefined =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= AUTO_OPTIMIZE_MAX_TURNS
+    ? value
+    : undefined
 
 export const SETTINGS_CATEGORIES = [
   {
@@ -153,8 +153,10 @@ export interface SettingDefinition {
   key: SettingKey
   label: string
   section: SettingsCategory
-  control: 'segmented' | 'toggle'
+  /** `number` is a field that takes a whole number from 0 to `max`; it has no options. */
+  control: 'segmented' | 'toggle' | 'number'
   options: readonly { label: string; value: string | number | boolean }[]
+  max?: number
 }
 
 export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
@@ -257,8 +259,9 @@ export const SETTING_DEFINITIONS: readonly SettingDefinition[] = [
     key: 'autoOptimize',
     label: 'Auto-optimize every N turns',
     section: 'Workspace',
-    control: 'segmented',
-    options: AUTO_OPTIMIZE_OPTIONS,
+    control: 'number',
+    options: [],
+    max: AUTO_OPTIMIZE_MAX_TURNS,
   },
   {
     key: 'autoAcceptOptimizationResults',
@@ -393,7 +396,7 @@ export function parseSettings(saved: unknown): ChatSettings {
 const savedWorkspaceSettings = (
   value: Record<string, unknown>
 ): Pick<ChatSettings, 'autoAcceptOptimizationResults' | 'autoOptimize'> => {
-  const autoOptimize = AUTO_OPTIMIZE_OPTIONS.find(({ value: option }) => option === value.autoOptimize)?.value
+  const autoOptimize = autoOptimizeCadence(value.autoOptimize)
   return {
     ...(typeof value.autoAcceptOptimizationResults === 'boolean'
       ? { autoAcceptOptimizationResults: value.autoAcceptOptimizationResults }
@@ -438,7 +441,7 @@ export function parseSettingUpdate(setting: string, current: ChatSettings): Part
       return frogTheme === undefined ? undefined : { frogTheme }
     }
     case 'autoOptimize': {
-      const cadence = AUTO_OPTIMIZE_OPTIONS.find(({ value }) => String(value) === selected)?.value
+      const cadence = /^\d+$/.test(selected ?? '') ? autoOptimizeCadence(Number(selected)) : undefined
       return cadence === undefined ? undefined : { autoOptimize: cadence }
     }
     case 'contextOffloadThreshold': {

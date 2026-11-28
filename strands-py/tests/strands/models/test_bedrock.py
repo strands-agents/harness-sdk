@@ -58,6 +58,12 @@ def session_cls():
         yield mock_session_cls
 
 
+@pytest.fixture(autouse=True)
+def cache_points_refused(monkeypatch):
+    """Isolate the cache point refusals each test records from the process-global registry."""
+    monkeypatch.setattr(strands.models.bedrock, "_CACHE_POINTS_REFUSED", {})
+
+
 @pytest.fixture
 def mock_client_method(session_cls):
     # the boto3.Session().client(...) method
@@ -1090,7 +1096,17 @@ async def test_stream_same_index_reasoning_survives_agent_tool_loop(bedrock_clie
     }
     tru_assistant = serialized_requests[1]["messages"][1]
     assert tru_assistant == exp_assistant
-    assert agent.messages[1] == {**exp_assistant, "metadata": ANY, "tracking_id": ANY}
+    tag = {"provider": "anthropic", "modelId": "anthropic.claude-test", "data": {}}
+    stored = [
+        {"reasoningContent": {**block["reasoningContent"], "providerData": tag}}
+        for block in exp_assistant["content"][:2]
+    ]
+    assert agent.messages[1] == {
+        **exp_assistant,
+        "content": [*stored, *exp_assistant["content"][2:]],
+        "metadata": ANY,
+        "tracking_id": ANY,
+    }
     assert serialized_requests[1]["messages"][0] == serialized_requests[0]["messages"][0]
     tru_tool_result = serialized_requests[1]["messages"][2]["content"][0]["toolResult"]["toolUseId"]
     assert tru_tool_result == "tool-1"
@@ -4562,7 +4578,9 @@ def test_cache_strategy_auto_falls_back_to_the_claude_name_test_for_ids_the_mode
 
     model = BedrockModel(model_id=model_id, cache_config=CacheConfig(strategy="auto"))
 
-    assert model.model_info.capabilities == ModelCapabilities(server_side_summary=False, temporary_messages=False)
+    assert model.model_info.capabilities == ModelCapabilities(
+        server_side_summary=False, temporary_messages=False, reasoning_provider="anthropic"
+    )
     assert model._cache_strategy == "anthropic"
 
 
@@ -4574,13 +4592,13 @@ def test_cache_strategy_auto_is_none_for_an_unlisted_id_that_is_not_claude(bedro
         cache_config=CacheConfig(strategy="auto"),
     )
 
-    assert model.model_info.capabilities == ModelCapabilities(server_side_summary=False, temporary_messages=False)
+    assert model.model_info.capabilities == ModelCapabilities(
+        server_side_summary=False, temporary_messages=False, reasoning_provider="anthropic"
+    )
     assert model._cache_strategy is None
 
 
-@pytest.mark.parametrize(
-    "model_id", ["us.openai.gpt-6-luna", "openai.gpt-6.1-sol", "openai.gpt-5.6-sol", "us.xai.grok-4.7"]
-)
+@pytest.mark.parametrize("model_id", ["us.openai.gpt-5.5", "openai.gpt-5.4", "us.xai.grok-4.7"])
 def test_model_info_reports_openai_gpt_and_xai_models_as_implicitly_cached(bedrock_client, model_id, caplog):
     """The listed cache points are for Bedrock's OpenAI-compatible APIs; Converse takes none for these models."""
     _ = bedrock_client
@@ -5093,6 +5111,474 @@ def test_nova_keeps_cache_points_on_earlier_user_messages_behind_a_caller_placed
     assert len(_all_cache_points(request)) <= 4
 
 
+GPT_TOOL_SPEC: ToolSpec = {"name": "calculator", "description": "Calculate", "inputSchema": {"json": {}}}
+
+
+def _gpt_tool_result(tool_use_id):
+    return {"toolResult": {"toolUseId": tool_use_id, "status": "success", "content": [{"text": "42"}]}}
+
+
+def _gpt_tool_use(tool_use_id):
+    return {
+        "role": "assistant",
+        "content": [{"toolUse": {"toolUseId": tool_use_id, "name": "calculator", "input": {}}}],
+    }
+
+
+def _gpt_tool_loop():
+    return [
+        {"role": "user", "content": [{"text": "What is 6 x 7?"}]},
+        _gpt_tool_use("id-1"),
+        {"role": "user", "content": [_gpt_tool_result("id-1")]},
+        _gpt_tool_use("id-2"),
+        {"role": "user", "content": [_gpt_tool_result("id-2")]},
+    ]
+
+
+@pytest.mark.parametrize("model_id", ["us.openai.gpt-6-luna", "us.openai.gpt-5.6-sol", "global.openai.gpt-6.2-astra"])
+def test_gpt_caches_the_system_prompt_and_the_prompt_that_started_a_tool_loop_but_not_the_tools(
+    bedrock_client, model_id, caplog
+):
+    _ = bedrock_client
+    model = BedrockModel(model_id=model_id, cache_config=CacheConfig())
+
+    with caplog.at_level(logging.WARNING, logger="strands.models.bedrock"):
+        request = model.format_request(
+            _gpt_tool_loop(), tool_specs=[GPT_TOOL_SPEC], system_prompt_content=[{"text": "Be helpful"}]
+        )
+
+    assert model.model_info.capabilities.prompt_caching == "cache_points"
+    assert request["system"] == [{"text": "Be helpful"}, NOVA_CACHE_POINT]
+    assert request["toolConfig"]["tools"] == [{"toolSpec": ANY}]
+    assert request["messages"][0]["content"] == [{"text": "What is 6 x 7?"}, NOVA_CACHE_POINT]
+    assert len(_all_cache_points(request)) == 2
+    assert "does not support automatic caching" not in caplog.text
+
+
+def test_gpt_keeps_per_call_text_after_a_tool_result_out_of_the_cached_prefix(bedrock_client):
+    _ = bedrock_client
+    model = BedrockModel(model_id="us.openai.gpt-6-luna", cache_config=CacheConfig())
+    messages = [
+        *_gpt_tool_loop()[:2],
+        {"role": "user", "content": [_gpt_tool_result("id-1"), {"text": "<reminder>turn 2</reminder>"}]},
+    ]
+
+    request = model.format_request(messages, system_prompt_content=[{"text": "Be helpful"}], dynamic_trailing_blocks=1)
+
+    assert request["messages"][0]["content"] == [{"text": "What is 6 x 7?"}, NOVA_CACHE_POINT]
+    assert request["messages"][-1]["content"] == [
+        {"toolResult": ANY},
+        {"text": "<reminder>turn 2</reminder>"},
+    ]
+
+
+def test_gpt_drops_every_configured_ttl_and_warns(bedrock_client):
+    _ = bedrock_client
+    model_id = "us.openai.gpt-6-luna"
+    model = BedrockModel(
+        model_id=model_id, cache_config=CacheConfig(ttl="1h", messages_ttl="1h", system_prompt_ttl="1h")
+    )
+
+    with pytest.warns(
+        UserWarning,
+        match=re.escape(
+            f"model_id=<{model_id}> | ttl is not supported by this model, using the default cache duration"
+        ),
+    ):
+        request = model.format_request(
+            _gpt_tool_loop(), tool_specs=[GPT_TOOL_SPEC], system_prompt_content=[{"text": "Be helpful"}]
+        )
+
+    assert _all_cache_points(request) == [{"type": "default"}, {"type": "default"}]
+
+
+def test_gpt_warns_that_an_explicit_tools_ttl_has_no_effect(bedrock_client):
+    _ = bedrock_client
+    model_id = "us.openai.gpt-6-luna"
+    model = BedrockModel(model_id=model_id, cache_config=CacheConfig(tools_ttl="1h"))
+
+    with pytest.warns(
+        UserWarning,
+        match=re.escape(
+            f"model_id=<{model_id}>, tools_ttl=<1h> | this model accepts no tool-level cache point,"
+            " tool definitions are cached only as part of the system prompt prefix"
+        ),
+    ):
+        request = model.format_request(_gpt_tool_loop(), tool_specs=[GPT_TOOL_SPEC])
+
+    assert request["toolConfig"]["tools"] == [{"toolSpec": ANY}]
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    ["openai.gpt-5.4", "us.openai.gpt-5.5", "openai.gpt-oss-120b-1:0", "us.xai.grok-4.7", "openai.gpt-5.6-cyber"],
+)
+def test_gpt_sends_no_cache_point_for_a_model_converse_does_not_take_them_for(bedrock_client, model_id):
+    _ = bedrock_client
+    model = BedrockModel(model_id=model_id, cache_config=CacheConfig())
+
+    request = model.format_request(
+        _gpt_tool_loop(), tool_specs=[GPT_TOOL_SPEC], system_prompt_content=[{"text": "Be helpful"}]
+    )
+
+    assert _all_cache_points(request) == []
+
+
+CACHE_POINTS_REFUSAL_MESSAGE = (
+    "You invoked an unsupported model or your request did not allow prompt caching."
+    " See the documentation for more information."
+)
+
+
+def _client_error(code, message):
+    return ClientError({"Error": {"Code": code, "Message": message}}, "ConverseStream")
+
+
+def _cache_points_refusal():
+    return _client_error("AccessDeniedException", CACHE_POINTS_REFUSAL_MESSAGE)
+
+
+FALLBACK_MESSAGES = [{"role": "user", "content": [{"text": "Hello"}]}]
+FALLBACK_OPTIONS = {"tool_specs": [GPT_TOOL_SPEC], "system_prompt": "Be helpful"}
+
+
+def _fallback_warning(model_id, region="us-west-2"):
+    return f"model_id=<{model_id}>, region=<{region}> | converse rejected cache points for this model, sending none"
+
+
+def _fallback_warnings(caplog, model_id):
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith(f"model_id=<{model_id}>, region=")
+    ]
+
+
+def _mock_rejections(bedrock_client, streaming, *errors):
+    """Mock the Converse method to raise each error in turn, then return a successful response."""
+    converse_method = bedrock_client.converse_stream if streaming else bedrock_client.converse
+    pending = list(errors)
+
+    def send(**_):
+        if pending:
+            raise pending.pop(0)
+        if streaming:
+            return {
+                "stream": [
+                    {"messageStart": {"role": "assistant"}},
+                    {"contentBlockDelta": {"delta": {"text": "Hi"}}},
+                    {"messageStop": {"stopReason": "end_turn"}},
+                ]
+            }
+        return {
+            "output": {"message": {"role": "assistant", "content": [{"text": "Hi"}]}},
+            "stopReason": "end_turn",
+            "usage": {"inputTokens": 10, "outputTokens": 5, "totalTokens": 15},
+        }
+
+    converse_method.side_effect = send
+    return converse_method
+
+
+def _sent_requests(converse_method):
+    return [call.kwargs for call in converse_method.call_args_list]
+
+
+def _cache_point_count(request):
+    return len(_all_cache_points(request))
+
+
+@pytest.mark.parametrize(
+    ("config", "streaming"),
+    [
+        ({"model_id": "us.openai.gpt-6-sol"}, True),
+        ({"model_id": "eu.openai.gpt-6-sol"}, False),
+        (
+            {
+                "model_id": "us.openai.gpt-5.2",
+                "model_info": ModelInfo(capabilities=ModelCapabilities(prompt_caching="cache_points")),
+            },
+            True,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_gpt_resends_without_cache_points_after_a_prompt_caching_refusal_and_keeps_them_off(
+    bedrock_client, alist, caplog, config, streaming
+):
+    converse_method = _mock_rejections(bedrock_client, streaming, _cache_points_refusal())
+    model = BedrockModel(**config, streaming=streaming, cache_config=CacheConfig())
+
+    with caplog.at_level(logging.WARNING, logger="strands.models.bedrock"):
+        events = await alist(model.stream(FALLBACK_MESSAGES, **FALLBACK_OPTIONS))
+
+        assert any("messageStop" in event for event in events)
+        rejected, resent = _sent_requests(converse_method)
+        assert _cache_point_count(rejected) == 2
+        assert resent == {
+            **rejected,
+            "system": [{"text": "Be helpful"}],
+            "messages": [{"role": "user", "content": [{"text": "Hello"}]}],
+        }
+
+        caller_placed = [{"role": "user", "content": [{"text": "Hello"}, NOVA_CACHE_POINT]}]
+        system_prompt_content = [{"text": "Be helpful"}, NOVA_CACHE_POINT]
+        await alist(
+            BedrockModel(**config, streaming=streaming, cache_config=CacheConfig()).stream(
+                FALLBACK_MESSAGES, **FALLBACK_OPTIONS
+            )
+        )
+        await alist(
+            BedrockModel(**config, streaming=streaming).stream(
+                caller_placed, system_prompt_content=system_prompt_content
+            )
+        )
+
+    assert converse_method.call_count == 4
+    assert [_cache_point_count(request) for request in _sent_requests(converse_method)[2:]] == [0, 0]
+    assert _fallback_warnings(caplog, config["model_id"]) == [_fallback_warning(config["model_id"])]
+
+
+@pytest.mark.asyncio
+async def test_gpt_reports_implicit_caching_once_its_cache_points_are_refused(bedrock_client, alist):
+    _mock_rejections(bedrock_client, True, _cache_points_refusal())
+    model = BedrockModel(model_id="apac.openai.gpt-6-sol", cache_config=CacheConfig())
+
+    await alist(model.stream(FALLBACK_MESSAGES, **FALLBACK_OPTIONS))
+
+    assert model.model_info.capabilities.prompt_caching == "auto"
+
+
+CACHE_POINT_FIELD_REJECTION = "This model doesn't support the cachePoint field. Remove cachePoint and try again."
+ASSISTANT_CACHE_POINT_FIELD_REJECTION = (
+    "This model doesn't support the cachePoint field for assistant messages. Remove cachePoint and try again."
+)
+
+
+@pytest.mark.parametrize(
+    ("message", "model_id", "streaming"),
+    [
+        (CACHE_POINT_FIELD_REJECTION, "us.openai.gpt-6.1-sol", True),
+        (CACHE_POINT_FIELD_REJECTION, "eu.openai.gpt-6.1-sol", False),
+        (ASSISTANT_CACHE_POINT_FIELD_REJECTION, "us.openai.gpt-6.2-astra", True),
+        (ASSISTANT_CACHE_POINT_FIELD_REJECTION, "eu.openai.gpt-6.2-astra", False),
+    ],
+)
+@pytest.mark.asyncio
+async def test_gpt_raises_a_cache_point_field_rejection_without_resending_or_turning_cache_points_off(
+    bedrock_client, alist, caplog, message, model_id, streaming
+):
+    converse_method = _mock_rejections(bedrock_client, streaming, _client_error("ValidationException", message))
+    model = BedrockModel(model_id=model_id, streaming=streaming, cache_config=CacheConfig())
+
+    with caplog.at_level(logging.WARNING, logger="strands.models.bedrock"):
+        with pytest.raises(ClientError, match=re.escape(message)):
+            await alist(model.stream(FALLBACK_MESSAGES, **FALLBACK_OPTIONS))
+        converse_method.assert_called_once()
+
+        await alist(
+            BedrockModel(model_id=model_id, streaming=streaming, cache_config=CacheConfig()).stream(
+                FALLBACK_MESSAGES, **FALLBACK_OPTIONS
+            )
+        )
+
+    assert [_cache_point_count(request) for request in _sent_requests(converse_method)] == [2, 2]
+    assert _fallback_warnings(caplog, model_id) == []
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"model_id": "us.anthropic.claude-sonnet-4-6", "cache_config": CacheConfig()},
+        {"model_id": "us.meta.llama3-3-70b-instruct-v1:0", "cache_config": CacheConfig(strategy="anthropic")},
+        {"model_id": "mistral.mistral-large-2407-v1:0", "cache_config": CacheConfig(strategy="anthropic")},
+        {"model_id": "openai.gpt-oss-120b-1:0", "cache_config": CacheConfig(strategy="anthropic")},
+    ],
+)
+@pytest.mark.asyncio
+async def test_prompt_caching_refusal_is_raised_without_resending_or_turning_cache_points_off(
+    bedrock_client, alist, caplog, config
+):
+    converse_method = _mock_rejections(bedrock_client, True, _cache_points_refusal())
+    model = BedrockModel(**config)
+
+    with caplog.at_level(logging.WARNING, logger="strands.models.bedrock"):
+        with pytest.raises(ClientError, match=re.escape(CACHE_POINTS_REFUSAL_MESSAGE)):
+            await alist(model.stream(FALLBACK_MESSAGES, **FALLBACK_OPTIONS))
+        converse_method.assert_called_once()
+
+        await alist(BedrockModel(**config).stream(FALLBACK_MESSAGES, **FALLBACK_OPTIONS))
+
+    rejected, later = [_cache_point_count(request) for request in _sent_requests(converse_method)]
+    assert rejected > 0
+    assert later == rejected
+    assert _fallback_warnings(caplog, config["model_id"]) == []
+
+
+@pytest.mark.asyncio
+async def test_gpt_keeps_cache_points_off_only_in_the_region_that_refused_them(bedrock_client, alist, caplog):
+    model_id = "us.openai.gpt-5.6-luna"
+    converse_method = _mock_rejections(bedrock_client, True, _cache_points_refusal())
+
+    with caplog.at_level(logging.WARNING, logger="strands.models.bedrock"):
+        for region in ["us-west-2", "us-east-1", "us-west-2"]:
+            bedrock_client.meta.region_name = region
+            model = BedrockModel(model_id=model_id, region_name=region, cache_config=CacheConfig())
+            await alist(model.stream(FALLBACK_MESSAGES, **FALLBACK_OPTIONS))
+
+    assert converse_method.call_count == 4
+    assert [_cache_point_count(request) for request in _sent_requests(converse_method)] == [2, 0, 2, 0]
+    assert _fallback_warnings(caplog, model_id) == [_fallback_warning(model_id, "us-west-2")]
+
+
+def _spy_on_formatted(monkeypatch, model):
+    """Record the requests a model formats, before the fallback strips any cache point."""
+    formatted = []
+    format_request = model.format_request
+
+    def spy(*args, **kwargs):
+        formatted.append(format_request(*args, **kwargs))
+        return formatted[-1]
+
+    monkeypatch.setattr(model, "format_request", spy)
+    return formatted
+
+
+@pytest.mark.asyncio
+async def test_gpt_formats_the_first_request_of_a_new_instance_in_a_refusing_region_without_cache_points(
+    bedrock_client, alist, monkeypatch
+):
+    model_id = "apac.openai.gpt-6.2-sol"
+    converse_method = _mock_rejections(bedrock_client, True, _cache_points_refusal())
+    await alist(
+        BedrockModel(model_id=model_id, cache_config=CacheConfig()).stream(FALLBACK_MESSAGES, **FALLBACK_OPTIONS)
+    )
+    model = BedrockModel(model_id=model_id, cache_config=CacheConfig())
+    formatted = _spy_on_formatted(monkeypatch, model)
+
+    await alist(model.stream(FALLBACK_MESSAGES, **FALLBACK_OPTIONS))
+
+    assert converse_method.call_count == 3
+    assert _cache_point_count(formatted[0]) == 0
+    assert _cache_point_count(_sent_requests(converse_method)[2]) == 0
+    assert model.model_info.capabilities.prompt_caching == "auto"
+
+
+@pytest.mark.asyncio
+async def test_gpt_strips_a_tools_cache_point_and_keeps_the_rest_of_the_tool_config(bedrock_client, alist, monkeypatch):
+    model_id = "global.openai.gpt-5.6-terra"
+    converse_method = _mock_rejections(bedrock_client, True, _cache_points_refusal())
+    clock: ToolSpec = {"name": "clock", "description": "Tell the time", "inputSchema": {"json": {}}}
+    options = {**FALLBACK_OPTIONS, "tool_specs": [GPT_TOOL_SPEC, clock], "tool_choice": {"any": {}}}
+    await alist(BedrockModel(model_id=model_id, cache_config=CacheConfig()).stream(FALLBACK_MESSAGES, **options))
+    # In a refusing region the GPT placement rules no longer apply, so an explicit strategy places a tools point.
+    model = BedrockModel(model_id=model_id, cache_config=CacheConfig(strategy="anthropic", tools_ttl=True))
+    formatted = _spy_on_formatted(monkeypatch, model)
+
+    await alist(model.stream(FALLBACK_MESSAGES, **options))
+
+    assert converse_method.call_count == 3
+    tool_config = {
+        "tools": [
+            {"toolSpec": unittest.mock.ANY},
+            {"toolSpec": unittest.mock.ANY},
+        ],
+        "toolChoice": {"any": {}},
+    }
+    placed = formatted[0]["toolConfig"]
+    assert placed == {**tool_config, "tools": [*tool_config["tools"], NOVA_CACHE_POINT]}
+    assert [tool["toolSpec"]["name"] for tool in placed["tools"][:2]] == ["calculator", "clock"]
+    sent = _sent_requests(converse_method)[2]
+    assert _cache_point_count(sent) == 0
+    assert sent["toolConfig"] == {**placed, "tools": placed["tools"][:2]}
+
+
+@pytest.mark.asyncio
+async def test_gpt_keeps_cache_points_on_when_the_resend_is_rejected(bedrock_client, alist, caplog):
+    model_id = "us.openai.gpt-5.6-terra"
+    throttle = _client_error("ThrottlingException", "Too many requests")
+    converse_method = _mock_rejections(bedrock_client, True, _cache_points_refusal(), throttle)
+    model = BedrockModel(model_id=model_id, cache_config=CacheConfig())
+
+    with caplog.at_level(logging.WARNING, logger="strands.models.bedrock"):
+        with pytest.raises(ModelThrottledException, match="Too many requests"):
+            await alist(model.stream(FALLBACK_MESSAGES, **FALLBACK_OPTIONS))
+        await alist(model.stream(FALLBACK_MESSAGES, **FALLBACK_OPTIONS))
+
+    assert [_cache_point_count(request) for request in _sent_requests(converse_method)] == [2, 0, 2]
+    assert _fallback_warnings(caplog, model_id) == []
+
+
+@pytest.mark.parametrize(
+    ("error", "exp_exception"),
+    [
+        (_client_error("ValidationException", "Malformed input request"), ClientError),
+        (_client_error("ThrottlingException", "Too many requests"), ModelThrottledException),
+        (_client_error("ValidationException", CACHE_POINTS_REFUSAL_MESSAGE), ClientError),
+    ],
+    ids=["a different validation error", "a throttle", "the prompt caching message under another error code"],
+)
+@pytest.mark.asyncio
+async def test_gpt_raises_other_errors_without_resending_or_turning_cache_points_off(
+    bedrock_client, alist, error, exp_exception
+):
+    converse_method = _mock_rejections(bedrock_client, True, error)
+    model = BedrockModel(model_id="us.openai.gpt-6-astra", cache_config=CacheConfig())
+
+    with pytest.raises(exp_exception, match=re.escape(error.response["Error"]["Message"])):
+        await alist(model.stream(FALLBACK_MESSAGES, **FALLBACK_OPTIONS))
+    converse_method.assert_called_once()
+
+    await alist(model.stream(FALLBACK_MESSAGES, **FALLBACK_OPTIONS))
+
+    assert [_cache_point_count(request) for request in _sent_requests(converse_method)] == [2, 2]
+
+
+@pytest.mark.asyncio
+async def test_gpt_raises_a_cache_point_refusal_for_a_request_without_cache_points(bedrock_client, alist):
+    model_id = "us.openai.gpt-6-astra"
+    converse_method = _mock_rejections(bedrock_client, True, _cache_points_refusal())
+
+    with pytest.raises(ClientError, match=re.escape(CACHE_POINTS_REFUSAL_MESSAGE)):
+        await alist(BedrockModel(model_id=model_id).stream(FALLBACK_MESSAGES, **FALLBACK_OPTIONS))
+    converse_method.assert_called_once()
+
+    await alist(
+        BedrockModel(model_id=model_id, cache_config=CacheConfig()).stream(FALLBACK_MESSAGES, **FALLBACK_OPTIONS)
+    )
+
+    assert [_cache_point_count(request) for request in _sent_requests(converse_method)] == [0, 2]
+
+
+@pytest.mark.asyncio
+async def test_gpt_keeps_the_structured_output_mechanism_when_cache_points_are_rejected(
+    native_output_client, alist, test_output_model_cls
+):
+    converse_method = _mock_rejections(native_output_client, True, _cache_points_refusal())
+    model = BedrockModel(model_id="us.openai.gpt-6.2-sol", cache_config=CacheConfig())
+    tool_spec = convert_pydantic_to_tool_spec(test_output_model_cls)
+
+    for _ in range(2):
+        await alist(
+            model.stream(
+                FALLBACK_MESSAGES,
+                [tool_spec],
+                system_prompt="Be helpful",
+                tool_choice={"tool": {"name": tool_spec["name"]}},
+                structured_output_model=test_output_model_cls,
+            )
+        )
+
+    assert converse_method.call_count == 3
+    rejected, *resent = _sent_requests(converse_method)
+    without_cache_points = {
+        **rejected,
+        "system": [{"text": "Be helpful"}],
+        "messages": [{"role": "user", "content": [{"text": "Hello"}]}],
+    }
+    assert resent == [without_cache_points, without_cache_points]
+
+
 def test_claude_keeps_the_tools_cache_point_and_ttl(bedrock_client):
     _ = bedrock_client
     model = BedrockModel(
@@ -5551,6 +6037,20 @@ def test_inject_cache_point_drops_an_honored_point_when_a_document_leads_the_mes
     assert tru_content == exp_content
 
 
+def test_inject_cache_point_places_no_fallback_after_a_point_dropped_behind_a_leading_document(bedrock_client):
+    """The blocks after a caller-placed point are per-call content, so no fallback point lands after them."""
+    _ = bedrock_client
+    model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
+    document = {"document": {"format": "csv", "name": "d", "source": {"bytes": b"x"}}}
+    cleaned_messages = [
+        {"role": "user", "content": [document, {"cachePoint": {"type": "default"}}, {"text": "per-call"}]}
+    ]
+
+    model._inject_cache_point(cleaned_messages)
+
+    assert cleaned_messages[0]["content"] == [document, {"text": "per-call"}]
+
+
 def test_inject_cache_point_adds_to_last_user(bedrock_client):
     """Test that _inject_cache_point adds cache point to last user message."""
     model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
@@ -5672,8 +6172,8 @@ def test_inject_cache_point_strips_existing_cache_points(bedrock_client):
     assert "cachePoint" in cleaned_messages[2]["content"][-1]
 
 
-def test_inject_cache_point_before_non_pdf_document(bedrock_client):
-    """Test that cache point is inserted before non-PDF document blocks."""
+def test_inject_cache_point_before_a_trailing_non_pdf_document(bedrock_client):
+    """A cache point goes ahead of a trailing non-PDF document."""
     model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
 
     cleaned_messages = [
@@ -5719,7 +6219,7 @@ def test_inject_cache_point_after_pdf_document(bedrock_client):
 
 
 def test_inject_cache_point_mixed_pdf_and_non_pdf_documents(bedrock_client):
-    """Test that cache point is inserted before the first non-PDF document in mixed content."""
+    """A cache point goes ahead of the trailing run of non-PDF documents, after any PDF."""
     model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
 
     cleaned_messages = [
@@ -5743,7 +6243,7 @@ def test_inject_cache_point_mixed_pdf_and_non_pdf_documents(bedrock_client):
     ]
 
 
-def test_inject_cache_point_before_the_first_of_several_non_pdf_documents(bedrock_client):
+def test_inject_cache_point_before_a_trailing_run_of_non_pdf_documents(bedrock_client):
     """A cache point after any of them would be directly preceded by a document, which Bedrock rejects."""
     _ = bedrock_client
     model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
@@ -5762,30 +6262,52 @@ def test_inject_cache_point_before_the_first_of_several_non_pdf_documents(bedroc
     ]
 
 
-def test_inject_cache_point_skipped_when_leading_non_pdf_document(bedrock_client):
-    """Test that no cache point is injected when a non-PDF document is the first block.
-
-    A leading cache point has no prefix to cache and Bedrock rejects it with a ValidationException,
-    so injection is skipped for that message.
-    """
+def test_inject_cache_point_after_text_that_follows_a_leading_non_pdf_document(bedrock_client):
+    """Bedrock rejects a cache point only directly after a non-PDF document, so the end of the message is legal."""
+    _ = bedrock_client
     model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
+    document = {"document": {"format": "csv", "name": "data", "source": {"bytes": b"a,b,c"}}}
 
-    cleaned_messages = [
-        {
-            "role": "user",
-            "content": [
-                {"document": {"format": "csv", "name": "data", "source": {"bytes": b"a,b,c"}}},
-                {"text": "Analyze this file"},
-            ],
-        },
-    ]
+    cleaned_messages = [{"role": "user", "content": [document, {"text": "Analyze this file"}]}]
 
     model._inject_cache_point(cleaned_messages)
 
     assert cleaned_messages[0]["content"] == [
-        {"document": {"format": "csv", "name": "data", "source": {"bytes": b"a,b,c"}}},
+        document,
         {"text": "Analyze this file"},
+        {"cachePoint": {"type": "default"}},
     ]
+
+
+def test_inject_cache_point_after_text_that_follows_a_non_pdf_document(bedrock_client):
+    """A document earlier in the message does not hold the point back from the end."""
+    _ = bedrock_client
+    model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
+    document = {"document": {"format": "csv", "name": "data", "source": {"bytes": b"a,b,c"}}}
+
+    cleaned_messages = [{"role": "user", "content": [{"text": "Here is a file"}, document, {"text": "Analyze it"}]}]
+
+    model._inject_cache_point(cleaned_messages)
+
+    assert cleaned_messages[0]["content"] == [
+        {"text": "Here is a file"},
+        document,
+        {"text": "Analyze it"},
+        {"cachePoint": {"type": "default"}},
+    ]
+
+
+def test_inject_cache_point_skipped_when_the_message_holds_only_non_pdf_documents(bedrock_client):
+    """No position in the message has anything other than a non-PDF document directly ahead of it."""
+    _ = bedrock_client
+    model = BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_config=CacheConfig(strategy="auto"))
+    document = {"document": {"format": "csv", "name": "data", "source": {"bytes": b"a,b,c"}}}
+
+    cleaned_messages = [{"role": "user", "content": [document]}]
+
+    model._inject_cache_point(cleaned_messages)
+
+    assert cleaned_messages[0]["content"] == [document]
 
 
 def test_inject_cache_point_anthropic_strategy_skips_model_check(bedrock_client):
@@ -7524,3 +8046,44 @@ async def test_stream_cancel_signal_consumes_detached_task_exception(bedrock_cli
     # The detached worker now fails; its exception must be consumed, not reported to the loop.
     await asyncio.sleep(0.2)
     assert not captured, f"detached task exception was not consumed: {captured}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [True, False])
+async def test_stream_tags_claude_signed_and_redacted_reasoning(bedrock_client, alist, streaming):
+    tag = {"provider": "anthropic", "modelId": "us.anthropic.claude-test", "data": {}}
+    signed = {"reasoningText": {"text": "plan", "signature": "SIG"}}
+    redacted = {"redactedContent": b"opaque"}
+    if streaming:
+
+        def delta(index, reasoning):
+            return {"contentBlockDelta": {"contentBlockIndex": index, "delta": {"reasoningContent": reasoning}}}
+
+        events = [
+            {"messageStart": {"role": "assistant"}},
+            delta(0, {"text": "plan"}),
+            delta(0, {"signature": "SIG"}),
+            {"contentBlockStop": {"contentBlockIndex": 0}},
+            delta(1, {"redactedContent": b"opaque"}),
+            {"contentBlockStop": {"contentBlockIndex": 1}},
+        ]
+        bedrock_client.converse_stream.return_value = {"stream": [*events, {"messageStop": {"stopReason": "end_turn"}}]}
+    else:
+        bedrock_client.converse.return_value = {
+            "output": {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"reasoningContent": signed}, {"reasoningContent": redacted}],
+                }
+            },
+            "stopReason": "end_turn",
+            "usage": {"inputTokens": 1, "outputTokens": 1, "totalTokens": 2},
+            "metrics": {"latencyMs": 1},
+        }
+    model = BedrockModel(model_id="us.anthropic.claude-test", streaming=streaming)
+
+    stream = strands.event_loop.streaming.process_stream(model.stream([{"role": "user", "content": [{"text": "go"}]}]))
+    message = (await alist(stream))[-1]["stop"][1]
+
+    reasoning = [block["reasoningContent"] for block in message["content"] if "reasoningContent" in block]
+    assert reasoning == [{**signed, "providerData": tag}, {**redacted, "providerData": tag}]
