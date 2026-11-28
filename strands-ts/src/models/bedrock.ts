@@ -71,7 +71,15 @@ import type { AudioSource, ImageSource, VideoSource, DocumentSource } from '../t
 import type { CitationsDelta, ModelStreamEvent, ReasoningContentDelta, Usage } from '../models/streaming.js'
 import type { Citation, CitationLocation, CitationsBlockData } from '../types/citations.js'
 import type { JSONSchema, JSONValue } from '../types/json.js'
-import { ContextWindowOverflowError, ModelThrottledError, ProviderTokenCountError, normalizeError } from '../errors.js'
+import {
+  ContextWindowOverflowError,
+  ModelError,
+  ModelNetworkError,
+  ModelThrottledError,
+  ProviderTokenCountError,
+  isFetchNetworkError,
+  normalizeError,
+} from '../errors.js'
 import { ensureDefined } from '../types/validation.js'
 import { logger } from '../logging/logger.js'
 import { warnOnce } from '../logging/warn-once.js'
@@ -139,6 +147,35 @@ const BEDROCK_CONTEXT_WINDOW_OVERFLOW_MESSAGES = [
   "This model's maximum context length is",
   'Input Tokens Exceeded',
 ]
+
+/**
+ * AWS SDK error names that indicate Bedrock throttling.
+ */
+const BEDROCK_THROTTLING_ERROR_NAMES = new Set([
+  'ThrottlingException',
+  'throttlingException',
+  'TooManyRequestsException',
+])
+
+/**
+ * Error names that indicate a transport-level timeout or network failure.
+ */
+const BEDROCK_NETWORK_ERROR_NAMES = new Set(['TimeoutError', 'NetworkingError', 'FetchError'])
+
+/**
+ * Node.js and transport error codes that indicate a network connection failure.
+ */
+const BEDROCK_NETWORK_ERROR_CODES = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ECONNABORTED',
+  'ENOTFOUND',
+  'ETIMEDOUT',
+  'EPIPE',
+  'EAI_AGAIN',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+])
 
 /**
  * Cache of model IDs for which CountTokens API calls should be skipped.
@@ -948,6 +985,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
    *
    * @throws \{ContextWindowOverflowError\} When input exceeds the model's context window
    * @throws \{ModelThrottledError\} When Bedrock service throttles requests
+   * @throws \{ModelNetworkError\} When the network connection to Bedrock fails
    *
    * @example
    * ```typescript
@@ -1029,15 +1067,7 @@ export class BedrockModel extends Model<BedrockModelConfig> {
         }
       }
     } catch (unknownError) {
-      const error = normalizeError(unknownError)
-
-      // Check for context window overflow
-      if (BEDROCK_CONTEXT_WINDOW_OVERFLOW_MESSAGES.some((msg) => error.message.includes(msg))) {
-        throw new ContextWindowOverflowError(error.message)
-      }
-
-      // Re-throw other errors as-is
-      throw error
+      throw translateBedrockError(unknownError)
     }
   }
 
@@ -2889,4 +2919,77 @@ function applyDefaultRegion(config: BedrockRuntimeClientResolvedConfig): void {
       throw error
     }
   }
+}
+
+interface AwsSdkErrorShape {
+  name?: unknown
+  code?: unknown
+  cause?: unknown
+  $metadata?: { httpStatusCode?: unknown }
+  $retryable?: { throttling?: unknown }
+}
+
+/**
+ * Maps Bedrock client and stream errors into SDK error subclasses.
+ *
+ * @param unknownError - Error thrown while sending the request or reading the stream
+ * @returns The mapped SDK error, or the normalized original error
+ */
+function translateBedrockError(unknownError: unknown): Error {
+  if (unknownError instanceof ModelError) {
+    return unknownError
+  }
+
+  const error = normalizeError(unknownError)
+
+  if (BEDROCK_CONTEXT_WINDOW_OVERFLOW_MESSAGES.some((msg) => error.message.includes(msg))) {
+    return new ContextWindowOverflowError(error.message)
+  }
+
+  if (isBedrockThrottlingError(unknownError)) {
+    const message = error.message || 'Request was throttled by the model provider'
+    logger.debug(`throttled | error_message=<${message}>`)
+    return new ModelThrottledError(message, { cause: unknownError })
+  }
+
+  if (isBedrockNetworkError(unknownError)) {
+    const message = error.message || 'Network connection to the model provider failed'
+    logger.debug(`network_error | error_message=<${message}>`)
+    return new ModelNetworkError(message, { cause: unknownError })
+  }
+
+  return error
+}
+
+/**
+ * Whether an AWS SDK error represents a Bedrock throttling response.
+ *
+ * @param error - The thrown error value
+ * @returns True when the error indicates throttling or HTTP 429
+ */
+function isBedrockThrottlingError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const { name, $metadata, $retryable } = error as AwsSdkErrorShape
+  return (
+    (typeof name === 'string' && BEDROCK_THROTTLING_ERROR_NAMES.has(name)) ||
+    $metadata?.httpStatusCode === 429 ||
+    $retryable?.throttling === true
+  )
+}
+
+/**
+ * Whether an error represents a transport-level timeout or network connection failure.
+ *
+ * @param error - The thrown error value
+ * @param depth - Recursion depth for inspecting nested `cause` chains
+ * @returns True when the error or its cause chain indicates a network failure
+ */
+function isBedrockNetworkError(error: unknown, depth = 0): boolean {
+  if (!error || typeof error !== 'object' || depth > 5) return false
+  const { name, code, cause } = error as AwsSdkErrorShape
+  if (name === 'AbortError') return false
+  if (isFetchNetworkError(error)) return true
+  if (typeof name === 'string' && BEDROCK_NETWORK_ERROR_NAMES.has(name)) return true
+  if (typeof code === 'string' && (BEDROCK_NETWORK_ERROR_CODES.has(code) || code.startsWith('UND_ERR_'))) return true
+  return cause !== undefined && isBedrockNetworkError(cause, depth + 1)
 }

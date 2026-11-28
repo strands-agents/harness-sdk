@@ -10,7 +10,7 @@ import {
 import { isNode } from '../../__fixtures__/environment.js'
 import { BedrockModel } from '../bedrock.js'
 import type { BedrockModelOptions } from '../bedrock.js'
-import { ContextWindowOverflowError, ModelThrottledError } from '../../errors.js'
+import { ContextWindowOverflowError, ModelNetworkError, ModelThrottledError } from '../../errors.js'
 import {
   Message,
   ReasoningBlock,
@@ -2728,6 +2728,162 @@ describe('BedrockModel', () => {
             // consume stream
           }
         }).rejects.toThrow('Request was throttled by the model provider')
+      })
+
+      it.each([
+        {
+          label: 'ThrottlingException with HTTP 429 metadata',
+          error: Object.assign(new Error('Too many tokens, please wait before trying again.'), {
+            name: 'ThrottlingException',
+            $metadata: { httpStatusCode: 429 },
+          }),
+        },
+        {
+          label: 'HTTP 429 metadata without ThrottlingException name',
+          error: Object.assign(new Error('Rate limit exceeded'), {
+            name: 'BedrockRuntimeServiceException',
+            $metadata: { httpStatusCode: 429 },
+          }),
+        },
+        {
+          label: 'TooManyRequestsException',
+          error: Object.assign(new Error('Too many requests'), {
+            name: 'TooManyRequestsException',
+          }),
+        },
+        {
+          label: 'throttling retryable trait',
+          error: Object.assign(new Error('Slow down'), {
+            name: 'ServiceException',
+            $retryable: { throttling: true },
+          }),
+        },
+      ])('maps request-level $label to ModelThrottledError on stream and streamAggregated', async ({ error }) => {
+        const mockSend = vi.fn().mockRejectedValue(error)
+        mockBedrockClientImplementation({ send: mockSend })
+
+        const provider = new BedrockModel()
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+        const streamError = await collectIterator(provider.stream(messages)).catch((caught: unknown) => caught)
+        expect(streamError).toBeInstanceOf(ModelThrottledError)
+        expect((streamError as ModelThrottledError).message).toBe(error.message)
+        expect((streamError as ModelThrottledError).cause).toBe(error)
+
+        const aggregatedError = await collectGenerator(provider.streamAggregated(messages)).catch(
+          (caught: unknown) => caught
+        )
+        expect(aggregatedError).toBeInstanceOf(ModelThrottledError)
+        expect((aggregatedError as ModelThrottledError).message).toBe(error.message)
+        expect((aggregatedError as ModelThrottledError).cause).toBe(error)
+      })
+
+      it('maps request-level ThrottlingException in non-streaming mode to ModelThrottledError', async () => {
+        const throttlingError = Object.assign(new Error('Too many tokens, please wait before trying again.'), {
+          name: 'ThrottlingException',
+          $metadata: { httpStatusCode: 429 },
+        })
+        mockBedrockClientImplementation({ send: vi.fn().mockRejectedValue(throttlingError) })
+
+        const provider = new BedrockModel({ stream: false })
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+        const caught = await collectIterator(provider.stream(messages)).catch((error: unknown) => error)
+        expect(caught).toBeInstanceOf(ModelThrottledError)
+        expect((caught as ModelThrottledError).cause).toBe(throttlingError)
+      })
+    })
+
+    describe('network errors', () => {
+      it.each([
+        {
+          label: 'TimeoutError with ECONNRESET',
+          error: Object.assign(new Error('socket hang up'), { name: 'TimeoutError', code: 'ECONNRESET' }),
+        },
+        {
+          label: 'ECONNRESET socket error',
+          error: Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }),
+        },
+        {
+          label: 'nested cause with ECONNREFUSED',
+          error: new Error('request failed', {
+            cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }),
+          }),
+        },
+        {
+          label: 'nested undici transport code',
+          error: new Error('fetch failed', {
+            cause: Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' }),
+          }),
+        },
+        {
+          label: 'fetch TypeError',
+          error: new TypeError('Failed to fetch'),
+        },
+        {
+          label: 'NetworkingError',
+          error: Object.assign(new Error('connect ETIMEDOUT'), { name: 'NetworkingError' }),
+        },
+      ])('maps $label to ModelNetworkError on stream and streamAggregated', async ({ error }) => {
+        mockBedrockClientImplementation({ send: vi.fn().mockRejectedValue(error) })
+
+        const provider = new BedrockModel()
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+        const streamError = await collectIterator(provider.stream(messages)).catch((caught: unknown) => caught)
+        expect(streamError).toBeInstanceOf(ModelNetworkError)
+        expect((streamError as ModelNetworkError).message).toBe(error.message)
+        expect((streamError as ModelNetworkError).cause).toBe(error)
+
+        const aggregatedError = await collectGenerator(provider.streamAggregated(messages)).catch(
+          (caught: unknown) => caught
+        )
+        expect(aggregatedError).toBeInstanceOf(ModelNetworkError)
+        expect((aggregatedError as ModelNetworkError).message).toBe(error.message)
+        expect((aggregatedError as ModelNetworkError).cause).toBe(error)
+      })
+
+      it('maps mid-stream connection failure to ModelNetworkError', async () => {
+        const disconnectError = Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' })
+        setupMockSend(async function* () {
+          yield { messageStart: { role: 'assistant' } }
+          throw disconnectError
+        })
+
+        const provider = new BedrockModel()
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+        const caught = await collectIterator(provider.stream(messages)).catch((error: unknown) => error)
+        expect(caught).toBeInstanceOf(ModelNetworkError)
+        expect((caught as ModelNetworkError).cause).toBe(disconnectError)
+      })
+
+      it.each([
+        {
+          label: 'ValidationException',
+          error: new ValidationException({ message: 'Invalid parameter', $metadata: { httpStatusCode: 400 } }),
+        },
+        {
+          label: 'AccessDeniedException',
+          error: Object.assign(new Error('Access denied'), {
+            name: 'AccessDeniedException',
+            $metadata: { httpStatusCode: 403 },
+          }),
+        },
+        {
+          label: 'AbortError',
+          error: Object.assign(new Error('Request aborted'), { name: 'AbortError' }),
+        },
+      ])('does not misclassify $label as ModelThrottledError or ModelNetworkError', async ({ error }) => {
+        mockBedrockClientImplementation({ send: vi.fn().mockRejectedValue(error) })
+
+        const provider = new BedrockModel()
+        const messages = [new Message({ role: 'user', content: [new TextBlock('Hello')] })]
+
+        const caught = await collectIterator(provider.stream(messages)).catch((thrown: unknown) => thrown)
+        expect(caught).toBe(error)
+        expect(caught).not.toBeInstanceOf(ModelThrottledError)
+        expect(caught).not.toBeInstanceOf(ModelNetworkError)
       })
     })
   })
