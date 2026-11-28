@@ -592,5 +592,73 @@ describe('AgentSkills', () => {
       expect(await plugin.getAvailableSkills()).toHaveLength(1)
       expect(agent.trackedHooks).toHaveLength(1)
     })
+
+    it('preserves source order across mixed Skill instances and out-of-order URL fetches', async () => {
+      const delays: Record<string, number> = { alpha: 40, bravo: 20, charlie: 5 }
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+        const url = String(input)
+        const name = url.split('/').at(-2)!
+        await new Promise((resolve) => setTimeout(resolve, delays[name]))
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          text: () => Promise.resolve(`---\nname: ${name}\ndescription: The ${name} skill\n---\nDo ${name}.\n`),
+        } as Response
+      })
+
+      const local = makeSkill('local')
+      const plugin = new AgentSkills({
+        skills: [
+          'https://skills.example/alpha/SKILL.md',
+          local,
+          'https://skills.example/bravo/SKILL.md',
+          'https://skills.example/charlie/SKILL.md',
+        ],
+      })
+      const agent = createMockAgent()
+      await plugin.initAgent(agent)
+
+      expect((await plugin.getAvailableSkills(agent)).map((s) => s.name)).toEqual([
+        'alpha',
+        'local',
+        'bravo',
+        'charlie',
+      ])
+    })
+
+    it('sorts parent directory skills in locale-independent code-point order', async () => {
+      const parentDir = path.join(testDir, 'ordered-parent')
+      await fs.mkdir(parentDir, { recursive: true })
+      for (const name of ['zebra', 'aardvark', 'pdf-tools', 'data-viz']) {
+        const dir = path.join(parentDir, name)
+        await fs.mkdir(dir, { recursive: true })
+        await fs.writeFile(
+          path.join(dir, 'SKILL.md'),
+          `---\nname: ${name}\ndescription: The ${name} skill\n---\nDo ${name}.\n`
+        )
+      }
+
+      const localeCompareSpy = vi
+        .spyOn(String.prototype, 'localeCompare')
+        .mockImplementation(function (this: string, other: string) {
+          // Simulate a locale like da-DK where 'aa' sorts after 'z'
+          if (this.startsWith('aa') && !other.startsWith('aa')) return 1
+          if (!this.startsWith('aa') && other.startsWith('aa')) return -1
+          return this < other ? -1 : this > other ? 1 : 0
+        })
+
+      const plugin = new AgentSkills({ skills: [parentDir] })
+      const agent = createMockAgent()
+      await plugin.initAgent(agent)
+      localeCompareSpy.mockRestore()
+
+      expect((await plugin.getAvailableSkills(agent)).map((s) => s.name)).toEqual([
+        'aardvark',
+        'data-viz',
+        'pdf-tools',
+        'zebra',
+      ])
+    })
   })
 })
