@@ -1,17 +1,30 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { A2AExecutor } from '../executor.js'
+import { DefaultRequestHandler, InMemoryTaskStore } from '@a2a-js/sdk/server'
 import type { AgentExecutionEvent, ExecutionEventBus, RequestContext } from '@a2a-js/sdk/server'
-import type { TaskArtifactUpdateEvent, TaskStatusUpdateEvent } from '@a2a-js/sdk'
+import type {
+  AgentCard,
+  Message as A2AMessage,
+  Part,
+  Task,
+  TaskArtifactUpdateEvent,
+  TaskStatusUpdateEvent,
+} from '@a2a-js/sdk'
 import { Agent } from '../../agent/agent.js'
 import type { InvokableAgent } from '../../types/agent.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
+import { MockSnapshotStorage } from '../../__fixtures__/mock-storage-provider.js'
 import { createMockAgent } from '../../__fixtures__/agent-helpers.js'
+import { createMockTool } from '../../__fixtures__/tool-helpers.js'
+import { SessionManager } from '../../session/session-manager.js'
 import { TextBlock } from '../../types/messages.js'
 import { ImageBlock, encodeBase64 } from '../../types/media.js'
 import { ContentBlockEvent, ModelStreamUpdateEvent } from '../../hooks/events.js'
 import { AgentResult } from '../../types/agent.js'
+import { Interrupt } from '../../interrupt.js'
 import { Message } from '../../types/messages.js'
 import type { ModelStreamEvent } from '../../models/streaming.js'
+import type { JSONValue } from '../../types/json.js'
 
 function createMockEventBus(): ExecutionEventBus & { events: AgentExecutionEvent[] } {
   const events: AgentExecutionEvent[] = []
@@ -413,6 +426,501 @@ describe('A2AExecutor context isolation', () => {
       const agent = makeEchoAgent()
       ;(agent as unknown as { sessionManager: unknown }).sessionManager = {}
       expect(() => new A2AExecutor({ agent })).toThrow('sessionManager is not supported')
+    })
+  })
+
+  describe('interrupts', () => {
+    function interruptingAgent(interrupts?: Interrupt[]): InvokableAgent {
+      return {
+        id: 'test-agent',
+        name: 'Test Agent',
+        invoke: vi.fn(),
+        // An agent that stops on an interrupt emits no stream events, only the result.
+        // eslint-disable-next-line require-yield
+        async *stream() {
+          return new AgentResult({
+            stopReason: 'interrupt',
+            lastMessage: new Message({ role: 'assistant', content: [new TextBlock('')] }),
+            invocationState: {},
+            ...(interrupts !== undefined && { interrupts }),
+          })
+        },
+      }
+    }
+
+    async function runInterrupting(interrupts?: Interrupt[]) {
+      const executor = new A2AExecutor({ agentFactory: () => interruptingAgent(interrupts) })
+      const eventBus = createMockEventBus()
+      await executor.execute(createRequestContext('create the spring campaign'), eventBus)
+      return eventBus.events.filter((event): event is TaskStatusUpdateEvent => event.kind === 'status-update')
+    }
+
+    it('parks the task instead of reporting it completed', async () => {
+      const statuses = await runInterrupting([new Interrupt({ id: 'int-1', name: 'approve', source: 'tool' })])
+
+      expect(statuses.map((event) => event.status.state)).toStrictEqual(['input-required'])
+    })
+
+    it('advertises each interrupt id so a client can answer it', async () => {
+      const statuses = await runInterrupting([
+        new Interrupt({ id: 'int-1', name: 'approve', reason: { campaign: 'spring' }, source: 'tool' }),
+        new Interrupt({ id: 'int-2', name: 'confirm', source: 'tool' }),
+      ])
+
+      const dataParts = (statuses[0]!.status.message?.parts ?? []).filter((part) => part.kind === 'data')
+      expect(dataParts).toHaveLength(1)
+      expect(dataParts[0]).toStrictEqual({
+        kind: 'data',
+        data: {
+          interrupts: [
+            { interruptId: 'int-1', name: 'approve', reason: { campaign: 'spring' } },
+            { interruptId: 'int-2', name: 'confirm', reason: null },
+          ],
+        },
+      })
+      expect(statuses[0]!.status.message?.parts?.[0]).toStrictEqual({
+        kind: 'text',
+        text: 'Agent requires input:\n- approve: {"campaign":"spring"}\n- confirm',
+      })
+    })
+
+    it('keeps the human-readable text part first', async () => {
+      const statuses = await runInterrupting([
+        new Interrupt({ id: 'int-1', name: 'approve', reason: 'needs sign-off', source: 'tool' }),
+      ])
+
+      const parts = statuses[0]!.status.message?.parts ?? []
+      expect(parts[0]).toStrictEqual({ kind: 'text', text: 'Agent requires input:\n- approve: "needs sign-off"' })
+    })
+
+    it.each([
+      { desc: 'a BigInt reason as a string', reason: 10n, wire: '10', text: 'Agent requires input:\n- approve: "10"' },
+      { desc: 'a function reason as null', reason: () => 'x', wire: null, text: 'Agent requires input:\n- approve' },
+    ])('advertises $desc', async ({ reason, wire, text }) => {
+      const statuses = await runInterrupting([
+        new Interrupt({ id: 'int-1', name: 'approve', reason: reason as unknown as JSONValue, source: 'tool' }),
+      ])
+
+      expect(statuses[0]!.status.message?.parts).toStrictEqual([
+        { kind: 'text', text },
+        { kind: 'data', data: { interrupts: [{ interruptId: 'int-1', name: 'approve', reason: wire }] } },
+      ])
+    })
+
+    it.each([
+      { desc: 'an empty interrupt list', interrupts: [] },
+      { desc: 'no interrupt list', interrupts: undefined },
+    ])('still parks the task when the result has $desc', async ({ interrupts }) => {
+      const statuses = await runInterrupting(interrupts)
+
+      expect(statuses.map((event) => event.status.state)).toStrictEqual(['input-required'])
+      expect(statuses[0]!.status.message?.parts).toStrictEqual([
+        { kind: 'text', text: 'Agent requires additional input to continue' },
+      ])
+    })
+
+    it('reports a normal completion as completed', async () => {
+      const executor = new A2AExecutor({ agentFactory: () => makeEchoAgent() })
+      const eventBus = createMockEventBus()
+
+      await executor.execute(createRequestContext('hello'), eventBus)
+
+      const statuses = eventBus.events.filter((event): event is TaskStatusUpdateEvent => event.kind === 'status-update')
+      expect(statuses.map((event) => event.status.state)).toStrictEqual(['completed'])
+    })
+
+    it('advertises the id a real agent is actually waiting on', async () => {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'createCampaign', toolUseId: 'tool-1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'Campaign is live.' })
+      const tool = createMockTool('createCampaign', (context) => {
+        context.interrupt({ name: 'approveCampaign', reason: { campaign: 'spring-launch' } })
+      })
+      const agent = new Agent({ model, tools: [tool], printer: false })
+
+      const executor = new A2AExecutor({ agentFactory: () => agent })
+      const eventBus = createMockEventBus()
+      await executor.execute(createRequestContext('create the spring-launch campaign'), eventBus)
+
+      const statuses = eventBus.events.filter((event): event is TaskStatusUpdateEvent => event.kind === 'status-update')
+      expect(statuses.map((event) => event.status.state)).toStrictEqual(['input-required'])
+
+      // The interrupts reach the client only in the status message, never as an artifact.
+      expect(eventBus.events.map((event) => event.kind)).toStrictEqual(['task', 'status-update'])
+
+      // Read the advertised interrupts the way a client would, with no access to server internals.
+      const dataParts = (statuses[0]!.status.message?.parts ?? []).filter((part) => part.kind === 'data')
+      const advertised = (dataParts[0] as unknown as { data: { interrupts: { interruptId: string }[] } }).data
+        .interrupts
+
+      // The advertised id must be the one the agent parked, or the client cannot answer it.
+      const parked = (agent as unknown as { _interruptState: { interrupts: Record<string, unknown> } })._interruptState
+      expect(Object.keys(parked.interrupts)).toStrictEqual([advertised[0]!.interruptId])
+    })
+
+    beforeEach(() => {
+      resumedWith.length = 0
+    })
+
+    function resumeContext(interruptId: string, response: unknown): RequestContext {
+      return {
+        taskId: 'task-1',
+        contextId: 'ctx-1',
+        userMessage: {
+          kind: 'message',
+          messageId: 'msg-2',
+          role: 'user',
+          parts: [{ kind: 'data', data: { interruptResponse: { interruptId, response } } }],
+        },
+      }
+    }
+
+    /** Records what the paused tool receives when it resumes, so the payload can be asserted. */
+    const resumedWith: unknown[] = []
+
+    function campaignAgent(): Agent {
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'createCampaign', toolUseId: 'tool-1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'Campaign is live.' })
+      const tool = createMockTool('createCampaign', (context) => {
+        const approval = context.interrupt({ name: 'approveCampaign', reason: { campaign: 'spring-launch' } })
+        resumedWith.push(approval)
+      })
+      return new Agent({ model, tools: [tool], printer: false })
+    }
+
+    /** Runs the first turn and returns the interrupt id a client would read off the wire. */
+    async function parkAndReadId(executor: A2AExecutor): Promise<string> {
+      const eventBus = createMockEventBus()
+      await executor.execute(createRequestContext('create the spring-launch campaign'), eventBus)
+      const statuses = eventBus.events.filter((event): event is TaskStatusUpdateEvent => event.kind === 'status-update')
+      const dataParts = (statuses[0]!.status.message?.parts ?? []).filter((part) => part.kind === 'data')
+      return (dataParts[0] as unknown as { data: { interrupts: { interruptId: string }[] } }).data.interrupts[0]!
+        .interruptId
+    }
+
+    it.each([
+      ['factory', (): A2AExecutor => new A2AExecutor({ agentFactory: () => campaignAgent() })],
+      ['single-agent', (): A2AExecutor => new A2AExecutor({ agent: campaignAgent() })],
+    ])('completes the round trip when the advertised id is answered (%s mode)', async (_mode, createExecutor) => {
+      const executor = createExecutor()
+      const interruptId = await parkAndReadId(executor)
+
+      const eventBus = createMockEventBus()
+      await executor.execute(resumeContext(interruptId, { approved: true }), eventBus)
+
+      const statuses = eventBus.events.filter((event): event is TaskStatusUpdateEvent => event.kind === 'status-update')
+      expect(statuses.map((event) => event.status.state)).toStrictEqual(['completed'])
+
+      // The paused tool resumed with the client's answer, not merely with the task marked done.
+      expect(resumedWith).toStrictEqual([{ approved: true }])
+    })
+
+    it('resumes an interrupt that a new agent restores from its session', async () => {
+      const storage = new MockSnapshotStorage()
+      const model = new MockMessageModel()
+        .addTurn({ type: 'toolUseBlock', name: 'createCampaign', toolUseId: 'tool-1', input: {} })
+        .addTurn({ type: 'textBlock', text: 'Campaign is live.' })
+      const tool = createMockTool('createCampaign', (context) => {
+        resumedWith.push(context.interrupt({ name: 'approveCampaign' }))
+      })
+      // A new executor per request stands in for a server restart.
+      const createExecutor = (): A2AExecutor =>
+        new A2AExecutor({
+          agentFactory: (contextId) =>
+            new Agent({
+              model,
+              tools: [tool],
+              printer: false,
+              sessionManager: new SessionManager({ sessionId: contextId, storage: { snapshot: storage } }),
+            }),
+        })
+      const interruptId = await parkAndReadId(createExecutor())
+
+      const eventBus = createMockEventBus()
+      await createExecutor().execute(resumeContext(interruptId, { approved: true }), eventBus)
+
+      const statuses = eventBus.events.filter((event): event is TaskStatusUpdateEvent => event.kind === 'status-update')
+      expect(statuses.map((event) => event.status.state)).toStrictEqual(['completed'])
+      expect(resumedWith).toStrictEqual([{ approved: true }])
+    })
+
+    it('refuses an id the agent is not waiting on and still accepts the right one', async () => {
+      const executor = new A2AExecutor({ agentFactory: () => campaignAgent() })
+      const interruptId = await parkAndReadId(executor)
+
+      await expect(
+        executor.execute(resumeContext('guessed-id', { approved: true }), createMockEventBus())
+      ).rejects.toThrow('No pending interrupt matches id(s): guessed-id')
+
+      // The refused answer must not have consumed the interrupt.
+      const eventBus = createMockEventBus()
+      await executor.execute(resumeContext(interruptId, { approved: true }), eventBus)
+      const statuses = eventBus.events.filter((event): event is TaskStatusUpdateEvent => event.kind === 'status-update')
+      expect(statuses.map((event) => event.status.state)).toStrictEqual(['completed'])
+    })
+
+    it('refuses an answer on a new task, publishing only the initial task event', async () => {
+      const executor = new A2AExecutor({ agentFactory: () => campaignAgent() })
+      await parkAndReadId(executor)
+
+      const eventBus = createMockEventBus()
+      await expect(executor.execute(resumeContext('guessed-id', { approved: true }), eventBus)).rejects.toThrow(
+        'No pending interrupt matches id(s): guessed-id'
+      )
+
+      expect(eventBus.events).toStrictEqual([
+        { kind: 'task', id: 'task-1', contextId: 'ctx-1', status: { state: 'working' } },
+      ])
+    })
+
+    it('rethrows a failed run even when the task was waiting for input', async () => {
+      const model = new MockMessageModel().addTurn(new Error('Agent failed'))
+      const executor = new A2AExecutor({ agentFactory: () => new Agent({ model, printer: false }) })
+      const task: Task = { kind: 'task', id: 'task-1', contextId: 'ctx-1', status: { state: 'input-required' } }
+
+      await expect(executor.execute({ ...createRequestContext('Hello'), task }, createMockEventBus())).rejects.toThrow(
+        'Agent failed'
+      )
+    })
+
+    it('refuses a null response', async () => {
+      const executor = new A2AExecutor({ agentFactory: () => campaignAgent() })
+      const interruptId = await parkAndReadId(executor)
+
+      await expect(executor.execute(resumeContext(interruptId, null), createMockEventBus())).rejects.toThrow(
+        `Interrupt response for '${interruptId}' must provide a non-null 'response'`
+      )
+    })
+
+    it('refuses a fresh conversational turn while the task is parked', async () => {
+      const executor = new A2AExecutor({ agentFactory: () => campaignAgent() })
+      await parkAndReadId(executor)
+
+      await expect(executor.execute(createRequestContext('never mind'), createMockEventBus())).rejects.toThrow(
+        'Task is awaiting an interrupt response and cannot accept a new message'
+      )
+    })
+
+    it('refuses interrupt responses when nothing is pending', async () => {
+      const executor = new A2AExecutor({ agentFactory: () => campaignAgent() })
+
+      await expect(executor.execute(resumeContext('int-1', { approved: true }), createMockEventBus())).rejects.toThrow(
+        'Received interrupt responses but no interrupt is pending'
+      )
+    })
+
+    it('refuses an interrupt id that only exists on Object.prototype', async () => {
+      onTestFinished(() => {
+        delete (Object.prototype as { response?: unknown }).response
+      })
+      const executor = new A2AExecutor({ agentFactory: () => campaignAgent() })
+      await parkAndReadId(executor)
+
+      await expect(
+        executor.execute(resumeContext('__proto__', { approved: true }), createMockEventBus())
+      ).rejects.toThrow('No pending interrupt matches id(s): __proto__')
+      expect(({} as { response?: unknown }).response).toBeUndefined()
+    })
+
+    it('leaves an ordinary data part on the generic content path', async () => {
+      const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+      const agent = new Agent({ model, printer: false })
+      vi.spyOn(agent, 'stream')
+      const executor = new A2AExecutor({ agent })
+
+      await executor.execute(
+        {
+          taskId: 'task-1',
+          contextId: 'ctx-1',
+          userMessage: {
+            kind: 'message',
+            messageId: 'msg-1',
+            role: 'user',
+            parts: [{ kind: 'data', data: { campaign: 'spring', budget: 100 } }],
+          },
+        },
+        createMockEventBus()
+      )
+
+      expect(agent.stream).toHaveBeenCalledWith(
+        [new TextBlock('[Structured Data]\n' + JSON.stringify({ campaign: 'spring', budget: 100 }, null, 2))],
+        expect.anything()
+      )
+    })
+
+    describe('behind the A2A request handler', () => {
+      const card: AgentCard = {
+        name: 'Campaign Agent',
+        description: '',
+        version: '0.0.1',
+        protocolVersion: '0.2.0',
+        url: '',
+        defaultInputModes: ['text/plain'],
+        defaultOutputModes: ['text/plain'],
+        skills: [],
+        capabilities: { streaming: true },
+      }
+
+      function userMessage(messageId: string, parts: Part[], taskId?: string): A2AMessage {
+        return {
+          kind: 'message',
+          messageId,
+          role: 'user',
+          contextId: 'ctx-1',
+          parts,
+          ...(taskId !== undefined && { taskId }),
+        }
+      }
+
+      function answer(interruptId: string, response: unknown): Part {
+        return { kind: 'data', data: { interruptResponse: { interruptId, response } } }
+      }
+
+      /** Sends the first turn, which parks the task on the campaign approval. */
+      async function park(handler: DefaultRequestHandler): Promise<Task> {
+        const text = 'create the spring-launch campaign'
+        return (await handler.sendMessage({ message: userMessage('msg-1', [{ kind: 'text', text }]) })) as Task
+      }
+
+      /** The data parts of a parked task's status message, read the way a client would. */
+      function advertisement(task: Task): Part[] {
+        return (task.status.message?.parts ?? []).filter((part) => part.kind === 'data')
+      }
+
+      function advertisedId(task: Task): string {
+        const [dataPart] = advertisement(task)
+        return (dataPart as unknown as { data: { interrupts: { interruptId: string }[] } }).data.interrupts[0]!
+          .interruptId
+      }
+
+      /** Builds a handler whose first run holds the context until the test finishes. */
+      async function createBusyHandler(): Promise<DefaultRequestHandler> {
+        let finishRun!: () => void
+        const runCanFinish = new Promise<void>((resolve) => {
+          finishRun = resolve
+        })
+        onTestFinished(() => finishRun())
+        const agent: InvokableAgent = {
+          id: 'busy-agent',
+          name: 'Busy Agent',
+          invoke: vi.fn(),
+          // eslint-disable-next-line require-yield
+          async *stream() {
+            await runCanFinish
+            return new AgentResult({
+              stopReason: 'endTurn',
+              lastMessage: new Message({ role: 'assistant', content: [new TextBlock('done')] }),
+              invocationState: {},
+            })
+          },
+        }
+        const handler = new DefaultRequestHandler(
+          card,
+          new InMemoryTaskStore(),
+          new A2AExecutor({ agentFactory: () => agent })
+        )
+        await handler.sendMessage({
+          message: userMessage('msg-1', [{ kind: 'text', text: 'first' }]),
+          configuration: { blocking: false },
+        })
+        return handler
+      }
+
+      it.each([
+        ['an unknown id', (_interruptId: string) => [answer('guessed-id', { approved: true })]],
+        ['a null response', (interruptId: string) => [answer(interruptId, null)]],
+        ['a duplicate answer', (interruptId: string) => [answer(interruptId, true), answer(interruptId, false)]],
+        ['a new conversational turn', (_interruptId: string): Part[] => [{ kind: 'text', text: 'never mind' }]],
+      ])('keeps the task answerable after refusing %s', async (_refusal, refusedParts) => {
+        const handler = new DefaultRequestHandler(
+          card,
+          new InMemoryTaskStore(),
+          new A2AExecutor({ agentFactory: () => campaignAgent() })
+        )
+        const parked = await park(handler)
+        const interruptId = advertisedId(parked)
+
+        const refused = (await handler.sendMessage({
+          message: userMessage('msg-2', refusedParts(interruptId), parked.id),
+        })) as Task
+        expect(refused.status).toStrictEqual({
+          state: 'input-required',
+          message: {
+            kind: 'message',
+            role: 'agent',
+            messageId: expect.any(String),
+            taskId: parked.id,
+            contextId: 'ctx-1',
+            parts: [{ kind: 'text', text: expect.stringMatching(/^Message refused: /) }, ...advertisement(parked)],
+          },
+        })
+
+        const resumed = (await handler.sendMessage({
+          message: userMessage('msg-3', [answer(interruptId, { approved: true })], parked.id),
+        })) as Task
+        expect(resumed.status).toStrictEqual({ state: 'completed' })
+        expect(resumedWith).toStrictEqual([{ approved: true }])
+      })
+
+      it('keeps the task history when an answer resumes it', async () => {
+        const taskStore = new InMemoryTaskStore()
+        const handler = new DefaultRequestHandler(
+          card,
+          taskStore,
+          new A2AExecutor({ agentFactory: () => campaignAgent() })
+        )
+        const parked = await park(handler)
+
+        await handler.sendMessage({
+          message: userMessage('msg-2', [answer(advertisedId(parked), { approved: true })], parked.id),
+        })
+
+        const stored = await taskStore.load(parked.id)
+        expect(stored?.status).toStrictEqual({ state: 'completed' })
+        expect(stored?.history?.map((message) => message.messageId)).toStrictEqual([
+          'msg-1',
+          parked.status.message?.messageId,
+          'msg-2',
+        ])
+      })
+
+      it('acknowledges a new message while an earlier run holds the context', async () => {
+        const handler = await createBusyHandler()
+        const message = userMessage('msg-2', [{ kind: 'text', text: 'second' }])
+
+        let acknowledgement: unknown
+        void handler.sendMessage({ message, configuration: { blocking: false } }).then((result) => {
+          acknowledgement = result
+        })
+
+        await expect.poll(() => acknowledgement).toBeDefined()
+        expect(acknowledgement).toStrictEqual({
+          kind: 'task',
+          id: expect.any(String),
+          contextId: 'ctx-1',
+          status: { state: 'working' },
+          history: [message],
+        })
+      })
+
+      it('streams the task event first while an earlier run holds the context', async () => {
+        const handler = await createBusyHandler()
+        const stream = handler.sendMessageStream({ message: userMessage('msg-2', [{ kind: 'text', text: 'second' }]) })
+
+        let firstEvent: unknown
+        void stream.next().then((result) => {
+          firstEvent = result.value
+        })
+
+        await expect.poll(() => firstEvent).toBeDefined()
+        expect(firstEvent).toStrictEqual({
+          kind: 'task',
+          id: expect.any(String),
+          contextId: 'ctx-1',
+          status: { state: 'working' },
+        })
+      })
     })
   })
 })

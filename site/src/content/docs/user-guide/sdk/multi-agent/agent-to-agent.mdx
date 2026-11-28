@@ -381,15 +381,24 @@ In single-agent mode the server reuses one agent across every context, swapping 
 
 ### Answering Interrupts
 
-:::note[Python only]
-This feature is currently available in the Python SDK only.
-:::
+When a tool or hook on the served agent raises an [interrupt](../interrupts.md), the task moves to the A2A `input-required` state and waits. The client answers it, and the task resumes the paused tool exactly where it stopped.
 
-When a tool or hook on the served agent raises an [interrupt](../interrupts.md), the task moves to the A2A `input_required` state and waits. The client answers it, and the task resumes the paused tool exactly where it stopped.
+Answering an interrupt is the one flow on this page that needs the raw A2A client rather than `A2AAgent`. `A2AAgent` speaks in text: it cannot send an answer, and it drops the `DataPart` carrying the interrupt ids when it reads the reply. The examples below build A2A messages directly.
 
-Answering an interrupt is the one flow on this page that needs the raw [`a2a-sdk`](https://github.com/a2aproject/a2a-python) client rather than `A2AAgent`. `A2AAgent` speaks in text, so it raises `ValueError` if you pass it interrupt responses, and it drops the `DataPart` carrying the interrupt ids when it reads the reply. The examples below build A2A messages directly.
+<Tabs>
+<Tab label="Python">
 
-Each interrupt has a server-generated id, and an answer is bound to the id of the interrupt that raised it. The server advertises the pending interrupts on the `input_required` status message as a `DataPart`, alongside the human-readable `TextPart`:
+Use the [`a2a-sdk`](https://github.com/a2aproject/a2a-python) client. `A2AAgent` raises `ValueError` if you pass it interrupt responses. It reports a parked task as `stop_reason="interrupt"`, with the text but no interrupt ids.
+
+</Tab>
+<Tab label="TypeScript">
+
+Use the [`@a2a-js/sdk`](https://github.com/a2aproject/a2a-js) client. `A2AAgent` does not raise on interrupt responses: it strips them with a warning and sends an empty text message on a new task, so nothing resumes. It also reports a parked task as a finished turn.
+
+</Tab>
+</Tabs>
+
+Each interrupt has a server-generated id, and an answer is bound to the id of the interrupt that raised it. The server advertises the pending interrupts on the `input-required` status message as a `DataPart`, alongside the human-readable `TextPart`:
 
 ```json
 {
@@ -406,7 +415,9 @@ Each interrupt has a server-generated id, and an answer is bound to the id of th
 }
 ```
 
-To answer, send a new message on the same `taskId` containing a `DataPart` that echoes the `interruptId` back with the response:
+Treat `interruptId` as opaque: send it back exactly as you received it and never parse or build it, because its format differs between SDKs. `reason` is the value the interrupt was raised with, or `null` when it has none.
+
+To answer, send a new message with the task's `taskId` and `contextId`, containing a `DataPart` that echoes the `interruptId` back with the response:
 
 ```json
 {
@@ -420,14 +431,17 @@ To answer, send a new message on the same `taskId` containing a `DataPart` that 
 }
 ```
 
-The `response` becomes the return value of the `interrupt()` call that paused the tool. It is any JSON value except `null`, which the server refuses: a null answer would leave the interrupt unsatisfied and re-raise it. `false` and `0` are fine. Answer several interrupts in one message by sending one `DataPart` for each.
+The `response` becomes the return value of the `interrupt()` call that paused the tool. It is any JSON value except `null`, which the server refuses. `false` and `0` are fine. Answer several interrupts in one message by sending one `DataPart` for each.
 
 Reading the ids off the status message and answering them:
+
+<Tabs>
+<Tab label="Python">
 
 ```python
 from a2a.types import DataPart, Part
 
-# The task parked in input_required; read the interrupts it is waiting on.
+# The task parked in input-required; read the interrupts it is waiting on.
 pending = next(
     part.root.data["interrupts"]
     for part in task.status.message.parts
@@ -443,6 +457,18 @@ answers = [
 ]
 ```
 
+</Tab>
+<Tab label="TypeScript">
+
+```typescript
+--8<-- "user-guide/sdk/multi-agent/agent-to-agent_imports.ts:answer_interrupts_imports"
+
+--8<-- "user-guide/sdk/multi-agent/agent-to-agent.ts:answer_interrupts"
+```
+
+</Tab>
+</Tabs>
+
 The server rejects an answer it cannot bind, before the agent runs, so a refused answer leaves the interrupt pending and the task still answerable. An answer is rejected when:
 
 - its `interruptId` does not match an interrupt the task is waiting on
@@ -451,7 +477,20 @@ The server rejects an answer it cannot bind, before the agent runs, so a refused
 - the payload is missing `interruptId`, or its `response` is missing or `null`
 - it is sent alongside other content parts
 
-A task with a pending interrupt also rejects an ordinary conversational message. Answer the interrupt, or cancel the task.
+<Tabs>
+<Tab label="Python">
+
+The refusal comes back as a JSON-RPC error with code `-32602` (invalid params) whose message gives the reason, and the task stays `input-required`. The `a2a-sdk` client raises it as `A2AClientJSONRPCError`. With the default `InMemoryTaskStore`, the refused message moves the `input-required` status message into the task's `history`, so `tasks/get` then returns the task without a `status.message`. Keep the interrupt ids from the reply that parked the task.
+
+</Tab>
+<Tab label="TypeScript">
+
+The refusal comes back as the task itself, still `input-required`. Its `TextPart` starts with `Message refused:` and gives the reason, and its `DataPart` repeats the interrupts the task advertised. If the interrupt is lost, send a new message instead of an answer.
+
+</Tab>
+</Tabs>
+
+A task with a pending interrupt also rejects an ordinary conversational message, so answer the interrupt to continue. The pending interrupt lives on the agent serving the context: if the server evicts that context and the agent has no session manager, the interrupt is lost, and a later answer is refused as if nothing were pending.
 
 A `DataPart` without an `interruptResponse` key is unaffected and continues to reach the agent as structured data.
 
