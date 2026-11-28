@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { VERSION as SDK_VERSION } from '@anthropic-ai/sdk/version'
 import { isNode } from '../../__fixtures__/environment.js'
 import { AnthropicModel } from '../anthropic.js'
+import { acceptsMimeType, lookupModelInfo } from '../model-info.js'
 import { ModelProxy } from '../model-proxy.js'
 import { ContextWindowOverflowError, ModelError, ModelThrottledError } from '../../errors.js'
 import { collectGenerator, collectIterator } from '../../__fixtures__/model-test-helpers.js'
@@ -236,6 +237,59 @@ describe('AnthropicModel', () => {
       expect(model.modelInfo.capabilities?.temporaryMessages).toBe(expected)
     })
 
+    const sendable = [
+      'image/png',
+      'image/jpeg',
+      'image/gif',
+      'image/webp',
+      'application/pdf',
+      'text/csv',
+      'text/html',
+      'text/markdown',
+      'text/plain',
+    ]
+
+    it('keeps only the listed types it sends', () => {
+      const docx = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      expect(acceptsMimeType(lookupModelInfo('claude-sonnet-4-6'), docx)).toBe(true)
+      const info = new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-sonnet-4-6' }).modelInfo
+
+      expect(info.capabilities?.acceptedMimeTypes).toEqual([...sendable, 'application/json', 'application/xml'])
+      expect(acceptsMimeType(info, docx)).toBe(false)
+      expect(Object.isFrozen(info.capabilities?.acceptedMimeTypes)).toBe(true)
+    })
+
+    it.each(['claude-sonnet-4-20250514', 'claude-mythos-preview'])(
+      'narrows wildcards for %s to the types it sends',
+      (modelId) => {
+        const shared = lookupModelInfo(modelId)
+        expect(acceptsMimeType(shared, 'application/msword') || acceptsMimeType(shared, 'video/mp4')).toBe(true)
+        const info = new AnthropicModel({ apiKey: 'sk-ant-test', modelId }).modelInfo
+
+        for (const type of info.capabilities?.acceptedMimeTypes ?? [])
+          expect([...sendable, 'application/json', 'application/xml']).toContain(type)
+        expect(acceptsMimeType(info, 'application/msword')).toBe(false)
+        expect(acceptsMimeType(info, 'video/mp4')).toBe(false)
+      }
+    )
+
+    it('reports the types it sends when the shared data has no list', () => {
+      expect(lookupModelInfo('claude-3-opus-20240229').capabilities?.acceptedMimeTypes).toBeUndefined()
+      const info = new AnthropicModel({ apiKey: 'sk-ant-test', modelId: 'claude-3-opus-20240229' }).modelInfo
+
+      expect(info.capabilities?.acceptedMimeTypes).toEqual([...sendable, 'application/json', 'application/xml'])
+      expect(acceptsMimeType(info, 'video/mp4')).toBe(false)
+    })
+
+    it('lets the modelInfo config set the accepted types', () => {
+      const model = new AnthropicModel({
+        apiKey: 'sk-ant-test',
+        modelId: 'claude-sonnet-4-6',
+        modelInfo: { capabilities: { acceptedMimeTypes: ['application/msword'] } },
+      })
+      expect(model.modelInfo.capabilities?.acceptedMimeTypes).toEqual(['application/msword'])
+    })
+
     it('lets the modelInfo config turn temporary messages off', () => {
       const model = new AnthropicModel({
         apiKey: 'sk-ant-test',
@@ -452,7 +506,11 @@ describe('AnthropicModel', () => {
       })
       expect(events).toContainEqual({
         type: 'modelContentBlockDeltaEvent',
-        delta: { type: 'reasoningContentDelta', signature: 'sig_123' },
+        delta: {
+          type: 'reasoningContentDelta',
+          signature: 'sig_123',
+          providerData: { provider: 'anthropic', modelId: expect.any(String), data: {} },
+        },
       })
     })
 
@@ -476,7 +534,11 @@ describe('AnthropicModel', () => {
 
       expect(events).toContainEqual({
         type: 'modelContentBlockDeltaEvent',
-        delta: { type: 'reasoningContentDelta', redactedContent: new Uint8Array([117, 171, 90]) },
+        delta: {
+          type: 'reasoningContentDelta',
+          redactedContent: new Uint8Array([117, 171, 90]),
+          providerData: { provider: 'anthropic', modelId: expect.any(String), data: {} },
+        },
       })
     })
 
@@ -1675,6 +1737,19 @@ describe('AnthropicModel', () => {
 
         expect(captured.request.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'first' }] }])
         expect(captured.options).toBeUndefined()
+      })
+
+      it('receives a JSON document through the proxy, which it sends as text', async () => {
+        const { captured, mockClient } = setupCapture()
+        const proxy = new ModelProxy(new AnthropicModel({ client: mockClient, modelId: 'claude-sonnet-4-6' }))
+        const json = new DocumentBlock({ name: 'data', format: 'json', source: { text: '{"a": 1}' } })
+
+        // The capture client sends no response, so the aggregated stream ends in an error after the request.
+        await expect(
+          collectIterator(proxy.streamAggregated([new Message({ role: 'user', content: [json] })]))
+        ).rejects.toThrow()
+
+        expect(captured.request.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: '{"a": 1}' }] }])
       })
 
       it('leaves cleared injected blocks out of the token estimate', async () => {

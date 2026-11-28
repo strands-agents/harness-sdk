@@ -1,0 +1,209 @@
+---
+title: "Dropped, never forgotten: the context engine behind the Strands harness"
+date: 2026-12-08
+description: "The Strands harness reports 34% lower cost than other harnesses. Context management is a large part of why. Here is the tiered approach behind it."
+authors:
+  - liz-radway
+  - thomas-oosterhuis
+tags:
+  - Context Management
+draft: true
+---
+
+import Diagram from '@components/Diagram.astro'
+
+When you build an agentic system, the context window quickly becomes your scarcest resource. The Strands team knows this well: model performance degrades as context bloats, applications crash on context window overflows, and agents loop trying to re-read context they just shrunk. Meanwhile, token costs keep rising.
+
+So we built a tiered approach to curating the model's context window: context is dropped, but never forgotten. These are the defaults behind [Strands harness](/blog/introducing-strands-harness/), and a large part of why it costs [34% less than other harnesses](/blog/we-ran-94000-trials-to-measure-the-cost-of-harness-choice/) across benchmarks ranging from coding to other knowledge work.
+
+## Philosophy
+
+At their inception, agentic systems relied upon rudimentary conversation managers, which acted as a stopgap between the application and the dreaded context window overflow error. In Strands, the conversation manager caught the overflow error after the model call failed, dropped (or summarized) the oldest 30% of context, and reinvoked the model.
+
+<Diagram
+  name="context-overflow-recovery"
+  alt="The reactive recovery loop. An agent turn triggers a model call. If the context fits, the model returns a response. If it is over the limit, the call fails with a context overflow error and the turn is wasted. The conversation manager then drops or summarizes the oldest 30% of context and retries the model call."
+/>
+
+This recovered gracefully, but each overflow wasted an entire turn: a failed round-trip, then a retry that re-sent most of the context.
+
+Applying the just-in-time standard to context management, we hypothesized that in an ideal world, the context window would hold only what is sufficient and necessary for the next model call, with everything else staying accessible and lossless outside it. That cuts token spend, and it also cuts the "lost-in-the-middle" effect, where model accuracy drops over information buried in the middle of a large input.
+
+## Context Compression
+
+The first step is choosing how to represent each kind of data in the window: compact enough to save tokens, lossy only where the loss doesn't matter. The right representation depends on the agent. Command-line agents truncate old output, conversational agents summarize history, and coding agents use Tree-sitter or language-native APIs to keep only function headers.
+
+<Tabs>
+  <Tab label="Python">
+    ```python
+    from strands import Agent
+    from strands.context_manager import Offload
+
+    agent = Agent(
+        context_manager={
+            "strategies": [
+                # Bulky tool output collapses to a head/tail preview once a block exceeds 1,500 tokens
+                Offload.truncate("tool_results", {"preview_tokens": 750}).when(block_threshold=1500),
+                # Conversation history condenses into a summary once the window is 85% full
+                Offload.summarize("*").when(context_utilization="85%", preserve_recent=4),
+            ],
+        },
+    )
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    import { Agent } from '@strands-agents/sdk'
+    import { Offload } from '@strands-agents/sdk/context-manager'
+
+    --8<-- "../blog/jit-context-retrieval.ts:offload_strategies"
+    ```
+  </Tab>
+</Tabs>
+
+```text
+[Truncated: 1 block, ~12,500 tokens]
+
+$ pytest tests/
+============================= test session starts ==============================
+collected 219 items
+
+tests/test_agent.py ....................................................  [ 24%]
+
+[... 47,000 chars elided ...]
+
+=========================== short test summary info ============================
+FAILED tests/test_streaming.py::test_partial_chunk_reassembly
+FAILED tests/test_tools.py::test_concurrent_tool_execution
+======================== 2 failed, 217 passed in 41.28s ========================
+```
+
+## Context Persistence
+
+Compression clears room, but it destroys data. A truncated test log can't tell you which assertion failed, so the agent re-runs the tests: forgetfulness, duplicate tool calls, and the token spend you just saved, spent again.
+
+Strands keeps a lossless copy of everything sent to the agent in a log called the archive. Because the archive lives in storage, independent of the context window, the agent can empty its window without losing anything. The compacted block in the window becomes a preview, and the agent retrieves the full block from the archive when it needs it.
+
+<Diagram
+  name="context-archive-preview"
+  alt="The archive next to the context window. The context window, billed every turn, holds only a preview: the head and tail of the roughly 12,500-token tool result tu_abc123. The archive, which lives in storage and is never billed, holds the lossless block tu_abc123_0 with the full 12,500-token result. The agent calls retrieve_context against the archive, and only the slice it asked for returns to the context window."
+/>
+
+<Tabs>
+  <Tab label="Python">
+    ```python
+    from strands import Agent
+    from strands.storage import LocalFileStorage
+
+    # The archive needs no configuration: it is on by default, and falls back to the
+    # agent's own storage, then to in-memory. Name a backend to make it durable.
+    agent = Agent(
+        context_manager={
+            "archive": {"storage": LocalFileStorage()},
+        },
+    )
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    import { Agent } from '@strands-agents/sdk'
+    import { LocalFileStorage } from '@strands-agents/sdk/storage'
+
+    --8<-- "../blog/jit-context-retrieval.ts:archive"
+    ```
+  </Tab>
+</Tabs>
+
+## Context Relevance
+
+Yet this begets a new problem: how does the agent know what full context to retrieve? Today, the agent narrows a block by pattern or line range, paying for the lines it needs instead of the whole result. Built-in search strategies already rank storage: BM25 and keyword search ship in the box, and the search interface accepts custom implementations. Surfacing them on the context manager, so the agent can search the archive against its current work, lands next.
+
+<Tabs>
+  <Tab label="Python">
+    ```python
+    from strands.storage import LocalFileStorage
+    from strands.storage.search import Bm25SearchStrategy
+
+    # Indexed on write, ranked best-first on read
+    storage = LocalFileStorage(
+        "./.strands/artifacts",
+        search_strategy=Bm25SearchStrategy(),
+    )
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    import { LocalFileStorage } from '@strands-agents/sdk/storage'
+    import { Bm25SearchStrategy } from '@strands-agents/sdk/storage/search/bm25'
+
+    --8<-- "../blog/jit-context-retrieval.ts:search_strategy"
+    ```
+  </Tab>
+</Tabs>
+
+<Diagram
+  name="context-retrieval-decision"
+  alt="The retrieval decision. The model reads a preview: a compacted block plus its reference. If the preview is enough, it answers directly at zero extra tokens. If it needs the rest, it calls retrieve_context with the reference and a pattern or line range, and only the matching lines re-enter the context window."
+/>
+
+## Context Isolation
+
+The same mechanics isolate context between agents. An orchestrator launches sub-agents for separate tasks, and each sub-agent's window stays specific to its own work. Storage in Strands is decoupled from any one construct, so isolating context across sessions, multi-agent patterns, or sub-agents is just a different path passed to the context manager.
+
+<Tabs>
+  <Tab label="Python">
+    ```python
+    from strands import Agent
+    from strands.storage import LocalFileStorage
+
+    storage = LocalFileStorage("./.strands")
+
+    researcher = Agent(
+        agent_id="researcher",
+        storage=storage.namespace("researcher"),
+        context_manager="auto",
+    )
+
+    writer = Agent(
+        agent_id="writer",
+        storage=storage.namespace("writer"),
+        context_manager="auto",
+    )
+    ```
+  </Tab>
+  <Tab label="TypeScript">
+    ```typescript
+    import { Agent } from '@strands-agents/sdk'
+    import { LocalFileStorage } from '@strands-agents/sdk/storage'
+
+    --8<-- "../blog/jit-context-retrieval.ts:isolation"
+    ```
+  </Tab>
+</Tabs>
+
+<Diagram
+  name="context-isolation-namespaces"
+  alt="Context isolation through storage namespaces. An orchestrator launches two sub-agents, a researcher and a writer. Each works in its own storage namespace (./.strands/researcher and ./.strands/writer), so no context bleeds between them and each context window stays task-specific."
+/>
+
+## Measuring it
+
+We ran the same agent over all 642 tasks of SWE-bench Pro v2 with GPT-5.6, once with the context manager off and once with `context_manager="auto"`. Everything else was identical. The testing setup was distributed benchmarking on EC2 with Harbor.
+
+| | Context manager off | `context_manager="auto"` |
+|---|---|---|
+| Score | 86.9% | **90.3%** |
+| Score, excluding errored trials | 90.0% | 90.6% |
+| Input tokens | 553M | **301M (−46%)** |
+| Errored trials | 23 | **4** |
+| Context window overflow crashes | 17 | **0** |
+
+Excluding errored trials, accuracy is within 0.6 points (90.0% vs 90.6%). The difference is everything else. The context manager cut input tokens by 46% and eliminated the overflow crash entirely: 17 trials died to it with the manager off, zero with `auto`.
+
+ContextBench, a 50-task benchmark built to stress long-horizon context handling, shows the same shape with Claude Opus 4.8: `auto` scores highest at 72.3% against the unmanaged baseline's 71.1%, and a tuned retrieval configuration gives up 1.2 points for 35% fewer input tokens. That trade-off is why the context manager accepts fine-grained strategies and not just a switch.
+
+## Conclusion
+
+The overflow error was never the problem. It was the symptom of treating the context window as the only place context could live. Once context has somewhere else to go, the window becomes what it should have been all along: a working set, assembled for the turn in front of it.
+
+Storage is cheap; the context window is not. Context management reduces to deciding, each turn, which tier every piece of context belongs in. Start with `context_manager="auto"`, and drop down to [fine-grained strategies](/docs/user-guide/sdk/context-management/) as you learn what your workflow needs. The team and I are also on [Discord](https://discord.gg/strands), so reach out if you'd like help with context management in your agent.

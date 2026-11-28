@@ -57,7 +57,14 @@ import openai  # noqa: E402 - must import after version check
 
 from ..agent.agent_metadata import AgentMetadata  # noqa: E402
 from ..types.citations import WebLocationDict  # noqa: E402
-from ..types.content import ContentBlock, Messages, Role, SystemContentBlock  # noqa: E402
+from ..types.content import (  # noqa: E402
+    ContentBlock,
+    Messages,
+    ReasoningContentBlock,
+    ReasoningProviderData,
+    Role,
+    SystemContentBlock,
+)
 from ..types.event_loop import Usage  # noqa: E402
 from ..types.exceptions import ContextWindowOverflowException, ModelThrottledException  # noqa: E402
 from ..types.streaming import StreamEvent  # noqa: E402
@@ -87,6 +94,9 @@ _CONTEXT_WINDOW_OVERFLOW_MSG = "OpenAI Responses API threw context window overfl
 _RATE_LIMIT_MSG = "OpenAI Responses API threw rate limit error"
 # Input content types that accept prompt_cache_breakpoint (gpt-5.6+).
 _CACHEABLE_INPUT_TYPES = frozenset({"input_text", "input_image", "input_file"})
+# The ``providerData.provider`` tag of the reasoning items this adapter captures: their format, not the endpoint.
+_REASONING_PROVIDER = "openai_responses"
+_ENCRYPTED_REASONING = "reasoning.encrypted_content"
 
 
 class _OpenAIResponsesStreamError(RuntimeError):
@@ -217,6 +227,8 @@ class OpenAIResponsesModel(Model):
         self._custom_client = client
         self.client_args = client_args or {}
         self._bedrock_mantle_config = bedrock_mantle_config
+        # The model id whose replayed reasoning the endpoint rejected; it is not replayed again.
+        self._rejected_reasoning_model_id: str | None = None
 
         if bedrock_mantle_config is not None and client_args:
             conflicting = [k for k in ("api_key", "base_url") if k in client_args]
@@ -251,14 +263,19 @@ class OpenAIResponsesModel(Model):
     @property
     @override
     def model_info(self) -> ModelInfo:
-        """Adds whether server-side conversation storage is enabled, and reports server-side summary as off.
+        """Adds whether server-side conversation storage is enabled and the reasoning this provider takes back.
 
-        Storage is taken from the ``stateful`` configuration option; a ``model_info`` override still wins over both.
+        Server-side summary is reported as off. Storage is taken from the ``stateful`` configuration option. Only
+        reasoning from the configured model is replayed, which the request formatting checks. A ``model_info``
+        override still wins over all of these.
         """
+        capabilities = ModelCapabilities(
+            stateful=bool(self.config.get("stateful")), reasoning_provider=_REASONING_PROVIDER
+        )
         return ModelInfo.merge(
             super().model_info,
             SERVER_SIDE_SUMMARY_OFF,
-            ModelInfo(capabilities=ModelCapabilities(stateful=bool(self.config.get("stateful")))),
+            ModelInfo(capabilities=capabilities),
             cast(ModelInfo | None, self.config.get("model_info")),
         )
 
@@ -383,13 +400,32 @@ class OpenAIResponsesModel(Model):
 
         async with self._get_client() as client:
             try:
-                response = await client.responses.create(**request)
+                try:
+                    response = await client.responses.create(**request)
+                except openai.BadRequestError as rejection:
+                    if not self._rejects_replayed_reasoning(request, rejection):
+                        raise
+                    # History keeps the reasoning for another model or a new instance; this one stops replaying it.
+                    logger.warning(
+                        "error=<%s> | endpoint rejected replayed reasoning | retrying and no longer replaying it",
+                        rejection,
+                    )
+                    self._rejected_reasoning_model_id = str(self.config["model_id"])
+                    request = {
+                        **request,
+                        "input": [item for item in request["input"] if item.get("type") != "reasoning"],
+                    }
+                    response = await client.responses.create(**request)
 
                 logger.debug("streaming response from OpenAI Responses API model")
 
                 yield self._format_chunk({"chunk_type": "message_start"})
 
                 tool_calls: dict[str, _ToolCallInfo] = {}
+                # Stateless only: a stored conversation keeps its reasoning server-side.
+                capture_reasoning = not request["store"]
+                # Ids of the reasoning items already captured, so the terminal output only adds the rest.
+                captured: set[str] = set()
                 final_usage = None
                 data_type: str | None = None
                 stop_reason: str | None = None
@@ -406,10 +442,12 @@ class OpenAIResponsesModel(Model):
                         elif event.type in (
                             "response.reasoning_text.delta",
                             "response.reasoning_summary_text.delta",
+                            "response.reasoning.delta",
                         ):
                             # Reasoning content streaming:
                             # - reasoning_text: full chain-of-thought (gpt-oss models)
                             # - reasoning_summary_text: condensed summary (o-series models)
+                            # - reasoning: the reasoning_text variant some OpenAI-compatible servers stream
                             chunks, data_type = self._stream_switch_content("reasoning_content", data_type)
                             for chunk in chunks:
                                 yield chunk
@@ -447,6 +485,12 @@ class OpenAIResponsesModel(Model):
                                         "annotation_type=<%s> | unsupported annotation type",
                                         event.annotation.get("type"),
                                     )
+
+                        elif event.type == "response.output_item.done":
+                            if capture_reasoning:
+                                chunks, data_type = self._capture_reasoning([event.item], captured, data_type)
+                                for chunk in chunks:
+                                    yield chunk
 
                         elif event.type == "response.output_item.added":
                             # Tool call started
@@ -505,12 +549,22 @@ class OpenAIResponsesModel(Model):
                                     stop_reason = "length"
                                 elif incomplete_reason == "content_filter":
                                     stop_reason = "content_filter"
+                                if capture_reasoning:
+                                    output = getattr(event.response, "output", None)
+                                    chunks, data_type = self._capture_reasoning(output, captured, data_type)
+                                    for chunk in chunks:
+                                        yield chunk
                             break
 
                         elif event.type == "response.completed":
                             # Response complete
                             if hasattr(event, "response") and hasattr(event.response, "usage"):
                                 final_usage = event.response.usage
+                            if capture_reasoning and hasattr(event, "response"):
+                                output = getattr(event.response, "output", None)
+                                chunks, data_type = self._capture_reasoning(output, captured, data_type)
+                                for chunk in chunks:
+                                    yield chunk
                             break
             except (openai.APIError, _OpenAIResponsesStreamError) as error:
                 error_kind = classify_openai_error(error)
@@ -636,14 +690,20 @@ class OpenAIResponsesModel(Model):
             # A native input override stays under the caller's control.
             and "input" not in cast(dict[str, Any], self.config.get("params", {}))
         )
+        stateful = self.stateful
+        # A stored conversation already has its reasoning, so only a stateless request replays it.
+        model_id = str(self.config["model_id"])
+        reasoning_model_id = None if stateful or model_id == self._rejected_reasoning_model_id else model_id
         input_items, explicit_cache = (
             self._format_cacheable_request_messages(
-                messages, dynamic_trailing_blocks, cast(CacheConfig, cache_config).messages_ttl
+                messages,
+                dynamic_trailing_blocks,
+                cast(CacheConfig, cache_config).messages_ttl,
+                reasoning_model_id=reasoning_model_id,
             )
             if cache_messages
-            else (self._format_request_messages(messages), False)
+            else (self._format_request_messages(messages, reasoning_model_id=reasoning_model_id), False)
         )
-        stateful = self.stateful
         request: dict[str, Any] = {
             "model": self.config["model_id"],
             "input": input_items,
@@ -655,6 +715,14 @@ class OpenAIResponsesModel(Model):
         response_id = model_state.get("response_id") if model_state else None
         if response_id and stateful:
             request["previous_response_id"] = response_id
+        elif not stateful:
+            include = request.get("include", [])
+            if include is None:
+                # An explicit null opts out of the SDK default.
+                del request["include"]
+            elif _ENCRYPTED_REASONING not in include:
+                # The encrypted reasoning is what lets the next stateless request continue from it.
+                request["include"] = [*include, _ENCRYPTED_REASONING]
 
         if system_prompt:
             request.update(self._format_request_system_prompt(system_prompt, request))
@@ -750,7 +818,12 @@ class OpenAIResponsesModel(Model):
 
     @classmethod
     def _format_cacheable_request_messages(
-        cls, messages: Messages, dynamic_trailing_blocks: int, messages_ttl: bool | str | None = None
+        cls,
+        messages: Messages,
+        dynamic_trailing_blocks: int,
+        messages_ttl: bool | str | None = None,
+        *,
+        reasoning_model_id: str | None = None,
     ) -> tuple[list[dict[str, Any]], bool]:
         """Format messages with a cache checkpoint on the last input part of each durable user message.
 
@@ -773,7 +846,9 @@ class OpenAIResponsesModel(Model):
             dynamic_count = dynamic_trailing_blocks if role == "user" and index == len(messages) - 1 else 0
             boundary = max(0, len(content) - dynamic_count)
             items = cls._format_request_messages(
-                [{"role": role, "content": content[:boundary]}], skipped_blocks=skipped
+                [{"role": role, "content": content[:boundary]}],
+                skipped_blocks=skipped,
+                reasoning_model_id=reasoning_model_id,
             )
             cls._normalize_tool_outputs(items)
             part = cls._last_cacheable_part(items) if role == "user" else None
@@ -826,6 +901,7 @@ class OpenAIResponsesModel(Model):
         messages: Messages,
         *,
         skipped_blocks: Counter[str] | None = None,
+        reasoning_model_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Format an OpenAI compatible messages array.
 
@@ -833,6 +909,8 @@ class OpenAIResponsesModel(Model):
             messages: List of message objects to be processed by the model.
             skipped_blocks: Caller-owned counter for unsupported blocks. When given, the caller logs
                 the skips once for the whole request; otherwise they are logged here.
+            reasoning_model_id: Replay the reasoning items this adapter captured from this model, ahead of the
+                rest of their turn; ``None`` replays none.
 
         Returns:
             An OpenAI compatible messages array.
@@ -845,11 +923,17 @@ class OpenAIResponsesModel(Model):
             contents = message["content"]
 
             filtered_contents = []
+            reasoning_items = []
             for content in contents:
                 if "reasoningContent" in content:
-                    skipped[
-                        "reasoningContent is not yet supported in multi-turn conversations with the Responses API"
-                    ] += 1
+                    reasoning_item = cls._format_reasoning_item(content["reasoningContent"], reasoning_model_id)
+                    if reasoning_item is None:
+                        skipped[
+                            "reasoningContent from another provider or model cannot be replayed to OpenAI Responses"
+                            " | skipping content block"
+                        ] += 1
+                    else:
+                        reasoning_items.append(reasoning_item)
                     continue
                 if "cachePoint" in content:
                     skipped["cachePoint content block is not supported by OpenAI Responses | skipping"] += 1
@@ -877,6 +961,19 @@ class OpenAIResponsesModel(Model):
                 if "toolResult" in content
             ]
 
+            # A reasoning item must be followed by the output it produced, a message or a function call.
+            if (
+                reasoning_items
+                and not formatted_tool_calls
+                and not any(part.get("type") == "output_text" and part.get("text") for part in formatted_contents)
+            ):
+                skipped["reasoningContent without a message or tool call in its turn | skipping content block"] += len(
+                    reasoning_items
+                )
+                reasoning_items = []
+            formatted_messages.extend(reasoning_items)
+            # Tool outputs must immediately follow their calls, before any user text in the same message.
+            formatted_messages.extend(formatted_tool_messages)
             if formatted_contents:
                 if role == "assistant":
                     # Only the string EasyInputMessage form is a valid assistant *input* shape
@@ -904,7 +1001,6 @@ class OpenAIResponsesModel(Model):
                     )
 
             formatted_messages.extend(formatted_tool_calls)
-            formatted_messages.extend(formatted_tool_messages)
 
         if skipped_blocks is None:
             _log_skipped_blocks(logger, skipped)
@@ -912,8 +1008,26 @@ class OpenAIResponsesModel(Model):
         return [
             message
             for message in formatted_messages
-            if message.get("content") or message.get("type") in ["function_call", "function_call_output"]
+            if message.get("content") or message.get("type") in ["function_call", "function_call_output", "reasoning"]
         ]
+
+    @staticmethod
+    def _format_reasoning_item(reasoning: ReasoningContentBlock, model_id: str | None) -> dict[str, Any] | None:
+        """The reasoning input item for a block this adapter captured from ``model_id``, else None."""
+        provider_data = reasoning.get("providerData")
+        if (
+            not provider_data
+            or provider_data["provider"] != _REASONING_PROVIDER
+            or provider_data["modelId"] != model_id
+        ):
+            return None
+        data = provider_data["data"]
+        # A fixed key order keeps the replayed prefix byte-identical across requests, so it stays cached.
+        item: dict[str, Any] = {"type": "reasoning", "summary": data.get("summary", [])}
+        for key in ("id", "content", "encrypted_content"):
+            if key in data:
+                item[key] = data[key]
+        return item
 
     @classmethod
     def _format_request_message_content(cls, content: ContentBlock, *, role: Role = "user") -> dict[str, Any]:
@@ -1043,6 +1157,61 @@ class OpenAIResponsesModel(Model):
                 chunks.append(self._format_chunk({"chunk_type": "content_stop", "data_type": prev_data_type}))
             chunks.append(self._format_chunk({"chunk_type": "content_start", "data_type": data_type}))
 
+        return chunks, data_type
+
+    @staticmethod
+    def _rejects_replayed_reasoning(request: dict[str, Any], error: openai.BadRequestError) -> bool:
+        """Whether a request that replayed reasoning failed because the endpoint would not take that reasoning."""
+        message = str(error).lower()
+        replayed = any(isinstance(item, dict) and item.get("type") == "reasoning" for item in request["input"])
+        return replayed and ("reasoning" in message or "encrypted" in message)
+
+    def _capture_reasoning(
+        self, items: list[Any] | None, captured: set[str], data_type: str | None
+    ) -> tuple[list[StreamEvent], str | None]:
+        """Emit each new reasoning output item as its own reasoning block, carrying what replaying it needs.
+
+        Reasoning text already streamed into the open reasoning block stays there; an item whose text was not
+        streamed gets it from its ``content`` or ``summary``.
+
+        Args:
+            items: Response output items; only reasoning items not in ``captured`` are emitted.
+            captured: Ids of the reasoning items emitted so far, updated in place.
+            data_type: The open content block's data type.
+
+        Returns:
+            The chunks to yield, and the open content block's data type afterwards.
+        """
+        chunks: list[StreamEvent] = []
+        for item in items if isinstance(items, list) else []:
+            data = item.model_dump(exclude_none=True) if isinstance(item, BaseModel) else item
+            if not isinstance(data, dict) or data.get("type") != "reasoning" or data.get("id") in captured:
+                continue
+            if data.get("id"):
+                captured.add(data["id"])
+            replay = {key: data[key] for key in ("id", "summary", "content", "encrypted_content") if data.get(key)}
+            text = "\n".join(part.get("text", "") for part in data.get("content") or data.get("summary") or [])
+            replayable = "content" in replay or "encrypted_content" in replay
+            if data_type != "reasoning_content":
+                if not text and not replayable:
+                    continue
+                switch, data_type = self._stream_switch_content("reasoning_content", data_type)
+                chunks.extend(switch)
+                if text:
+                    chunks.append(
+                        self._format_chunk(
+                            {"chunk_type": "content_delta", "data_type": "reasoning_content", "data": text}
+                        )
+                    )
+            if replayable:
+                provider_data: ReasoningProviderData = {
+                    "provider": _REASONING_PROVIDER,
+                    "modelId": str(self.config["model_id"]),
+                    "data": replay,
+                }
+                chunks.append({"contentBlockDelta": {"delta": {"reasoningContent": {"providerData": provider_data}}}})
+            chunks.append(self._format_chunk({"chunk_type": "content_stop", "data_type": "reasoning_content"}))
+            data_type = None
         return chunks, data_type
 
     def _format_chunk(self, event: dict[str, Any]) -> StreamEvent:

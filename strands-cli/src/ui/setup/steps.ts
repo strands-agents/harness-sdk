@@ -5,7 +5,7 @@ import {
   type BuiltinToolName,
   type HarnessConfigBuiltinTools,
 } from '@strands-agents/harness'
-import { DEFAULT_MEMORY_DIR, DEFAULT_SKILLS_DIR } from '@strands-agents/harness/internal'
+import { DEFAULT_MEMORY_DIR, DEFAULT_SKILLS_DIR, webSearchMode } from '@strands-agents/harness/internal'
 import {
   PROVIDER_CREDENTIAL_KEYS,
   PROVIDER_LABELS,
@@ -291,6 +291,12 @@ export function rowsForStep(
       if (flow === 'quickstart') {
         const nativeSearch = supportsWebSearch(draft.profile.model)
         const exaSearch = exaWebSearchActive(draft.profile) || !nativeSearch
+        const agentcoreSearch = nativeSearch && webSearchMode(true, false, draft.profile.model) === 'agentcore'
+        const bedrockTokenOnly =
+          environment.AWS_BEARER_TOKEN_BEDROCK &&
+          !environment.AWS_PROFILE &&
+          !environment.AWS_ACCESS_KEY_ID &&
+          !awsDiscovery.profiles.includes('default')
         const enabled = profileToolEnabled(draft.profile.builtinTools, 'web_search')
         rows.push({
           id: 'quickstart-web-search',
@@ -299,7 +305,11 @@ export function rowsForStep(
           description: enabled
             ? exaSearch
               ? 'Third-party search via Exa'
-              : "Provider's built-in search"
+              : agentcoreSearch
+                ? bedrockTokenOnly
+                  ? 'Needs IAM credentials, not an API token'
+                  : 'Bedrock AgentCore web search'
+                : "Provider's built-in search"
             : nativeSearch
               ? 'Built-in search available'
               : 'No built-in search',
@@ -311,7 +321,7 @@ export function rowsForStep(
                 updateProfile({ builtinTools: withoutProfileTool(draft.profile.builtinTools, 'web_search') }),
             },
             {
-              label: exaSearch ? 'Exa' : 'Native',
+              label: exaSearch ? 'Exa' : agentcoreSearch ? 'AgentCore' : 'Native',
               active: enabled,
               activate: (): void => {
                 const withoutSearch = withoutProfileTool(draft.profile.builtinTools, 'web_search')
@@ -630,7 +640,8 @@ function pluginSelectionRows(
         ),
     },
   ]
-  const allSelected = pluginsAndFeatures.every((row) => row.disabled || row.active)
+  // Todos is opt-in, so bulk selection leaves it as is.
+  const allSelected = pluginsAndFeatures.every((row) => row.id === 'todos' || row.disabled || row.active)
   return [
     {
       id: 'select-all',
@@ -648,7 +659,9 @@ function pluginSelectionRows(
             settings: { ...next.settings, mcpDiscovery: enabled, agentMessaging: enabled },
             profile: {
               ...next.profile,
-              builtinPlugins: enabled ? DEFAULT_HARNESS_AGENT_CONFIG.builtinPlugins : [],
+              builtinPlugins: enabled
+                ? [...new Set([...next.profile.builtinPlugins, ...DEFAULT_HARNESS_AGENT_CONFIG.builtinPlugins])]
+                : [],
             },
           }
         })

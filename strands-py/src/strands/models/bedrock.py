@@ -26,7 +26,15 @@ from ..event_loop import streaming
 from ..tools import convert_pydantic_to_tool_spec
 from ..tools._tool_helpers import noop_tool
 from ..tools.structured_output._structured_output_context import json_object_from_message
-from ..types.content import CachePoint, ContentBlock, Message, Messages, ReasoningContentBlock, SystemContentBlock
+from ..types.content import (
+    CachePoint,
+    ContentBlock,
+    Message,
+    Messages,
+    ReasoningContentBlock,
+    ReasoningProviderData,
+    SystemContentBlock,
+)
 from ..types.exceptions import (
     ContextWindowOverflowException,
     ModelThrottledException,
@@ -110,6 +118,13 @@ _MODELS_REJECT_REASONING_TEXT = [
 # Cache of model IDs for which CountTokens API calls should be skipped.
 _SKIP_COUNT_TOKENS_MODELS: set[str] = set()
 
+# The regions Converse refused cache points in, by OpenAI GPT model ID. Requests to a model in one of its regions go
+# without cache points for the lifetime of the process.
+_CACHE_POINTS_REFUSED: dict[str, set[str]] = {}
+
+# The AccessDeniedException message Converse refuses every cache point for a model with.
+_CACHE_POINTS_REFUSED_MESSAGE = "did not allow prompt caching"
+
 # The Nova models Converse caches at cache points (measured on Converse). Nova Premier is end-of-life and Nova 2 Pro
 # is not in the Bedrock prompt-caching docs, so neither is listed.
 _NOVA_CACHE_POINT_MODELS = (
@@ -143,9 +158,23 @@ def _converse_cache_model_info(model_id: str) -> ModelInfo | None:
     which it does not cache) and xAI implicitly. The shared info lists no caching for Nova, which takes cache points.
     """
     model_id = model_id.lower()
-    if ("openai." in model_id and "gpt-oss" not in model_id) or "xai." in model_id:
+    if _is_openai_gpt(model_id) or "xai." in model_id:
         return _IMPLICIT_CACHE
     return _CACHE_POINTS if _converse_limits_cache_points(model_id) else None
+
+
+def _converse_takes_gpt_cache_points(model_id: str, model_info: ModelInfo) -> bool:
+    """Whether BedrockModel places cache points on Converse for this OpenAI GPT model (GPT-5.6 and later).
+
+    These are the GPT models the model info, before the Converse caching override, lists with cache points. Converse
+    takes them under the Nova limits (measured on Converse) but documents no support, so BedrockModel falls back to
+    implicit caching when Converse refuses them.
+    """
+    return _is_openai_gpt(model_id.lower()) and model_info.capabilities.prompt_caching == "cache_points"
+
+
+def _is_openai_gpt(lowercase_model_id: str) -> bool:
+    return "openai." in lowercase_model_id and "gpt-oss" not in lowercase_model_id
 
 
 def _step_back_to_text(content: list[dict[str, Any]], idx: int) -> int:
@@ -278,6 +307,40 @@ def _request_with_drop_block(request: dict[str, Any]) -> dict[str, Any] | None:
     if THINKING_BINDING_BETA not in betas:
         betas.append(THINKING_BINDING_BETA)
     return {**request, "additionalModelRequestFields": {**fields, "anthropic_beta": betas, "thinking": thinking}}
+
+
+def _is_cache_points_refusal(error: ClientError) -> bool:
+    """Whether Converse refused the request because the model takes no cache points at all."""
+    details = error.response.get("Error", {})
+    return details.get("Code") == "AccessDeniedException" and _CACHE_POINTS_REFUSED_MESSAGE in details.get(
+        "Message", ""
+    )
+
+
+def _request_without_cache_points(request: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the request with every cache point removed from the system prompt, messages and tools, or None."""
+    system = request.get("system")
+    messages = request.get("messages")
+    tool_config = request.get("toolConfig") or {}
+    tools = tool_config.get("tools")
+    blocks = [
+        *(system or []),
+        *(tools or []),
+        *(block for message in messages or [] for block in message.get("content", [])),
+    ]
+    if not any("cachePoint" in block for block in blocks):
+        return None
+    stripped = {**request}
+    if system is not None:
+        stripped["system"] = [block for block in system if "cachePoint" not in block]
+    if messages is not None:
+        stripped["messages"] = [
+            {**message, "content": [block for block in message.get("content", []) if "cachePoint" not in block]}
+            for message in messages
+        ]
+    if tools is not None:
+        stripped["toolConfig"] = {**tool_config, "tools": [tool for tool in tools if "cachePoint" not in tool]}
+    return stripped
 
 
 class BedrockModel(Model):
@@ -451,21 +514,50 @@ class BedrockModel(Model):
     @property
     @override
     def model_info(self) -> ModelInfo:
-        """Reports server-side summary as off, and how Converse caches the model where the shared model info differs.
+        """Reports server-side summary as off, how Converse caches the model, and the reasoning it takes back.
 
-        A ``model_info`` override still wins over both.
+        Claude-signed reasoning is taken back on a Claude model id, and on a model id that names no vendor, such as an
+        application inference profile ARN. Reasoning produced through such an id is not tagged, so it is not kept from
+        other vendors. A ``model_info`` override still wins over all of these.
         """
+        # A foundation-model or system profile ARN ends in a vendor-qualified id; an application profile's does not.
+        model_id = self.config.get("model_id")
+        names_no_vendor = isinstance(model_id, str) and "." not in model_id.rsplit("/", 1)[-1]
+        reasoning = ModelCapabilities(
+            reasoning_provider="anthropic" if self._names_anthropic() or names_no_vendor else None
+        )
+        info = super().model_info
         return ModelInfo.merge(
-            super().model_info,
+            info,
             SERVER_SIDE_SUMMARY_OFF,
-            _converse_cache_model_info(str(self.config.get("model_id", ""))),
+            None
+            if self._takes_gpt_cache_points(info)
+            else _converse_cache_model_info(str(self.config.get("model_id", ""))),
+            ModelInfo(capabilities=reasoning),
             self.config.get("model_info"),
         )
 
     @property
     def _limits_cache_points(self) -> bool:
-        """Whether Converse limits where this model takes cache points (Nova: no tools point, no TTL, text only)."""
-        return _converse_limits_cache_points(str(self.config.get("model_id", "")))
+        """Whether Converse limits where this model takes cache points.
+
+        Nova and GPT-5.6+ take no tools point and no TTL, and a point only directly after text.
+        """
+        model_id = str(self.config.get("model_id", ""))
+        return _converse_limits_cache_points(model_id) or self._takes_gpt_cache_points(super().model_info)
+
+    def _takes_gpt_cache_points(self, info: ModelInfo) -> bool:
+        """Whether this is an OpenAI GPT model that takes cache points, unless Converse refused them in this region.
+
+        Args:
+            info: The model info before the Converse caching override.
+        """
+        model_id = str(self.config.get("model_id", ""))
+        return _converse_takes_gpt_cache_points(model_id, info) and not self._cache_points_refused()
+
+    def _cache_points_refused(self) -> bool:
+        """Whether Converse has refused cache points for this model ID in the client's region."""
+        return self.client.meta.region_name in _CACHE_POINTS_REFUSED.get(str(self.config.get("model_id", "")), ())
 
     def _supported_ttl(self, ttl: str | None) -> str | None:
         """Return the TTL to send, dropping it with a one-time warning when the model rejects any TTL."""
@@ -693,7 +785,7 @@ class BedrockModel(Model):
             logger.debug("model_id=<%s> | sending drop_block for stale thinking", request["modelId"])
             request = latched
         try:
-            return converse_method(**request)
+            return self._send_with_cache_point_fallback(converse_method, request)
         except ClientError as error:
             error_code = error.response.get("Error", {}).get("Code")
             is_binding_error = error_code == "ValidationException" and is_thinking_binding_error(error)
@@ -705,9 +797,39 @@ class BedrockModel(Model):
             "model_id=<%s> | history edit invalidated replayed thinking blocks, retrying with drop_block",
             request["modelId"],
         )
-        response = converse_method(**retry_request)
+        response = self._send_with_cache_point_fallback(converse_method, retry_request)
         # Latched only once the retry is accepted, so a rejected retry does not alter later requests.
         self._drop_stale_thinking_model_id = request["modelId"]
+        return response
+
+    def _send_with_cache_point_fallback(self, converse_method: Callable[..., Any], request: dict[str, Any]) -> Any:
+        """Send the request, resending it once without cache points when Converse refuses every cache point.
+
+        Converse takes cache points for some OpenAI GPT models and refuses them for others with an
+        ``AccessDeniedException``. Once the resend is accepted, every later request to this model ID in the client's
+        region goes without cache points for the process, caller-placed ones included. Any other error, including a
+        ``ValidationException`` for one misplaced cache point, and any error for another model, is raised.
+        """
+        model_id = str(self.config.get("model_id", ""))
+        if not _converse_takes_gpt_cache_points(model_id, super().model_info):
+            return converse_method(**request)
+        if self._cache_points_refused():
+            return converse_method(**(_request_without_cache_points(request) or request))
+        try:
+            return converse_method(**request)
+        except ClientError as error:
+            retry_request = _request_without_cache_points(request) if _is_cache_points_refusal(error) else None
+            if retry_request is None:
+                raise
+
+        response = converse_method(**retry_request)
+        region = self.client.meta.region_name
+        _CACHE_POINTS_REFUSED.setdefault(model_id, set()).add(region)
+        logger.warning(
+            "model_id=<%s>, region=<%s> | converse rejected cache points for this model, sending none",
+            model_id,
+            region,
+        )
         return response
 
     def _apply_system_cache_ttl(
@@ -866,9 +988,9 @@ class BedrockModel(Model):
             True when the point was kept, possibly relocated. False when nothing cacheable precedes it,
             or, on a model that takes a cache point only after text, no text precedes it, so the point was
             removed: Bedrock rejects a cache point with no content ahead of it ("There
-            is nothing available to cache"). The caller then retries automatic placement, which lands a
-            point only if the remaining content allows one - for a leading document it declines too, so
-            the message ends up with no cache point at all.
+            is nothing available to cache"). The caller then retries automatic placement, except after a
+            leading document, where the blocks after the point are per-call content and no position ahead
+            of them is legal, so the message ends up with no cache point at all.
         """
         placed = content[placed_idx]
 
@@ -905,8 +1027,7 @@ class BedrockModel(Model):
                 )
                 return False
             if target_idx == 0:
-                # Nothing precedes the documents, so there is no prefix to cache. Automatic placement
-                # declines for the same reason, leaving the message with no cache point.
+                # Nothing precedes the documents, so the point has nowhere legal to go ahead of the caller's boundary.
                 logger.warning("msg_idx=<%s> | dropped cache point ahead of a leading document", msg_idx)
                 return False
             content.insert(target_idx, placed)
@@ -1002,6 +1123,10 @@ class BedrockModel(Model):
                     # empty message too, exactly as the pre-existing strip path already did.
                     logger.debug("msg_idx=<%s> | no content left to cache", last_user_idx)
                     return
+                if placed_idxs[0] > 0 and not self._limits_cache_points:
+                    # Only leading documents preceded the point, and the blocks after it are per-call content.
+                    logger.debug("msg_idx=<%s> | no position ahead of the caller's boundary", last_user_idx)
+                    return
                 # The point could not legally stay, so fall through to automatic placement below.
 
             if self._limits_cache_points:
@@ -1015,28 +1140,15 @@ class BedrockModel(Model):
                     logger.debug("msg_idx=<%s> | skipped cache point, no durable prefix", last_user_idx)
                     return
                 content.insert(boundary_idx, {"cachePoint": point})
-                # A False here means a leading document left no prefix to cache; automatic placement
-                # declines for the same reason, so there is nothing to fall back to.
+                # A False here means a leading document left no legal position ahead of the per-call blocks.
                 self._honor_placed_cache_point(content, boundary_idx, last_user_idx)
                 return
 
-            # Insert before non-PDF document blocks to avoid Bedrock ValidationException
-            first_non_pdf_doc_idx: int | None = None
-            for i, block in enumerate(content):
-                if "document" in block and block["document"].get("format", "") != "pdf":
-                    first_non_pdf_doc_idx = i
-                    break
-
-            # Insert the cache point before the first non-PDF document so it is not directly
-            # preceded by that block, which Bedrock rejects with a ValidationException
-            if first_non_pdf_doc_idx is None:
-                content.append({"cachePoint": point})
-            elif first_non_pdf_doc_idx > 0:
-                content.insert(first_non_pdf_doc_idx, {"cachePoint": point})
-            else:
-                # A leading non-PDF document leaves no prefix to cache and Bedrock rejects it
-                logger.debug("msg_idx=<%s> | skipped cache point for leading non-PDF document", last_user_idx)
+            insert_idx = step_back_over_documents(content, len(content))
+            if insert_idx == 0:
+                logger.debug("msg_idx=<%s> | skipped cache point, message holds only non-PDF documents", last_user_idx)
                 return
+            content.insert(insert_idx, {"cachePoint": point})
 
             logger.debug("msg_idx=<%s> | added cache point to last user message", last_user_idx)
 
@@ -1069,6 +1181,22 @@ class BedrockModel(Model):
             if msg["role"] == "user" and any("text" in cb or "image" in cb for cb in msg.get("content", [])):
                 return idx
         return None
+
+    def _names_anthropic(self) -> bool:
+        model_id = str(self.config.get("model_id", "")).lower()
+        return "anthropic" in model_id or "claude" in model_id
+
+    def _tag_reasoning(self, event: StreamEvent) -> StreamEvent:
+        """Tag a Claude model's signed or redacted reasoning; a model id that names no vendor stays untagged."""
+        if not self._names_anthropic() or not isinstance(event, dict):
+            return event
+        reasoning = event.get("contentBlockDelta", {}).get("delta", {}).get("reasoningContent", {})
+        if not (reasoning.get("signature") or reasoning.get("redactedContent")):
+            return event
+        provider_data: ReasoningProviderData = {"provider": "anthropic", "modelId": self.config["model_id"], "data": {}}
+        block_delta = event["contentBlockDelta"]
+        delta = {**block_delta["delta"], "reasoningContent": {**reasoning, "providerData": provider_data}}
+        return cast(StreamEvent, {**event, "contentBlockDelta": {**block_delta, "delta": delta}})
 
     def _rejects_reasoning_block(self, reasoning: ReasoningContentBlock) -> bool:
         """Whether the configured model would reject this ``reasoningContent`` block if it were replayed.
@@ -1883,7 +2011,7 @@ class BedrockModel(Model):
                                 callback(event)
                             redaction_emitted = True
 
-                    callback(chunk)
+                    callback(self._tag_reasoning(chunk))
 
                 # Safety net: guardrail_intervened but no metadata chunk arrived.
                 if not redaction_emitted and not saw_guardrail_trace and last_stop_reason == "guardrail_intervened":
@@ -1892,7 +2020,7 @@ class BedrockModel(Model):
 
             else:
                 for event in self.convert_non_streaming_to_streaming(response):
-                    callback(event)
+                    callback(self._tag_reasoning(event))
 
                 guardrail_data = response.get("trace", {}).get("guardrail")
                 if self._should_redact_guardrail_content(guardrail_data, response.get("stopReason")):

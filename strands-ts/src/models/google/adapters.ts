@@ -462,7 +462,11 @@ export function mapChunkToEvents(chunk: GenerateContentResponse, streamState: Go
             delta: {
               type: 'reasoningContentDelta',
               text: part.text,
-              ...(signature !== undefined && { signature }),
+              // Bound to the vendor, so any Gemini model takes it back.
+              ...(signature !== undefined && {
+                signature,
+                providerData: { provider: 'google', modelId: streamState.modelId, data: {} },
+              }),
             },
           })
         } else {

@@ -188,6 +188,7 @@ describe('Sidebar Generation from navigation.yml', () => {
       { label: 'Attach and invoke tools', slug: 'docs/user-guide/sdk/tools/using-tools' },
       { label: 'Use MCP tools', slug: 'docs/user-guide/sdk/tools/mcp-tools' },
       { label: 'Create custom tools', slug: 'docs/user-guide/sdk/tools/custom-tools' },
+      { label: 'Run tools in the background', slug: 'docs/user-guide/sdk/tools/background-tasks' },
     ])
     expect(groups[1]?.items).toEqual([
       { label: 'Persist state across sessions', slug: 'docs/user-guide/sdk/agents/session-management' },

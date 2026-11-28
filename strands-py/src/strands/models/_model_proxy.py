@@ -6,8 +6,12 @@ history is turned into what the provider receives in one place.
 A ``summary`` block reaches a model whose ``model_info.capabilities.server_side_summary`` is True as it is stored;
 every other model gets its text. An ``injected`` block reaches a model whose ``temporary_messages`` is True as it is
 stored, and that provider sends it so the model reads it only until the next user message. Every other model, custom
-ones included, gets the latest user message's injected blocks as text and none of the earlier ones. An offload
-placeholder's ``offloaded`` bookkeeping reaches no model.
+ones included, gets the latest user message's injected blocks as text and none of the earlier ones. A reasoning block
+with ``providerData`` reaches a model whose ``model_info.capabilities.reasoning_provider`` names its tag as it is
+stored; every other model gets only its text. An offload placeholder's ``offloaded`` bookkeeping reaches no model. An
+image, document, video, or audio block whose MIME type the model's ``model_info.capabilities.accepted_mime_types``
+leaves out is sent as a text saying it was omitted, in a message or a tool result; a model without the list gets every
+block.
 
 A proxy for an agent's own model calls records the tools each call sends, which a summary replays to share the call's
 prompt cache.
@@ -23,8 +27,11 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from pydantic import BaseModel
 
 from ..event_loop.streaming import _normalize_messages, process_stream
+from ..types._events import ModelStopReason
 from ..types.content import ContentBlock, Message, Messages, SystemContentBlock
+from ..types.event_loop import Metrics, Usage
 from ..types.tools import ToolSpec
+from ._model_info import ModelInfo, _accepts_mime_type
 from ._provider_name import _model_key
 
 if TYPE_CHECKING:
@@ -89,6 +96,16 @@ class ModelProxy:
         Yields:
             The stream events, ending with the reason for stopping, the final message and the usage metrics.
         """
+        if cancel_signal is not None and cancel_signal.is_set():
+            logger.debug("cancellation detected before model call")
+            yield ModelStopReason(
+                stop_reason="cancelled",
+                message={"role": "assistant", "content": [{"text": "Cancelled by user"}]},
+                usage=Usage(inputTokens=0, outputTokens=0, totalTokens=0),
+                metrics=Metrics(latencyMs=0),
+            )
+            return
+
         logger.debug("model=<%s> | streaming messages", self._model)
         if self._agent is not None:
             _latest_tools[self._agent] = list(tool_specs or [])
@@ -143,9 +160,17 @@ class ModelProxy:
         """
         return await self._model.count_tokens(self._prepare(messages)[0], **kwargs)
 
+    def _without_unaccepted_media(self, messages: Messages) -> Messages:
+        """Send media the model doesn't accept as a text saying so; reads ``model_info`` only when there is media."""
+        if not any(_has_media(block) for message in messages for block in message["content"]):
+            return messages
+        return _without_unaccepted_media(messages, self._model.model_info)
+
     def _prepare(self, messages: Messages) -> tuple[Messages, int]:
         """Return the messages the model accepts, and the trailing blocks the cache point must stay ahead of."""
-        messages = _without_offload_marks(messages)
+        messages = self._without_unaccepted_media(
+            _without_foreign_reasoning(_without_offload_marks(messages), self._model)
+        )
         has_summary = any(_has_block(message, "summary") for message in messages)
         has_injected = any(_has_block(message, "injected") for message in messages)
         if not has_summary and not has_injected:
@@ -212,6 +237,123 @@ def _without_offload_marks(messages: Messages) -> Messages:
     return [
         {**message, "content": [_without_offload_mark(block) for block in message["content"]]} for message in messages
     ]
+
+
+def _without_foreign_reasoning(messages: Messages, model: "Model") -> Messages:
+    """The messages with each reasoning block whose ``providerData`` names another provider reduced to its text.
+
+    The signature, redacted payload and provider data stay out, and a block without text is left out.
+    """
+
+    def tag(block: ContentBlock) -> str | None:
+        provider_data = block.get("reasoningContent", {}).get("providerData")
+        return provider_data["provider"] if provider_data else None
+
+    tags = {tag(block) for message in messages for block in message["content"]} - {None}
+    # Only a call that carries tagged reasoning reads the model info.
+    if not tags:
+        return messages
+    accepted = model.model_info.capabilities.reasoning_provider
+    if tags == {accepted}:
+        return messages
+
+    def foreign(block: ContentBlock) -> bool:
+        return tag(block) not in (None, accepted)
+
+    def as_text(block: ContentBlock) -> list[ContentBlock]:
+        text = block["reasoningContent"].get("reasoningText", {}).get("text")
+        return [{"reasoningContent": {"reasoningText": {"text": text}}}] if text else []
+
+    def without(message: Message) -> Message:
+        content = [kept for block in message["content"] for kept in (as_text(block) if foreign(block) else [block])]
+        # A turn that held only such reasoning gets the placeholder an empty assistant turn gets.
+        return {**message, "content": content or [{"text": "[blank text]"}]}
+
+    return [
+        without(message) if any(foreign(block) for block in message["content"]) else message for message in messages
+    ]
+
+
+# The MIME type _accepts_mime_type checks for each media format; audio is ``audio/<format>``.
+_MEDIA_MIME_TYPES: dict[str, dict[str, str]] = {
+    "image": {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"},
+    "document": {
+        "pdf": "application/pdf",
+        "csv": "text/csv",
+        "doc": "application/msword",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xls": "application/vnd.ms-excel",
+        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "html": "text/html",
+        "txt": "text/plain",
+        "md": "text/markdown",
+    },
+    "video": {
+        "flv": "video/x-flv",
+        "mkv": "video/x-matroska",
+        "mov": "video/quicktime",
+        "mpeg": "video/mpeg",
+        "mpg": "video/mpeg",
+        "mp4": "video/mp4",
+        "three_gp": "video/3gpp",
+        "webm": "video/webm",
+        "wmv": "video/x-ms-wmv",
+    },
+}
+_MEDIA_KINDS = ("image", "document", "video", "audio")
+
+
+def _has_media(block: ContentBlock) -> bool:
+    """Whether a block, or an item of its tool result, is an image, document, video, or audio block."""
+    items = [block, *(block.get("toolResult", {}).get("content") or [])]
+    return any(kind in item for item in items for kind in _MEDIA_KINDS)
+
+
+def _without_unaccepted_media(messages: Messages, info: ModelInfo) -> Messages:
+    """The messages with each media block the model doesn't accept, in a message or a tool result, as a text saying so.
+
+    Messages with nothing to replace, and the list when none has, are passed through as they are.
+    """
+    if not isinstance(info.capabilities.accepted_mime_types, tuple | list):
+        return messages
+    prepared = [_with_message_media_omitted(message, info) for message in messages]
+    return messages if all(new is old for new, old in zip(prepared, messages, strict=True)) else prepared
+
+
+def _with_message_media_omitted(message: Message, info: ModelInfo) -> Message:
+    content = [
+        _with_tool_result_media_omitted(block, info) if "toolResult" in block else _omitted_media(block, info)
+        for block in message["content"]
+    ]
+    return (
+        message
+        if all(new is old for new, old in zip(content, message["content"], strict=True))
+        else {**message, "content": content}
+    )
+
+
+def _with_tool_result_media_omitted(block: ContentBlock, info: ModelInfo) -> ContentBlock:
+    tool_result = block["toolResult"]
+    items = tool_result.get("content") or []
+    content = [_omitted_media(cast("ContentBlock", item), info) for item in items]
+    if all(new is old for new, old in zip(content, items, strict=True)):
+        return block
+    return cast("ContentBlock", {**block, "toolResult": {**tool_result, "content": content}})
+
+
+def _omitted_media(block: ContentBlock, info: ModelInfo) -> ContentBlock:
+    """The block, or a text saying it was omitted when it is media the model doesn't accept."""
+    kind = next((kind for kind in _MEDIA_KINDS if kind in block), None)
+    if kind is None:
+        return block
+    media: dict[str, Any] = cast(dict[str, Any], block)[kind]
+    media_format = str(media.get("format", "")).lower()
+    mime_type = f"audio/{media_format}" if kind == "audio" else _MEDIA_MIME_TYPES[kind].get(media_format)
+    if mime_type is None or _accepts_mime_type(info, mime_type):
+        return block
+    logger.debug("mime_type=<%s> | model does not accept media type, sending a placeholder text", mime_type)
+    name = f' "{media["name"]}"' if kind == "document" and media.get("name") else ""
+    return ContentBlock(text=f"[{kind}{name} omitted: this model can't read {mime_type}]")
 
 
 def _marks_offload(block: ContentBlock) -> bool:

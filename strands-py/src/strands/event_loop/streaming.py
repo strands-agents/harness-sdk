@@ -28,7 +28,7 @@ from ..types._events import (
     TypedEvent,
 )
 from ..types.citations import CitationsContentBlock
-from ..types.content import ContentBlock, Message, Messages, SystemContentBlock
+from ..types.content import ContentBlock, Message, Messages, ReasoningContentBlock, SystemContentBlock
 from ..types.streaming import (
     ContentBlockDeltaEvent,
     ContentBlockStart,
@@ -283,25 +283,28 @@ def handle_content_block_delta(
             state["redactedContent"] = state.get("redactedContent", b"") + redacted_content
             typed_event = ReasoningRedactedContentStreamEvent(redacted_content=redacted_content, delta=delta_content)
 
+        if "providerData" in reasoning_delta:
+            # A redacted payload becomes its own block, so its tag must not land on the reasoning text block.
+            key = "redactedProviderData" if "redactedContent" in reasoning_delta else "reasoningProviderData"
+            state[key] = reasoning_delta["providerData"]
+
     return state, typed_event
 
 
 def _finalize_reasoning_text(state: dict[str, Any]) -> None:
-    """Append only the pending reasoning text and consume its signature."""
-    if state["reasoningText"] or "signature" in state:
-        content_block: ContentBlock = {
-            "reasoningContent": {
-                "reasoningText": {
-                    "text": state["reasoningText"],
-                }
-            }
-        }
+    """Append only the pending reasoning text and consume its signature and provider data."""
+    provider_data = state.pop("reasoningProviderData", None)
+    if state["reasoningText"] or "signature" in state or provider_data:
+        reasoning: ReasoningContentBlock = {}
+        if state["reasoningText"] or "signature" in state:
+            reasoning["reasoningText"] = {"text": state["reasoningText"]}
+            # Consume the signature so it belongs to exactly this block and does not leak into the next one.
+            if (signature := state.pop("signature", None)) is not None:
+                reasoning["reasoningText"]["signature"] = signature
+        if provider_data:
+            reasoning["providerData"] = provider_data
 
-        # Consume the signature so it belongs to exactly this block and does not leak into the next one.
-        if (signature := state.pop("signature", None)) is not None:
-            content_block["reasoningContent"]["reasoningText"]["signature"] = signature
-
-        state["content"].append(content_block)
+        state["content"].append({"reasoningContent": reasoning})
         state["reasoningText"] = ""
 
 
@@ -376,7 +379,10 @@ def handle_content_block_stop(state: dict[str, Any]) -> dict[str, Any]:
 
     _finalize_reasoning_text(state)
     if redacted_content:
-        content.append({"reasoningContent": {"redactedContent": redacted_content}})
+        redacted: ReasoningContentBlock = {"redactedContent": redacted_content}
+        if provider_data := state.pop("redactedProviderData", None):
+            redacted["providerData"] = provider_data
+        content.append({"reasoningContent": redacted})
         state["redactedContent"] = b""
 
     return state

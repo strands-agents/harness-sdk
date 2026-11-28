@@ -80,6 +80,8 @@ export interface GoogleModelOptions extends GoogleModelConfig {
  * Internal state for tracking streaming progress.
  */
 export interface GoogleStreamState {
+  /** The model whose signed reasoning is tagged with its provenance. */
+  modelId: string
   messageStarted: boolean
   textContentBlockStarted: boolean
   reasoningContentBlockStarted: boolean

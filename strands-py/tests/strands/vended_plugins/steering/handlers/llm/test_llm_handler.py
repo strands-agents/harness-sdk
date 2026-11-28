@@ -5,9 +5,11 @@ from unittest.mock import Mock, patch
 import pytest
 
 from strands.agent.invocation_context import _create_invocation_context, _reached_limit
+from strands.tools.structured_output.structured_output_utils import convert_pydantic_to_tool_spec
 from strands.vended_plugins.steering.core.action import Guide, Interrupt, Proceed
-from strands.vended_plugins.steering.handlers.llm.llm_handler import LLMSteeringHandler, _LLMSteering
+from strands.vended_plugins.steering.handlers.llm.llm_handler import LLMSteering, LLMSteeringHandler
 from strands.vended_plugins.steering.handlers.llm.mappers import DefaultPromptMapper
+from tests.fixtures.mocked_model_provider import MockedModelProvider
 
 
 def test_llm_steering_handler_initialization():
@@ -44,6 +46,37 @@ def test_llm_steering_handler_with_custom_context_providers():
 
 
 @pytest.mark.asyncio
+async def test_steer_accepts_provider_tool_name_without_leading_underscore():
+    """The structured-output tool name works when a provider normalizes leading underscores."""
+    spec = convert_pydantic_to_tool_spec(LLMSteering)
+    assert not spec["name"].startswith("_")
+
+    model = MockedModelProvider(
+        [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "toolUse": {
+                            "name": "LLMSteering",
+                            "toolUseId": "steering-1",
+                            "input": {"decision": "proceed", "reason": "Tool call is safe"},
+                        }
+                    }
+                ],
+            }
+        ]
+    )
+    handler = LLMSteeringHandler("Test prompt", model=model, context_providers=[])
+
+    result = await handler.steer_before_tool(agent=Mock(), tool_use={"name": "test_tool", "input": {"param": "value"}})
+
+    assert isinstance(result, Proceed)
+    assert result.reason == "Tool call is safe"
+    assert model.index == 1
+
+
+@pytest.mark.asyncio
 @patch("strands.agent.Agent")
 async def test_steer_proceed_decision(mock_agent_class):
     """Test steer method with proceed decision."""
@@ -54,7 +87,7 @@ async def test_steer_proceed_decision(mock_agent_class):
     mock_agent_class.return_value = mock_steering_agent
 
     mock_result = Mock()
-    mock_result.structured_output = _LLMSteering(decision="proceed", reason="Tool call is safe")
+    mock_result.structured_output = LLMSteering(decision="proceed", reason="Tool call is safe")
     mock_steering_agent.return_value = mock_result
 
     agent = Mock()
@@ -77,7 +110,7 @@ async def test_steer_guide_decision(mock_agent_class):
     mock_agent_class.return_value = mock_steering_agent
 
     mock_result = Mock()
-    mock_result.structured_output = _LLMSteering(decision="guide", reason="Consider security implications")
+    mock_result.structured_output = LLMSteering(decision="guide", reason="Consider security implications")
     mock_steering_agent.return_value = mock_result
 
     agent = Mock()
@@ -100,7 +133,7 @@ async def test_steer_interrupt_decision(mock_agent_class):
     mock_agent_class.return_value = mock_steering_agent
 
     mock_result = Mock()
-    mock_result.structured_output = _LLMSteering(decision="interrupt", reason="Human approval required")
+    mock_result.structured_output = LLMSteering(decision="interrupt", reason="Human approval required")
     mock_steering_agent.return_value = mock_result
 
     agent = Mock()
@@ -122,7 +155,7 @@ async def test_steer_unknown_decision(mock_agent_class):
     mock_steering_agent = Mock()
     mock_agent_class.return_value = mock_steering_agent
 
-    # Mock _LLMSteering with unknown decision (bypass validation)
+    # Mock LLMSteering with unknown decision (bypass validation)
     mock_steering_decision = Mock()
     mock_steering_decision.decision = "unknown"
     mock_steering_decision.reason = "Invalid decision"
@@ -152,7 +185,7 @@ async def test_steer_uses_custom_model(mock_agent_class):
     mock_agent_class.return_value = mock_steering_agent
 
     mock_result = Mock()
-    mock_result.structured_output = _LLMSteering(decision="proceed", reason="OK")
+    mock_result.structured_output = LLMSteering(decision="proceed", reason="OK")
     mock_steering_agent.return_value = mock_result
 
     agent = Mock()
@@ -175,7 +208,7 @@ async def test_steer_uses_agent_aux_model_when_no_custom_model(mock_agent_class)
     mock_agent_class.return_value = mock_steering_agent
 
     mock_result = Mock()
-    mock_result.structured_output = _LLMSteering(decision="proceed", reason="OK")
+    mock_result.structured_output = LLMSteering(decision="proceed", reason="OK")
     mock_steering_agent.return_value = mock_result
 
     agent = Mock()
@@ -189,17 +222,17 @@ async def test_steer_uses_agent_aux_model_when_no_custom_model(mock_agent_class)
 
 
 def test_llm_steering_model():
-    """Test _LLMSteering pydantic model."""
-    steering = _LLMSteering(decision="proceed", reason="Test reason")
+    """Test LLMSteering pydantic model."""
+    steering = LLMSteering(decision="proceed", reason="Test reason")
 
     assert steering.decision == "proceed"
     assert steering.reason == "Test reason"
 
 
 def test_llm_steering_invalid_decision():
-    """Test _LLMSteering with invalid decision raises validation error."""
+    """Test LLMSteering with invalid decision raises validation error."""
     with pytest.raises(ValueError):
-        _LLMSteering(decision="invalid", reason="Test reason")
+        LLMSteering(decision="invalid", reason="Test reason")
 
 
 @pytest.mark.asyncio
@@ -211,7 +244,7 @@ async def test_steering_call_joins_the_request_the_tool_call_belongs_to(mock_age
     mock_steering_agent = Mock()
     mock_agent_class.return_value = mock_steering_agent
     mock_result = Mock()
-    mock_result.structured_output = _LLMSteering(decision="proceed", reason="safe")
+    mock_result.structured_output = LLMSteering(decision="proceed", reason="safe")
     mock_steering_agent.return_value = mock_result
 
     request = _create_invocation_context({"turns": 1})
