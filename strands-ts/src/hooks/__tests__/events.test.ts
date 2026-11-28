@@ -20,10 +20,12 @@ import {
 import { Agent } from '../../agent/agent.js'
 import { AgentResult } from '../../types/agent.js'
 import { AgentMetrics } from '../../telemetry/meter.js'
-import { Message, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
+import { Message, ReasoningBlock, TextBlock, ToolResultBlock, ToolUseBlock } from '../../types/messages.js'
+import { ModelContentBlockDeltaEvent } from '../../models/streaming.js'
 import { FunctionTool } from '../../tools/function-tool.js'
 import { ToolStreamEvent } from '../../tools/tool.js'
 import { anyTrackingId } from '../../__fixtures__/message-helpers.js'
+import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 
 describe('InitializedEvent', () => {
   it('creates instance with correct properties', () => {
@@ -862,6 +864,192 @@ describe('toJSON serialization', () => {
         type: 'modelStreamUpdateEvent',
         event: { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'Hi' } },
       })
+    })
+
+    it('encodes Uint8Array redactedContent in reasoningContentDelta as base64 without mutating the event', () => {
+      const agent = new Agent()
+      const bytes = new Uint8Array([1, 2, 3])
+      const plainStreamEvent = {
+        type: 'modelContentBlockDeltaEvent' as const,
+        delta: {
+          type: 'reasoningContentDelta' as const,
+          text: 'thinking',
+          signature: 'sig-1',
+          redactedContent: bytes,
+        },
+      }
+      const classStreamEvent = new ModelContentBlockDeltaEvent({
+        type: 'modelContentBlockDeltaEvent',
+        delta: {
+          type: 'reasoningContentDelta',
+          redactedContent: bytes,
+        },
+      })
+
+      const plainEvent = new ModelStreamUpdateEvent({ agent, event: plainStreamEvent, invocationState: {} })
+      expect(plainEvent.toJSON()).toStrictEqual({
+        type: 'modelStreamUpdateEvent',
+        event: {
+          type: 'modelContentBlockDeltaEvent',
+          delta: {
+            type: 'reasoningContentDelta',
+            text: 'thinking',
+            signature: 'sig-1',
+            redactedContent: 'AQID',
+          },
+        },
+      })
+      expect(JSON.parse(JSON.stringify(plainEvent))).toStrictEqual(plainEvent.toJSON())
+      expect(plainStreamEvent.delta.redactedContent).toBe(bytes)
+      expect(plainStreamEvent.delta.redactedContent).toStrictEqual(new Uint8Array([1, 2, 3]))
+
+      const classEvent = new ModelStreamUpdateEvent({ agent, event: classStreamEvent, invocationState: {} })
+      expect(classEvent.toJSON()).toStrictEqual({
+        type: 'modelStreamUpdateEvent',
+        event: {
+          type: 'modelContentBlockDeltaEvent',
+          delta: {
+            type: 'reasoningContentDelta',
+            redactedContent: 'AQID',
+          },
+        },
+      })
+      expect(JSON.parse(JSON.stringify(classEvent))).toStrictEqual(classEvent.toJSON())
+      expect(classStreamEvent.delta.type === 'reasoningContentDelta' && classStreamEvent.delta.redactedContent).toBe(
+        bytes
+      )
+    })
+
+    it('handles empty Uint8Array, missing, and already-string redactedContent in reasoningContentDelta', () => {
+      const agent = new Agent()
+
+      const emptyBytesEvent = new ModelStreamUpdateEvent({
+        agent,
+        event: {
+          type: 'modelContentBlockDeltaEvent',
+          delta: { type: 'reasoningContentDelta', redactedContent: new Uint8Array(0) },
+        },
+        invocationState: {},
+      })
+      expect(emptyBytesEvent.toJSON()).toStrictEqual({
+        type: 'modelStreamUpdateEvent',
+        event: {
+          type: 'modelContentBlockDeltaEvent',
+          delta: { type: 'reasoningContentDelta', redactedContent: '' },
+        },
+      })
+
+      const textOnlyEvent = new ModelStreamUpdateEvent({
+        agent,
+        event: {
+          type: 'modelContentBlockDeltaEvent',
+          delta: { type: 'reasoningContentDelta', text: 'thought', signature: 'sig' },
+        },
+        invocationState: {},
+      })
+      expect(textOnlyEvent.toJSON()).toStrictEqual({
+        type: 'modelStreamUpdateEvent',
+        event: {
+          type: 'modelContentBlockDeltaEvent',
+          delta: { type: 'reasoningContentDelta', text: 'thought', signature: 'sig' },
+        },
+      })
+
+      const stringRedactedEvent = new ModelStreamUpdateEvent({
+        agent,
+        event: {
+          type: 'modelContentBlockDeltaEvent',
+          delta: {
+            type: 'reasoningContentDelta',
+            redactedContent: 'AQID' as unknown as Uint8Array,
+          },
+        },
+        invocationState: {},
+      })
+      expect(stringRedactedEvent.toJSON()).toStrictEqual({
+        type: 'modelStreamUpdateEvent',
+        event: {
+          type: 'modelContentBlockDeltaEvent',
+          delta: { type: 'reasoningContentDelta', redactedContent: 'AQID' },
+        },
+      })
+    })
+
+    it('serializes redactedContent consistently as base64 across Agent.stream() events while preserving Uint8Array in memory', async () => {
+      const redactedBytes = new Uint8Array([1, 2, 3])
+      const model = new MockMessageModel().addTurn({
+        type: 'reasoningBlock',
+        redactedContent: redactedBytes,
+      })
+      const agent = new Agent({ model, printer: false })
+
+      const serializedByType = new Map<string, Record<string, unknown>[]>()
+      let inMemoryDeltaBytes: Uint8Array | undefined
+      let inMemoryContentBlock: ReasoningBlock | undefined
+      let inMemoryMessageBlock: ReasoningBlock | undefined
+
+      for await (const event of agent.stream('hi')) {
+        const serialized = JSON.parse(JSON.stringify(event)) as Record<string, unknown>
+        const list = serializedByType.get(event.type) ?? []
+        list.push(serialized)
+        serializedByType.set(event.type, list)
+
+        if (
+          event instanceof ModelStreamUpdateEvent &&
+          event.event.type === 'modelContentBlockDeltaEvent' &&
+          event.event.delta.type === 'reasoningContentDelta'
+        ) {
+          inMemoryDeltaBytes = event.event.delta.redactedContent
+        } else if (event instanceof ContentBlockEvent && event.contentBlock instanceof ReasoningBlock) {
+          inMemoryContentBlock = event.contentBlock
+        } else if (event instanceof ModelMessageEvent && event.message.content[0] instanceof ReasoningBlock) {
+          inMemoryMessageBlock = event.message.content[0]
+        }
+      }
+
+      const deltaUpdate = serializedByType
+        .get('modelStreamUpdateEvent')
+        ?.find((e) => (e.event as { type: string }).type === 'modelContentBlockDeltaEvent')
+      expect(deltaUpdate).toStrictEqual({
+        type: 'modelStreamUpdateEvent',
+        event: {
+          type: 'modelContentBlockDeltaEvent',
+          delta: {
+            type: 'reasoningContentDelta',
+            redactedContent: 'AQID',
+          },
+        },
+      })
+
+      expect(serializedByType.get('contentBlockEvent')).toStrictEqual([
+        {
+          type: 'contentBlockEvent',
+          contentBlock: {
+            reasoning: {
+              redactedContent: 'AQID',
+            },
+          },
+        },
+      ])
+
+      expect(serializedByType.get('modelMessageEvent')).toStrictEqual([
+        {
+          type: 'modelMessageEvent',
+          message: {
+            role: 'assistant',
+            content: [{ reasoning: { redactedContent: 'AQID' } }],
+            trackingId: anyTrackingId,
+          },
+          stopReason: 'endTurn',
+        },
+      ])
+
+      expect(inMemoryDeltaBytes).toBeInstanceOf(Uint8Array)
+      expect(inMemoryDeltaBytes).toStrictEqual(new Uint8Array([1, 2, 3]))
+      expect(inMemoryContentBlock?.redactedContent).toBeInstanceOf(Uint8Array)
+      expect(inMemoryContentBlock?.redactedContent).toStrictEqual(new Uint8Array([1, 2, 3]))
+      expect(inMemoryMessageBlock?.redactedContent).toBeInstanceOf(Uint8Array)
+      expect(inMemoryMessageBlock?.redactedContent).toStrictEqual(new Uint8Array([1, 2, 3]))
     })
   })
 
