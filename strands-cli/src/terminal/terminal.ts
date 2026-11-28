@@ -54,9 +54,18 @@ export function hyperlinkEscapes(url: string): { open: string; close: string } |
   return { open: `\u001b]8;;${url}\u0007`, close: '\u001b]8;;\u0007' }
 }
 
+/**
+ * Apple's Terminal ignores SGR mouse encoding (`?1006`) and sends legacy X10 reports (`ESC [ M` and three raw bytes).
+ * Ink ends the escape sequence at `M` and hands the three bytes on as typed text, so each move or click would type
+ * characters into the composer. Mouse reporting stays off there.
+ */
+export function supportsSgrMouse(): boolean {
+  return process.env.TERM_PROGRAM !== 'Apple_Terminal'
+}
+
 export function enterAlternateScreen(output: TerminalOutput = process.stdout): () => void {
   let active = true
-  output.write(`${RESET_KITTY_KEYBOARD}${ENTER_ALTERNATE_SCREEN}${ENABLE_MOUSE}`)
+  output.write(`${RESET_KITTY_KEYBOARD}${ENTER_ALTERNATE_SCREEN}${supportsSgrMouse() ? ENABLE_MOUSE : ''}`)
 
   return (): void => {
     if (!active) {
@@ -80,10 +89,12 @@ export function restoreTerminalModes(output: TerminalOutput = process.stdout): v
 }
 
 export function setTerminalMouseMotion(enabled: boolean, output: TerminalOutput = process.stdout): void {
+  if (!supportsSgrMouse()) return
   output.write(enabled ? ENABLE_MOUSE_MOTION : ENABLE_MOUSE_CLICKS)
 }
 
 export const pauseMouseReporting = (output: TerminalOutput = process.stdout): (() => void) => {
+  if (!supportsSgrMouse()) return (): void => {}
   output.write(PAUSE_MOUSE_REPORTING)
   return (): void => {
     output.write(ENABLE_MOUSE_CLICKS)
