@@ -110,13 +110,14 @@ export class ModelProxy {
     return { ...options, toolSpecs: options.toolSpecs.map((spec) => (deferred.has(spec.name) ? stub(spec) : spec)) }
   }
 
-  /** Records the tools an agent's own call sends, before any stubs. */
+  /** Records the tools and model an agent's own call sends, before any stubs. */
   private _recordTools(options: StreamOptions | undefined): void {
     if (!this._agent) return
     latestTools.set(this._agent, {
       toolSpecs: [...(options?.toolSpecs ?? [])],
       ...(options?.deferredTools && { deferredTools: options.deferredTools }),
     })
+    latestModel.set(this._agent, this._model)
   }
 
   private _prepare(messages: Message[], toolSpecs: ToolSpec[] = []): RenderedMessages {
@@ -234,6 +235,9 @@ export async function countRequestTokens(agent: LocalAgent, messages: Message[])
 /** Each agent's latest model call tools, as the call passed them, before any stubs. */
 const latestTools = new WeakMap<LocalAgent, Pick<StreamOptions, 'toolSpecs' | 'deferredTools'>>()
 
+/** Each agent's latest concrete model used for its own model calls. */
+const latestModel = new WeakMap<LocalAgent, Model>()
+
 /**
  * The tools the agent's latest model call sent.
  *
@@ -243,6 +247,17 @@ const latestTools = new WeakMap<LocalAgent, Pick<StreamOptions, 'toolSpecs' | 'd
  */
 export function latestCallTools(agent: LocalAgent): Pick<StreamOptions, 'toolSpecs' | 'deferredTools'> | undefined {
   return latestTools.get(agent)
+}
+
+/**
+ * The concrete model the agent's latest model call used.
+ *
+ * @param agent - The agent
+ * @returns The model, or undefined before the agent's first model call
+ * @internal
+ */
+export function latestCallModel(agent: LocalAgent): Model | undefined {
+  return latestModel.get(agent)
 }
 
 const STUB_HINT = `Call ${LOAD_TOOLS_TOOL_NAME} with this name for its parameters first.`

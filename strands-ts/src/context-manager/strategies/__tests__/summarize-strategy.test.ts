@@ -587,15 +587,16 @@ describe('a summarized run replays the agent request', () => {
 
   it("sends the tools of the agent's latest model call, so the summary shares its prompt cache", async () => {
     const messages = replayMessages()
-    const { agent, summarize } = mockAgent(messages)
+    const { agent } = mockAgent(messages)
     const loader = { name: 'load_tools', description: 'Load tools.', inputSchema: { type: 'object' as const } }
     const callTools = { toolSpecs: [AGENT_TOOL, loader], deferredTools: new Set(['shell']) }
     const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+    const callSummarize = vi.spyOn(model, 'summarize').mockResolvedValue(summaryResult('Summary of content.'))
     await collectGenerator(new ModelProxy(model, agent).streamAggregated(messages, callTools))
 
     expect(await perMessage().apply({ messages, agent, utilization: 0.9 })).toBe(true)
 
-    expect(summarize.mock.calls[0]![1]).toEqual({ ...replayOptions(agent), ...callTools })
+    expect(callSummarize.mock.calls[0]![1]).toEqual({ ...replayOptions(agent), ...callTools })
   })
 
   it('summarizes each side of a kept pin on its own', async () => {
@@ -1320,5 +1321,19 @@ describe('client-side summaries use Model.summarize', () => {
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('summary held no text'))
     expect(turns(messages)).toEqual(turns(toolResultMessages()))
     warnSpy.mockRestore()
+  })
+
+  it('replays summary on the routed model of the latest call rather than the default agent.model', async () => {
+    const messages = serverSideMessages()
+    const { agent, summarize: defaultSummarize } = mockAgent(messages)
+    const routed = new MockMessageModel().addTurn(new TextBlock('ok'))
+    const routedSummarize = vi.spyOn(routed, 'summarize').mockResolvedValue(summaryResult('routed summary'))
+
+    await collectGenerator(new ModelProxy(routed, agent).streamAggregated([new Message({ role: 'user', content: [new TextBlock('hi')] })]))
+
+    expect(await perMessage().apply({ messages, agent, utilization: 0.9 })).toBe(true)
+
+    expect(routedSummarize).toHaveBeenCalledTimes(1)
+    expect(defaultSummarize).not.toHaveBeenCalled()
   })
 })

@@ -109,6 +109,7 @@ class ModelProxy:
         logger.debug("model=<%s> | streaming messages", self._model)
         if self._agent is not None:
             _latest_tools[self._agent] = list(tool_specs or [])
+            _latest_models[self._agent] = self._model
         messages = _normalize_messages(messages)
         # Only role and content reach the provider, so metadata and any future non-model fields never leak.
         messages = [Message(role=message["role"], content=message["content"]) for message in messages]
@@ -213,6 +214,9 @@ async def _count_request_tokens(agent: "Agent", messages: Messages) -> int:
 _latest_tools: "weakref.WeakKeyDictionary[Agent, list[ToolSpec]]" = weakref.WeakKeyDictionary()
 """Each agent's latest model call tool specs, as the call passed them."""
 
+_latest_models: "weakref.WeakKeyDictionary[Agent, Model]" = weakref.WeakKeyDictionary()
+"""Each agent's latest concrete model used for its own model calls."""
+
 
 def _latest_call_tools(agent: "Agent") -> list[ToolSpec] | None:
     """The tool specs the agent's latest model call sent.
@@ -224,6 +228,18 @@ def _latest_call_tools(agent: "Agent") -> list[ToolSpec] | None:
         The tool specs, or None before the agent's first model call.
     """
     return _latest_tools.get(agent)
+
+
+def _latest_call_model(agent: "Agent") -> "Model | None":
+    """The concrete model the agent's latest model call used.
+
+    Args:
+        agent: The agent whose calls were recorded.
+
+    Returns:
+        The model, or None before the agent's first model call.
+    """
+    return _latest_models.get(agent)
 
 
 def _without_offload_marks(messages: Messages) -> Messages:
