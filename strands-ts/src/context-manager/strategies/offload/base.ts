@@ -185,7 +185,11 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
       return false
     // Injected text is written after its message was archived, so a ref to it would point at nothing.
     if (block instanceof InjectedBlock) return false
-    if (block instanceof ToolResultBlock && this._isProtectedResult(block, toolNameMap)) return false
+    if (block instanceof ToolResultBlock) {
+      // An empty result stashes nothing, so a placeholder for it would carry a reference to nothing.
+      if (block.content.length === 0) return false
+      if (this._isProtectedResult(block, toolNameMap)) return false
+    }
     return this._matcher.matchesBlock(block, message, toolNameMap)
   }
 
