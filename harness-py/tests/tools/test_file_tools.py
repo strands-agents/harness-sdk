@@ -33,6 +33,40 @@ async def test_read_offset_and_limit(ctx, tmp_path):
     assert "Showing lines 3-4 of 10" in out
 
 
+async def test_read_does_not_number_a_phantom_line_after_a_trailing_newline(ctx, tmp_path):
+    path = str(tmp_path / "f.txt")
+    await write._tool_func(path=path, content="alpha\nbeta\n", tool_context=ctx)
+    out = await read._tool_func(path=path, tool_context=ctx)
+    assert out == "     1\talpha\n     2\tbeta"
+
+
+async def test_write_counts_a_trailing_newline_as_a_terminator(ctx, tmp_path):
+    path = str(tmp_path / "f.txt")
+    out = await write._tool_func(path=path, content="alpha\nbeta\n", tool_context=ctx)
+    assert out == f"Wrote 2 lines to {path}."
+
+
+async def test_read_offset_past_the_end_reports_the_real_line_count(ctx, tmp_path):
+    path = str(tmp_path / "f.txt")
+    await write._tool_func(path=path, content="alpha\nbeta\n", tool_context=ctx)
+    out = await read._tool_func(path=path, offset=3, tool_context=ctx)
+    assert out == "[File has 2 lines; offset 3 is past the end.]"
+
+
+async def test_empty_file_has_zero_lines_in_read_and_write(ctx, tmp_path):
+    path = str(tmp_path / "empty.txt")
+    (tmp_path / "empty.txt").write_text("")
+    assert await read._tool_func(path=path, tool_context=ctx) == "[File is empty.]"
+    assert await write._tool_func(path=path, content="", tool_context=ctx) == f"Wrote 0 lines to {path}."
+
+
+async def test_read_rejects_a_non_positive_limit(ctx, tmp_path):
+    path = str(tmp_path / "f.txt")
+    await write._tool_func(path=path, content="alpha\nbeta\n", tool_context=ctx)
+    with pytest.raises(ValueError, match="limit must be at least 1"):
+        await read._tool_func(path=path, limit=0, tool_context=ctx)
+
+
 async def test_edit_replaces_unique_occurrence(ctx, tmp_path):
     path = str(tmp_path / "f.txt")
     await write._tool_func(path=path, content="one\ntwo\nthree\n", tool_context=ctx)
