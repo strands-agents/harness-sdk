@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach } from 'vitest'
+import { StorageError } from '../../errors.js'
 import { InMemoryStorage } from '../in-memory-storage.js'
-import { NAMESPACED, namespace } from '../storage.js'
+import { NAMESPACED, namespace, resolveNamespace } from '../storage.js'
 import type { Storage } from '../storage.js'
 
 describe('namespace', () => {
@@ -79,5 +80,64 @@ describe('namespace', () => {
 
   it('does not have NAMESPACED symbol on raw storage', () => {
     expect(NAMESPACED in backend).toBe(false)
+  })
+})
+
+describe('namespace key validation', () => {
+  const wrapWithoutNamespace = (base: InMemoryStorage): Storage => ({
+    write: (key, data) => base.write(key, data),
+    read: (key) => base.read(key),
+    delete: (key) => base.delete(key),
+    list: (query) => base.list(query),
+  })
+
+  it.each(['', '/', '///'])('rejects empty key %j on read, write, and delete without touching parent', async (key) => {
+    const base = new InMemoryStorage()
+    await base.write('prefix', new Uint8Array([1]))
+    const view = resolveNamespace(wrapWithoutNamespace(base), 'prefix')
+
+    await expect(view.read(key)).rejects.toThrow(StorageError)
+    await expect(view.read(key)).rejects.toThrow('Storage key must not be empty')
+    await expect(view.write(key, new Uint8Array([9]))).rejects.toThrow(StorageError)
+    await expect(view.write(key, new Uint8Array([9]))).rejects.toThrow('Storage key must not be empty')
+    await expect(view.delete(key)).rejects.toThrow(StorageError)
+    await expect(view.delete(key)).rejects.toThrow('Storage key must not be empty')
+
+    expect(await base.read('prefix')).toEqual(new Uint8Array([1]))
+  })
+
+  it('supports valid keys, empty list prefix, and nested namespaces on custom storage', async () => {
+    const base = new InMemoryStorage()
+    await base.write('prefix', new Uint8Array([1]))
+    await base.write('prefix/sub', new Uint8Array([2]))
+    const view = resolveNamespace(wrapWithoutNamespace(base), 'prefix')
+
+    await view.write('child', new Uint8Array([3]))
+    expect(await view.read('child')).toEqual(new Uint8Array([3]))
+    expect(await view.list('')).toEqual(['child', 'sub'])
+    expect(await view.list('/')).toEqual(['child', 'sub'])
+    await view.delete('child')
+    expect(await view.read('child')).toBeNull()
+
+    const nested = view.namespace!('sub')
+    for (const key of ['', '/', '///']) {
+      await expect(nested.read(key)).rejects.toThrow('Storage key must not be empty')
+      await expect(nested.write(key, new Uint8Array([9]))).rejects.toThrow('Storage key must not be empty')
+      await expect(nested.delete(key)).rejects.toThrow('Storage key must not be empty')
+    }
+
+    expect(await base.read('prefix')).toEqual(new Uint8Array([1]))
+    expect(await base.read('prefix/sub')).toEqual(new Uint8Array([2]))
+  })
+
+  it('rejects traversal and backslash keys', async () => {
+    const base = new InMemoryStorage()
+    const view = namespace(wrapWithoutNamespace(base), 'prefix')
+
+    await expect(view.read('../secret')).rejects.toThrow(StorageError)
+    await expect(view.write('../secret', new Uint8Array([1]))).rejects.toThrow(StorageError)
+    await expect(view.delete('../secret')).rejects.toThrow(StorageError)
+    await expect(view.list('../')).rejects.toThrow(StorageError)
+    await expect(view.read('a\\b')).rejects.toThrow(StorageError)
   })
 })

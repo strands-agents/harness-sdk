@@ -216,19 +216,19 @@ class _NamespacedStorage:
 
     async def write(self, key: str, data: bytes) -> None:
         """Store data under the prefixed key."""
-        await self._storage.write(f"{self._prefix}{key}", data)
+        await self._storage.write(f"{self._prefix}{_normalize_key(key)}", data)
 
     async def read(self, key: str) -> bytes | None:
         """Read from the prefixed key."""
-        return await self._storage.read(f"{self._prefix}{key}")
+        return await self._storage.read(f"{self._prefix}{_normalize_key(key)}")
 
     async def delete(self, key: str) -> None:
         """Delete the prefixed key."""
-        await self._storage.delete(f"{self._prefix}{key}")
+        await self._storage.delete(f"{self._prefix}{_normalize_key(key)}")
 
     async def list(self, query: str = "") -> builtins.list[str]:
         """List keys under the prefix, stripping it from results."""
-        keys = await self._storage.list(f"{self._prefix}{query}")
+        keys = await self._storage.list(f"{self._prefix}{_normalize_prefix(query)}")
         return [key[len(self._prefix) :] for key in keys]
 
     async def search(self, query: str) -> builtins.list[StorageSearchResult]:

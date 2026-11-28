@@ -194,10 +194,13 @@ export function namespace(storage: Storage, prefix: string): Storage {
   const normalized = normalizePrefix(prefix)
   const p = normalized ? `${normalized}/` : ''
   const view: Storage & { [NAMESPACED]: true } = {
-    write: (key, data) => storage.write(`${p}${key}`, data),
-    read: (key) => storage.read(`${p}${key}`),
-    delete: (key) => storage.delete(`${p}${key}`),
-    list: (query) => storage.list(`${p}${query}`).then((keys) => keys.map((key) => key.slice(p.length))),
+    write: async (key, data) => storage.write(`${p}${normalizeKey(key)}`, data),
+    read: async (key) => storage.read(`${p}${normalizeKey(key)}`),
+    delete: async (key) => storage.delete(`${p}${normalizeKey(key)}`),
+    list: async (query) => {
+      const keys = await storage.list(`${p}${normalizePrefix(query)}`)
+      return keys.map((key) => key.slice(p.length))
+    },
     namespace: (sub) => namespace(storage, `${p}${sub}`),
     [NAMESPACED]: true,
   }
