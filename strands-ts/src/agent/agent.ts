@@ -2199,10 +2199,12 @@ export class Agent implements LocalAgent, InvokableAgent {
         }
       }
 
+      const metrics = this._meter.metrics
       this._tracer.endAgentSpan(agentSpan, {
         ...(caughtError && { error: caughtError }),
         ...(result?.lastMessage && { response: result.lastMessage }),
-        accumulatedUsage: this._meter.metrics.accumulatedUsage,
+        accumulatedUsage: metrics.accumulatedUsage,
+        ...(metrics.latestAgentInvocation && { latestInvocationUsage: metrics.latestAgentInvocation.usage }),
         ...(result?.stopReason && { stopReason: result.stopReason }),
       })
 
