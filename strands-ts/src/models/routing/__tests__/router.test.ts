@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { MockMessageModel } from '../../../__fixtures__/mock-message-model.js'
 import { CancelledError } from '../../../errors.js'
-import { AfterModelCallEvent, BeforeInvocationEvent } from '../../../hooks/events.js'
+import { AfterInvocationEvent, AfterModelCallEvent, BeforeInvocationEvent } from '../../../hooks/events.js'
 import { ToolRegistry } from '../../../registry/tool-registry.js'
 import { Message, TextBlock } from '../../../types/messages.js'
 import { ModelRouter, RoutingCandidate } from '../router.js'
@@ -601,6 +601,40 @@ describe('ModelRouter', () => {
       await expect(selectViaMiddleware(router, mockAgent(first), {})).rejects.toThrow(
         'strategy.select must return a RoutingCandidate or undefined; got null'
       )
+    })
+
+    it('keeps the selected model across AfterInvocationEvent.resume continuation rounds', async () => {
+      const first = model('first')
+      const second = model('second')
+      const strategy = new RecordingStrategy(0, 1)
+      const router = new ModelRouter([first, second], { strategy })
+      const { agent, hooks, middleware } = mockAgent(first)
+      const state: InvocationState = {}
+      router.attachToAgent(agent)
+
+      const firstResult = await middleware[0]!(invokeContext(agent, state))
+      expect(firstResult.model).toBe(first)
+      expect(strategy.contexts).toHaveLength(1)
+
+      const afterHook = hooks.get(AfterInvocationEvent)![0]!
+      const beforeHook = hooks.get(BeforeInvocationEvent)![0]!
+
+      const resumeEvent = new AfterInvocationEvent({ agent, invocationState: state })
+      resumeEvent.resume = 'continue'
+      await afterHook.callback(resumeEvent as never)
+      await beforeHook.callback(new BeforeInvocationEvent({ agent, invocationState: state }) as never)
+
+      const resumedResult = await middleware[0]!(invokeContext(agent, state))
+      expect(resumedResult.model).toBe(first)
+      expect(strategy.contexts).toHaveLength(1)
+
+      // Final AfterInvocationEvent without resume clears state so a new top-level invocation routes again.
+      await afterHook.callback(new AfterInvocationEvent({ agent, invocationState: state }) as never)
+      await beforeHook.callback(new BeforeInvocationEvent({ agent, invocationState: state }) as never)
+
+      const nextResult = await middleware[0]!(invokeContext(agent, state))
+      expect(nextResult.model).toBe(second)
+      expect(strategy.contexts).toHaveLength(2)
     })
   })
 })

@@ -97,6 +97,7 @@ class RoutingState {
   readonly attempts: RoutingAttempt[] = []
   switchedTo: Set<RoutingCandidate>
   switches = 0
+  resuming = false
 
   constructor(candidate: RoutingCandidate, model: Model) {
     this.candidate = candidate
@@ -198,10 +199,10 @@ export class ModelRouter implements Plugin {
 
     agent.addMiddleware(InvokeModelStage.Input, (context) => this._selectionMiddleware(context))
     agent.addHook(AfterModelCallEvent, (event) => this._onModelResult(event), { order: HookOrder.MODEL_ROUTING })
-    agent.addHook(AfterInvocationEvent, (event) => this._clearState(event.agent, event.invocationState), {
+    agent.addHook(AfterInvocationEvent, (event) => this._onAfterInvocation(event), {
       order: HookOrder.SDK_LAST,
     })
-    agent.addHook(BeforeInvocationEvent, (event) => this._clearState(event.agent, event.invocationState), {
+    agent.addHook(BeforeInvocationEvent, (event) => this._onBeforeInvocation(event), {
       order: HookOrder.SDK_FIRST,
     })
   }
@@ -435,10 +436,26 @@ export class ModelRouter implements Plugin {
     return Object.freeze(context)
   }
 
-  /** Drop this agent's routing state so it never spans invocations. */
-  private _clearState(agent: LocalAgent, invocationState: InvocationState): void {
-    const key = this._stateKey(agent)
-    if (this._getState(agent, invocationState) !== undefined) delete invocationState[key]
+  /** Preserve routing state when AfterInvocationEvent schedules a continuation round; otherwise clear it. */
+  private _onAfterInvocation(event: AfterInvocationEvent): void {
+    const state = this._getState(event.agent, event.invocationState)
+    if (state === undefined) return
+    if (event.resume !== undefined) {
+      state.resuming = true
+      return
+    }
+    delete event.invocationState[this._stateKey(event.agent)]
+  }
+
+  /** Keep state marked as resuming by the preceding AfterInvocationEvent; otherwise clear any stale state. */
+  private _onBeforeInvocation(event: BeforeInvocationEvent): void {
+    const state = this._getState(event.agent, event.invocationState)
+    if (state === undefined) return
+    if (state.resuming) {
+      state.resuming = false
+      return
+    }
+    delete event.invocationState[this._stateKey(event.agent)]
   }
 
   /** Return the routing state stored under this pair's key, ignoring any foreign value. */

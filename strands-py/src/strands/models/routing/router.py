@@ -128,6 +128,7 @@ class _RoutingState:
     attempts: list[RoutingAttempt] = field(default_factory=list)
     switched_to: set[int] = field(default_factory=set)
     switches: int = 0
+    resuming: bool = False
 
 
 class ModelRouter(Plugin):
@@ -402,10 +403,18 @@ class ModelRouter(Plugin):
     # ---- Per-invocation state and context ----
 
     async def _clear_state(self, event: AfterInvocationEvent | BeforeInvocationEvent) -> None:
-        """Drop this agent's routing state so it never spans invocations."""
+        """Drop this agent's routing state unless the invocation is resuming."""
         key = self._state_key(event.agent)
-        if _get_routing_state(event.invocation_state, key) is not None:
-            del event.invocation_state[key]
+        state = _get_routing_state(event.invocation_state, key)
+        if state is None:
+            return
+        if isinstance(event, AfterInvocationEvent) and event.resume is not None:
+            state.resuming = True
+            return
+        if isinstance(event, BeforeInvocationEvent) and state.resuming:
+            state.resuming = False
+            return
+        del event.invocation_state[key]
 
     def _state_key(self, agent: LocalAgent) -> str:
         """Scope routing state to one agent/router pair.

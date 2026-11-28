@@ -1372,3 +1372,47 @@ async def test_strategy_gets_no_handle_outside_a_request():
     await router._selection_middleware()(_invoke_context({}, model=model))
 
     assert captured[0].invocation_context is None
+
+
+def test_router_keeps_selection_across_after_invocation_resume():
+    from strands.hooks.events import AfterInvocationEvent
+
+    first = _CountingModel("first")
+    second = _CountingModel("second")
+
+    class _Alternating:
+        def __init__(self):
+            self.asks = 0
+
+        async def select(self, context):
+            idx = self.asks % len(context.candidates)
+            self.asks += 1
+            return context.candidates[idx]
+
+    strategy = _Alternating()
+    router = ModelRouter(
+        models=[RoutingCandidate(first, name="first"), RoutingCandidate(second, name="second")],
+        strategy=strategy,
+    )
+    agent = Agent(model=router, callback_handler=None)
+
+    resumes_left = 2
+
+    def resume_twice(event: AfterInvocationEvent) -> None:
+        nonlocal resumes_left
+        if resumes_left > 0:
+            resumes_left -= 1
+            event.resume = "continue"
+
+    agent.hooks.add_callback(AfterInvocationEvent, resume_twice)
+
+    agent("start")
+
+    assert strategy.asks == 1
+    assert first.calls == 3
+    assert second.calls == 0
+
+    # A separate top-level invocation routes again.
+    agent("next call")
+    assert strategy.asks == 2
+    assert second.calls == 1
