@@ -27,6 +27,8 @@ __all__ = [
     "MCP_V2",
     "GetSessionIdCallback",
     "MCPError",
+    "MCPReadStream",
+    "MCPWriteStream",
     "call_tool",
     "client_credentials_auth",
     "get_prompt",
@@ -70,6 +72,18 @@ except ImportError:
     # mcp 2.x removed protocol sessions, so its transports never yield a
     # session-id callback; the alias survives only to type 1.x transports.
     GetSessionIdCallback = Callable[[], str | None]  # type: ignore[misc, assignment]
+
+try:
+    # mcp 2.x types every client transport as yielding a pair of the covariant
+    # `ReadStream`/`WriteStream` protocols; the concrete memory streams are one
+    # implementation among several.
+    from mcp.client._transport import ReadStream as MCPReadStream  # type: ignore[attr-defined]
+    from mcp.client._transport import WriteStream as MCPWriteStream  # type: ignore[attr-defined]
+except ImportError:
+    # mcp 1.x has no stream protocols: every transport yields anyio memory
+    # object streams, so they are the common currency there.
+    from anyio.streams.memory import MemoryObjectReceiveStream as MCPReadStream  # type: ignore[assignment]
+    from anyio.streams.memory import MemoryObjectSendStream as MCPWriteStream  # type: ignore[assignment]
 
 
 async def _drive_input_required(session: ClientSession, call_once: Callable[[Any, str | None], Any]) -> Any:

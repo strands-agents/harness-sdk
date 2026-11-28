@@ -10,7 +10,7 @@ from mcp.shared.message import SessionMessage
 from typing_extensions import NotRequired, Protocol, TypedDict
 
 from ...types.tools import ToolResult
-from ._compat import GetSessionIdCallback
+from ._compat import GetSessionIdCallback, MCPReadStream, MCPWriteStream
 
 if TYPE_CHECKING:
     from .mcp_agent_tool import MCPAgentTool
@@ -86,7 +86,8 @@ async def my_transport_implementation():
 _MessageStreamWithGetSessionIdCallback = tuple[
     MemoryObjectReceiveStream[SessionMessage | Exception], MemoryObjectSendStream[SessionMessage], GetSessionIdCallback
 ]
-MCPTransport = AbstractAsyncContextManager[MessageStream | _MessageStreamWithGetSessionIdCallback]
+_MCPStreamPair = tuple[MCPReadStream[SessionMessage | Exception], MCPWriteStream[SessionMessage]]
+MCPTransport = AbstractAsyncContextManager[_MCPStreamPair | MessageStream | _MessageStreamWithGetSessionIdCallback]
 
 
 class MCPToolResult(ToolResult):
