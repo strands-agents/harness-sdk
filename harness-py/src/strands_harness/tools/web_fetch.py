@@ -18,6 +18,7 @@ import base64
 import re
 import shlex
 import time
+from html import unescape
 from typing import Any
 from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -47,9 +48,30 @@ _SUMMARIZER_PROMPT = (
 )
 
 
+_IMG_TAG = re.compile(r"""(?is)<img\b(?:[^>"']|"[^"]*"|'[^']*')*>""")
+_ALT_ATTR = re.compile(r"""\balt\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))""", re.IGNORECASE)
+
+
+def _image_alt(match: re.Match[str]) -> str:
+    """The ``alt`` of an ``<img>``, or a space when it has none.
+
+    Capability tables mark a cell with an image whose only meaning is in ``alt``
+    (``alt="supported"`` / ``alt="not-supported"``), so stripping the tag strips
+    the answer. The value is kept verbatim here and unescaped once all tags are
+    gone, so an ``alt`` containing ``<`` cannot re-open a tag.
+    """
+    alt = _ALT_ATTR.search(match.group(0))
+    if alt is None:
+        return " "
+    value = next(group for group in alt.groups() if group is not None)
+    return f" {value} " if value else " "
+
+
 def _html_to_text(html: str) -> str:
     html = re.sub(r"(?is)<(script|style)\b.*?</\1>", " ", html)
+    html = _IMG_TAG.sub(_image_alt, html)
     text = re.sub(r"(?s)<[^>]+>", " ", html)
+    text = unescape(text)
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)
     return text.strip()

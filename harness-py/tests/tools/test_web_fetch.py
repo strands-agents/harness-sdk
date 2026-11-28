@@ -24,6 +24,32 @@ def test_html_to_text_strips_tags_and_scripts():
     assert web_fetch_module._html_to_text(html) == "Hello world"
 
 
+def test_html_to_text_keeps_image_alt_text():
+    # Capability tables put the answer in an image's alt text: a cell is
+    # "supported" or "not-supported" and the tag is the only thing carrying it.
+    html = (
+        "<table><tr><th>Capability</th><th>bedrock-runtime</th><th>bedrock-mantle</th></tr>"
+        '<tr><td>Cross-region inference</td><td><img alt="supported" src="yes.png"></td>'
+        '<td><img alt="not-supported" src="no.png"></td></tr></table>'
+    )
+    text = web_fetch_module._html_to_text(html)
+
+    assert "supported" in text
+    assert "not-supported" in text
+
+
+def test_html_to_text_reads_quoted_and_unquoted_alt_text():
+    html = "<p><img alt='yes'> <img alt=maybe> <img src='x.png'></p>"
+
+    assert web_fetch_module._html_to_text(html) == "yes maybe"
+
+
+def test_html_to_text_unescapes_entities_in_alt_text():
+    html = '<p><img alt="a &amp; b"></p>'
+
+    assert web_fetch_module._html_to_text(html) == "a & b"
+
+
 class _Sandbox:
     """Fake sandbox: curl "writes" ``body`` to the requested file and reports ``content_type``/``url``."""
 
