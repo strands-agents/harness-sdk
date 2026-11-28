@@ -502,10 +502,13 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
                 raise ConnectionTimeoutError(error.message) from error
 
             # Per the smithy EventReceiver contract, receive() returns None only at
-            # end-of-stream (e.g. the connection closed during restart). A closed receiver
-            # returns None without suspending, so continuing here busy-loops and starves the
-            # event loop; end the generator so the reader exits cleanly and the swap proceeds.
+            # end-of-stream. When our own stop()/restart() closed the connection,
+            # end cleanly so the reader does not busy-loop (#4082). When Bedrock closes
+            # the stream while the connection is still open, raise so BidiAgent.receive()
+            # surfaces the disconnect instead of waiting forever (#6601).
             if event_data is None:
+                if self._connection_id == response_state.connection_id:
+                    raise ConnectionError("nova sonic stream closed by service")
                 logger.debug("event stream closed by service | ending nova receive loop")
                 break
 
