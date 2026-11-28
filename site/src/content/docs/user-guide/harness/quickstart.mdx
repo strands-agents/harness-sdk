@@ -101,6 +101,32 @@ command writes a Python or TypeScript project with your choices set directly on
 ready-to-import `agent`, so the CLI is a fast on-ramp to the library below: build
 interactively, then drop into code.
 
+### Test and optimize it with strands dev
+
+`strands dev` is the builder for Strands harness. It tests your agent on experiments and
+optimizes it with [Strands Evals](/docs/user-guide/evals-sdk/). Your default agent for
+`strands` does not change.
+
+```bash
+strands dev                     # select the agent to improve
+strands dev --agent ./agent.py  # open a harness file directly
+```
+
+The picker gives two paths:
+
+- **Base CLI** improves the agent that plain `strands` runs. Dev saves the changes in your
+  profile in `~/.strands/cli.toml`.
+- **A harness file** improves a harness in code. Dev saves the changes in that file, and it
+  reloads the agent after each save.
+
+In the dev chat, `/experiment` makes test cases from a description or from your past chats.
+Then it runs the agent on them and gives the reason for each failure. `/optimize` tunes the
+instructions, the model, the effort, and other options against an experiment. You examine each
+proposed edit as a diff, and dev saves only the edits that you apply.
+
+Dev keeps its state in a `strands-dev/` folder next to the agent. Generation, evaluation, and
+optimization make paid model calls, and dev starts them only after your approval.
+
 ## Use it as a library
 
 Prefer to write the code yourself? Install the Python or TypeScript package and run your
