@@ -244,6 +244,7 @@ class SummarizingConversationManager(ConversationManager):
         fingerprint = (len(to_summarize), sum(len(block["text"]) for m in to_summarize for block in _text_blocks(m)))
         if fingerprint == self._overflowed_range_fingerprint:
             raise ContextWindowOverflowException("Cannot summarize: the summary call itself exceeds the context window")
+        count_to_remove = len(to_summarize)
         try:
             summary_message = self._generate_summary(to_summarize, agent, invocation_context)
         except ContextWindowOverflowException:
@@ -256,7 +257,7 @@ class SummarizingConversationManager(ConversationManager):
         _ensure_tracking_id(summary_message)
 
         # Keep track of the number of messages that have been summarized thus far.
-        self.removed_message_count += len(to_summarize)
+        self.removed_message_count += count_to_remove
         # If there is a summary message, don't count it in the removed_message_count.
         if self._summary_message:
             self.removed_message_count -= 1
@@ -331,7 +332,7 @@ class SummarizingConversationManager(ConversationManager):
                 tool_registry.register_tool(cast(AgentTool, noop_tool))
                 summarization_agent.tool_registry = tool_registry
 
-            summarization_agent.messages = messages
+            summarization_agent.messages = messages.copy()
 
             invoke_kwargs: dict[str, Any] = (
                 {"invocation_context": invocation_context} if invocation_context is not None else {}
