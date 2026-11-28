@@ -2,7 +2,7 @@ import { createElement } from 'react'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { Text } from 'ink'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Agent } from '@strands-agents/sdk'
 import { AgentSkills, Skill } from '@strands-agents/sdk/vended-plugins/skills'
 import { render, captureFrame, mouseInputSequence, ttyInput, ttyOutput } from '../fixtures/terminal.js'
@@ -16,6 +16,10 @@ import { ConversationManager } from '../../src/ui/chat/conversations.js'
 import { AgentSkillsRuntime } from '../../src/agent/skills.js'
 import { idleBackend } from '../fixtures/chat-backend.js'
 import { mountChat } from '../fixtures/chat-app.js'
+
+// Mouse reporting is off in Apple's Terminal, so these tests pin a terminal that sends SGR reports.
+beforeEach(() => vi.stubEnv('TERM_PROGRAM', 'ghostty'))
+afterEach(() => vi.unstubAllEnvs())
 
 describe('TUI mouse input', () => {
   it.each([

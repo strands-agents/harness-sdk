@@ -2,7 +2,12 @@ import { PassThrough } from 'node:stream'
 import headless from '@xterm/headless'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { createInkOutputs, enterAlternateScreen } from '../../src/terminal/terminal.js'
+import {
+  createInkOutputs,
+  enterAlternateScreen,
+  pauseMouseReporting,
+  setTerminalMouseMotion,
+} from '../../src/terminal/terminal.js'
 
 describe('terminal output cursor', () => {
   afterEach(() => vi.unstubAllEnvs())
@@ -57,5 +62,36 @@ describe('terminal output cursor', () => {
     expect(streams.stdout).toBe(output)
     expect(streams.stderr).toBe(output)
     output.destroy()
+  })
+})
+
+describe('terminal mouse reporting', () => {
+  afterEach(() => vi.unstubAllEnvs())
+
+  const capture = (run: (output: { isTTY: boolean; write(value: string): boolean }) => void): string => {
+    let written = ''
+    run({ isTTY: true, write: (value) => ((written += value), true) })
+    return written
+  }
+  // eslint-disable-next-line no-control-regex
+  const MOUSE_MODE = /\u001b\[\?100[0236]h/
+
+  it('stays off in Apple Terminal, which sends legacy reports Ink types as text', () => {
+    vi.stubEnv('TERM_PROGRAM', 'Apple_Terminal')
+    const written = capture((output) => {
+      enterAlternateScreen(output)
+      setTerminalMouseMotion(true, output)
+      setTerminalMouseMotion(false, output)
+      pauseMouseReporting(output)()
+    })
+    expect(written).not.toMatch(MOUSE_MODE)
+    expect(written).toContain('\u001b[?1049h')
+  })
+
+  it('turns on SGR reporting in other terminals', () => {
+    vi.stubEnv('TERM_PROGRAM', 'ghostty')
+    expect(capture((output) => enterAlternateScreen(output))).toContain('\u001b[?1002h\u001b[?1006h')
+    expect(capture((output) => setTerminalMouseMotion(true, output))).toContain('\u001b[?1003h')
+    expect(capture((output) => pauseMouseReporting(output)())).toContain('\u001b[?1002h')
   })
 })

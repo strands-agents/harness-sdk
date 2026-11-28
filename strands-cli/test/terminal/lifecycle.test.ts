@@ -27,6 +27,10 @@ afterEach(() => {
 })
 
 describe('terminal lifecycle', () => {
+  // Mouse reporting is off in Apple's Terminal, so these tests pin a terminal that sends SGR reports.
+  beforeEach(() => vi.stubEnv('TERM_PROGRAM', 'ghostty'))
+  afterEach(() => vi.unstubAllEnvs())
+
   it('sets a sanitized single-line title and restores the saved title once', () => {
     const writes: string[] = []
     const output = { isTTY: true, write: (value: string) => writes.push(value) }
