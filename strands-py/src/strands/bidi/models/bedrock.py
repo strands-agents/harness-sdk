@@ -278,6 +278,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
 
         # Track API-provided identifiers
         self._connection_id: str | None = None
+        self._stopping: bool = False
         self._audio_content_name: str | None = None
         self._current_completion_id: str | None = None
 
@@ -359,6 +360,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
 
         logger.debug("nova connection starting")
 
+        self._stopping = False
         self._connection_id = str(uuid.uuid4())
 
         # Get credentials from boto3 session (full credential chain)
@@ -478,12 +480,15 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
 
         Raises:
             RuntimeError: If start has not been called.
+            ConnectionError: If the event stream closes unexpectedly while the connection is active.
         """
         if not self._connection_id:
             raise RuntimeError("model not started | call start before receiving")
 
+        connection_id = self._connection_id
+
         logger.debug("nova event stream starting")
-        yield BidiConnectionStartEvent(connection_id=self._connection_id, model=self._config["model_id"])
+        yield BidiConnectionStartEvent(connection_id=connection_id, model=self._config["model_id"])
 
         _, output = await self._stream.await_output()
         response_state = _ResponseState(connection_id=self._connection_id, idle=self._response_idle)
@@ -502,12 +507,15 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
                 raise ConnectionTimeoutError(error.message) from error
 
             # Per the smithy EventReceiver contract, receive() returns None only at
-            # end-of-stream (e.g. the connection closed during restart). A closed receiver
-            # returns None without suspending, so continuing here busy-loops and starves the
-            # event loop; end the generator so the reader exits cleanly and the swap proceeds.
+            # end-of-stream. A closed receiver returns None without suspending, so continuing
+            # here would busy-loop. Exit cleanly when stop()/restart() closed this connection,
+            # and raise ConnectionError when the service closes an active stream unexpectedly.
             if event_data is None:
-                logger.debug("event stream closed by service | ending nova receive loop")
-                break
+                if self._stopping or self._connection_id != connection_id:
+                    logger.debug("event stream closed during shutdown or restart | ending nova receive loop")
+                    break
+                logger.debug("event stream closed by service | raising ConnectionError")
+                raise ConnectionError("nova sonic stream closed by service")
 
             # Decode and parse the event
             raw_bytes = event_data.value.bytes_.decode("utf-8")
@@ -720,6 +728,7 @@ class BedrockNovaSonicModel(BidiModel, AudioCapable):
     async def stop(self) -> None:
         """Close Nova Sonic connection with proper cleanup sequence."""
         logger.debug("nova connection cleanup starting")
+        self._stopping = True
 
         async def stop_events() -> None:
             if not self._connection_id or not hasattr(self, "_stream"):

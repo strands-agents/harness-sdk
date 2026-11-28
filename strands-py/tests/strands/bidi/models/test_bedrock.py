@@ -1637,16 +1637,15 @@ async def test_bidi_nova_sonic_model_receive_timeout_validation(nova_model, mock
 
 
 @pytest.mark.asyncio
-async def test_receive_ends_when_stream_closed(nova_model, mock_stream, alist):
-    """A None from the event receiver marks end-of-stream; the receive loop must terminate.
-
-    Per the smithy EventReceiver contract, receive() returns None only at end-of-stream (e.g.
-    the connection closed on restart), and a closed receiver returns it without suspending.
-    Treating that as a transient empty event and continuing busy-loops the reader, starving the
-    event loop and hanging the restart swap. The generator must instead finish.
-    """
+async def test_receive_ends_when_stream_closed_during_stop(nova_model, mock_stream, alist):
+    """A None from the event receiver during stop() terminates the receive loop cleanly."""
     mock_output = AsyncMock()
-    mock_output.receive = AsyncMock(return_value=None)
+
+    async def receive_after_stop():
+        await nova_model.stop()
+        return None
+
+    mock_output.receive = AsyncMock(side_effect=receive_after_stop)
     mock_stream.await_output.return_value = (None, mock_output)
 
     nova_model.update_config(model_id="updated-model")
@@ -1658,6 +1657,23 @@ async def test_receive_ends_when_stream_closed(nova_model, mock_stream, alist):
     # Only the initial connection-start event precedes the end-of-stream.
     assert [type(event).__name__ for event in events] == ["BidiConnectionStartEvent"]
     assert events[0].model == "updated-model"
+
+
+@pytest.mark.asyncio
+async def test_receive_raises_when_stream_closed_unexpectedly(nova_model, mock_stream):
+    """An unexpected None from the event receiver on an active connection raises ConnectionError."""
+    mock_output = AsyncMock()
+    mock_output.receive = AsyncMock(return_value=None)
+    mock_stream.await_output.return_value = (None, mock_output)
+
+    await nova_model.start()
+
+    events = []
+    with pytest.raises(ConnectionError, match="nova sonic stream closed by service"):
+        async for event in nova_model.receive():
+            events.append(event)
+
+    assert [type(event).__name__ for event in events] == ["BidiConnectionStartEvent"]
     await nova_model.stop()
 
 
@@ -2019,7 +2035,8 @@ async def test_receive_tracks_idle_on_current_connection(nova_model, mock_stream
     await nova_model.start()
     idle = nova_model._response_idle
 
-    await alist(nova_model.receive())
+    with pytest.raises(ConnectionError):
+        await alist(nova_model.receive())
 
     assert nova_model._response_idle is idle
     assert not idle.is_set()
