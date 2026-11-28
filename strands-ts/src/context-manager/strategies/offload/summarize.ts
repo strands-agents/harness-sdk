@@ -98,7 +98,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
 
     const summarize = (run: Message[]): Promise<{ text: string; tokens: number } | null> =>
       this._summarizeRun(context, model, run)
-    return removeMessages(context.messages, removable, summarize, 'summarize', this._archive)
+    return removeMessages(context.messages, removable, summarize, 'summarize', context.archive)
   }
 
   /** The summary marker for a run and the tokens it stands for; a failure is logged and keeps the run. */
@@ -197,7 +197,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
 
     // Message 0 stays in the array, but a provider sending the summary as a compaction block stops sending anything
     // before it, so the summary stands for message 0 too and a retrieval has to be able to return it.
-    const reference = await this._removedReference(covered, model)
+    const reference = await this._removedReference(covered, model, context.archive)
     if (!holdsRun(messages, 0, covered)) {
       logger.warn(
         `summarized=<${replaced}> | the summarized messages are no longer the history's start` +
@@ -217,8 +217,12 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
    * The tokens it reports cover every message the summary stands for, so a provider that keeps sending message 0 as
    * text is over-reported by that message rather than under-reported by it.
    */
-  private async _removedReference(removed: Message[], model: Model): Promise<OffloadedBlock | undefined> {
-    const archiveRef = await archiveRemoved(this._archive, removed, this._method)
+  private async _removedReference(
+    removed: Message[],
+    model: Model,
+    archive: ContextState['archive']
+  ): Promise<OffloadedBlock | undefined> {
+    const archiveRef = await archiveRemoved(archive, removed, this._method)
     if (archiveRef === undefined) return undefined
     const tokens = await removedTokens(removed, model)
     return this._placeholder(formatSummarized(REMOVED_MESSAGES, tokens), archiveRef, tokens)
@@ -245,7 +249,7 @@ export class SummarizeStrategy extends BaseOffloadStrategy {
         ' so thinking blocks kept after it will be dropped'
     )
     const textFor = placeholderFor(model, (tokens) => formatSummarized(REMOVED_MESSAGES, tokens, summary))
-    return removeMessages(context.messages, covered.slice(1), textFor, 'summarize', this._archive)
+    return removeMessages(context.messages, covered.slice(1), textFor, 'summarize', context.archive)
   }
 
   protected async _replaceBlock(

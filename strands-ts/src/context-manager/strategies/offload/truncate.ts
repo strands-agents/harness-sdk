@@ -72,11 +72,11 @@ export class TruncateStrategy extends BaseOffloadStrategy {
 
   /** Middle-out: keeps the oldest and newest eligible messages within the preview budget and elides the rest. */
   protected async _applyPerMessage(context: ContextState): Promise<boolean> {
-    const { messages, agent } = context
+    const { messages, agent, archive } = context
     const middle = withPairs(messages, await this._selectMiddle(await this._removableMessages(context), agent))
     // A middle of only placeholders has nothing new to elide.
     if (middle.every((message) => message.content.every(isOffloaded))) return false
-    return removeMessages(messages, middle, placeholderFor(agent.model, formatElided), 'truncate', this._archive)
+    return removeMessages(messages, middle, placeholderFor(agent.model, formatElided), 'truncate', archive)
   }
 
   protected async _replaceBlock(
