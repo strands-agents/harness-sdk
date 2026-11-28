@@ -34,10 +34,10 @@ agent = Agent(
     context_manager={
         "strategies": [
             Offload.truncate("tool_results").when(
-                threshold=2000,
+                block_threshold=2000,
             ),
             Offload.summarize("*").when(
-                utilization=0.8,
+                context_utilization=0.8,
                 preserve_recent=4,
             ),
         ],
@@ -76,7 +76,7 @@ from strands.context_manager import Offload
 Offload.truncate(
     "tool_results",
     {"preview_tokens": 750},
-).when(threshold=1500)
+).when(block_threshold=1500)
 ```
 </Tab>
 <Tab label="TypeScript">
@@ -127,7 +127,7 @@ On models that preserve thinking, some summaries drop thinking blocks. See [Mode
 from strands.context_manager import Offload
 
 Offload.summarize("*").when(
-    utilization=0.85,
+    context_utilization=0.85,
     preserve_recent=4,
 )
 ```
@@ -240,7 +240,7 @@ Fire eagerly on individual blocks over 2,000 tokens:
 ```python
 from strands.context_manager import Offload
 
-Offload.truncate("tool_results").when(threshold=2000)
+Offload.truncate("tool_results").when(block_threshold=2000)
 ```
 </Tab>
 <Tab label="TypeScript">
@@ -264,7 +264,7 @@ Summarize oldest messages when the window reaches 85%:
 from strands.context_manager import Offload
 
 Offload.summarize("*").when(
-    utilization=0.85,
+    context_utilization=0.85,
     preserve_recent=4,
 )
 ```
@@ -290,8 +290,8 @@ Target tool results over 1,500 tokens, but only fire when the window reaches 90%
 from strands.context_manager import Offload
 
 Offload.truncate("tool_results").when(
-    threshold=1500,
-    utilization=0.9,
+    block_threshold=1500,
+    context_utilization=0.9,
 )
 ```
 </Tab>

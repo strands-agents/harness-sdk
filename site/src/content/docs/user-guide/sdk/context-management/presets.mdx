@@ -85,7 +85,7 @@ agent = Agent(
         "strategies": [
             "large_tool_offloading",
             Offload.summarize("*").when(
-                utilization=0.9,
+                context_utilization=0.9,
                 preserve_recent=2,
             ),
         ],
