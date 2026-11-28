@@ -217,8 +217,9 @@ export abstract class BaseOffloadStrategy implements OffloadStrategy {
       if (!this._isOffloadable(block, message, toolNameMap)) continue
 
       const measured = await agent.model.countTokens([new Message({ role: message.role, content: [block] })])
-      // The token heuristic counts media as 0, so unmeasured media is never treated as within the threshold.
-      if (threshold !== undefined && measured <= threshold && !(measured === 0 && holdsMedia(block))) continue
+      // Only deferred strategies exempt unmeasured media from the size threshold.
+      const exemptFromThreshold = measured === 0 && !this._runsEagerly && holdsMedia(block)
+      if (threshold !== undefined && measured <= threshold && !exemptFromThreshold) continue
 
       const archiveRef = this._archive ? await this._archive.ensureArchived(block, message, blockIndex) : undefined
       const toolName = block instanceof ToolResultBlock ? toolNameMap.get(block.toolUseId) : undefined
