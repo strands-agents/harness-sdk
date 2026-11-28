@@ -40,8 +40,16 @@ def _validate_path(path: str) -> None:
         raise ValueError("Invalid path: path traversal is not allowed.")
 
 
-def _number_lines(content: str, start: int) -> str:
-    return "\n".join(f"{i + start:>6}\t{line}" for i, line in enumerate(content.split("\n")))
+def _split_lines(content: str) -> list[str]:
+    # A trailing newline terminates the last line; it does not start another one (``cat -n`` semantics).
+    lines = content.split("\n")
+    if lines[-1] == "":
+        lines.pop()
+    return lines
+
+
+def _number_lines(lines: list[str], start: int) -> str:
+    return "\n".join(f"{i + start:>6}\t{line}" for i, line in enumerate(lines))
 
 
 def _extension(path: str) -> str:
@@ -130,14 +138,16 @@ def make_read(media: bool = True):
 
         content = await tool_context.agent.sandbox.read_text(path)
 
-        lines = content.split("\n")
+        lines = _split_lines(content)
+        if not lines:
+            return f"[File {path} is empty.]"
         start = max(0, (offset - 1) if offset else 0)
         count = limit if limit is not None else _READ_DEFAULT_LIMIT
         window = lines[start : start + count]
         if not window:
             return f"[File has {len(lines)} lines; offset {offset} is past the end.]"
 
-        numbered = _number_lines("\n".join(window), start + 1)
+        numbered = _number_lines(window, start + 1)
         if start > 0 or start + count < len(lines):
             shown_end = start + len(window)
             numbered += f"\n[Showing lines {start + 1}-{shown_end} of {len(lines)}. Use offset/limit to read more.]"
@@ -160,8 +170,7 @@ async def write(path: str, content: str, tool_context: ToolContext) -> str:
     """
     _validate_path(path)
     await tool_context.agent.sandbox.write_text(path, content)
-    line_count = 0 if content == "" else len(content.split("\n"))
-    return f"Wrote {line_count} lines to {path}."
+    return f"Wrote {len(_split_lines(content))} lines to {path}."
 
 
 @tool(name="edit", context="tool_context")
