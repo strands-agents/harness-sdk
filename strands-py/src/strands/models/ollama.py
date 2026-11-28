@@ -200,6 +200,9 @@ class OllamaModel(Model):
                 if _has_location_source(content):
                     skipped["Location sources are not supported by Ollama | skipping content block"] += 1
                     continue
+                if "cachePoint" in content:
+                    skipped["cachePoint content block is not supported by Ollama | skipping"] += 1
+                    continue
                 formatted_messages.extend(self._format_request_message_contents(message["role"], content))
 
         _log_skipped_blocks(logger, skipped)

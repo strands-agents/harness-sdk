@@ -221,6 +221,9 @@ class LlamaAPIModel(Model):
                 if _has_location_source(content):
                     skipped["Location sources are not supported by LlamaAPI | skipping content block"] += 1
                     continue
+                if "cachePoint" in content:
+                    skipped["cachePoint content block is not supported by LlamaAPI | skipping"] += 1
+                    continue
                 filtered_contents.append(content)
 
             formatted_contents: list[dict[str, Any]] | dict[str, Any] | str = ""

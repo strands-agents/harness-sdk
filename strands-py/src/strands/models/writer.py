@@ -254,6 +254,9 @@ class WriterModel(Model):
                 if _has_location_source(content):
                     skipped["Location sources are not supported by Writer | skipping content block"] += 1
                     continue
+                if "cachePoint" in content:
+                    skipped["cachePoint content block is not supported by Writer | skipping"] += 1
+                    continue
                 filtered_contents.append(content)
 
             # Only palmyra V5 support multiple content. Other models support only '{"content": "text_content"}'

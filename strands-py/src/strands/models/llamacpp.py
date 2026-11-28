@@ -371,6 +371,9 @@ class LlamaCppModel(Model):
                 if _has_location_source(content):
                     skipped["Location sources are not supported by llama.cpp | skipping content block"] += 1
                     continue
+                if "cachePoint" in content:
+                    skipped["cachePoint content block is not supported by llama.cpp | skipping"] += 1
+                    continue
                 filtered_contents.append(content)
 
             formatted_contents = [self._format_message_content(content) for content in filtered_contents]

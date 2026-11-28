@@ -340,12 +340,13 @@ class GeminiModel(Model):
                     continue
                 parts.append(self._format_request_content_part(content, tool_use_id_to_name, skipped))
 
-            contents.append(
-                genai.types.Content(
-                    parts=parts,
-                    role="user" if message["role"] == "user" else "model",
+            if parts:
+                contents.append(
+                    genai.types.Content(
+                        parts=parts,
+                        role="user" if message["role"] == "user" else "model",
+                    )
                 )
-            )
 
         _log_skipped_blocks(logger, skipped)
         return contents
