@@ -111,7 +111,7 @@ export class ModelExtractor implements Extractor {
     })
 
     const text = message.content
-      .map((block) => ('text' in block ? block.text : ''))
+      .map((block) => (block.type === 'textBlock' ? block.text : ''))
       .join('')
       .trim()
 
